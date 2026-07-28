@@ -932,7 +932,8 @@ function App() {
   const overAllocatedWarning = ctx.manualPercentTotal > 100 ? 'Your manual percentages add up to (' + ctx.manualPercentTotal.toFixed(0) + '%), which is over 100%.' : '';
   const sgSource = s.goals.find(g => g.id === s.selectedGoalId);
   const sg = sgSource ? buildGoalView(sgSource, true) : null;
-  const pctColor = pct => pct > 100 ? '#ff3b30' : pct >= 80 ? '#ff9500' : '#34c759';
+  const pctColor = pct => pct >= 100 ? '#ff3b30' : '#0071e3';
+  const pctGradient = pct => pct >= 100 ? 'linear-gradient(90deg,#ff3b30,#ff9500)' : 'linear-gradient(90deg,#0071e3,#5ac8fa)';
   const periodEntries = s.expenseLog.filter(e => e.year === s.logYear && e.month === s.logMonth);
   const resumenActualRecurringNum = periodEntries.filter(e => e.recurring).reduce((a, e) => a + e.amount, 0);
   const resumenActualNonRecurringNum = periodEntries.filter(e => !e.recurring).reduce((a, e) => a + e.amount, 0);
@@ -952,6 +953,7 @@ function App() {
       planned_fmt: fmt(c.amount),
       actual_fmt: fmt(actual),
       color: pctColor(pct),
+      grad: pctGradient(pct),
       width: Math.min(pct, 100).toFixed(1) + '%'
     };
   });
@@ -1068,7 +1070,31 @@ function App() {
     viewBox: "0 0 200 200",
     width: "200",
     height: "200"
-  }, /*#__PURE__*/React.createElement("circle", {
+  }, /*#__PURE__*/React.createElement("defs", null, /*#__PURE__*/React.createElement("linearGradient", {
+    id: "ringGradBlue",
+    x1: "0%",
+    y1: "0%",
+    x2: "100%",
+    y2: "100%"
+  }, /*#__PURE__*/React.createElement("stop", {
+    offset: "0%",
+    stopColor: "#0071e3"
+  }), /*#__PURE__*/React.createElement("stop", {
+    offset: "100%",
+    stopColor: "#5ac8fa"
+  })), /*#__PURE__*/React.createElement("linearGradient", {
+    id: "ringGradRed",
+    x1: "0%",
+    y1: "0%",
+    x2: "100%",
+    y2: "100%"
+  }, /*#__PURE__*/React.createElement("stop", {
+    offset: "0%",
+    stopColor: "#ff3b30"
+  }), /*#__PURE__*/React.createElement("stop", {
+    offset: "100%",
+    stopColor: "#ff9500"
+  }))), /*#__PURE__*/React.createElement("circle", {
     cx: "100",
     cy: "100",
     r: "86",
@@ -1080,7 +1106,7 @@ function App() {
     cy: "100",
     r: "86",
     fill: "none",
-    stroke: homeSpentColor,
+    stroke: 'url(#' + (homeSpentPct >= 100 ? 'ringGradRed' : 'ringGradBlue') + ')',
     strokeWidth: "16",
     strokeLinecap: "round",
     strokeDasharray: 2 * Math.PI * 86,
@@ -1788,7 +1814,7 @@ function App() {
     style: {
       height: '100%',
       borderRadius: 4,
-      background: pctColor(resumenTotalPct),
+      background: pctGradient(resumenTotalPct),
       width: Math.min(resumenTotalPct, 100).toFixed(1) + '%'
     }
   })), /*#__PURE__*/React.createElement("div", {
@@ -1869,7 +1895,7 @@ function App() {
     style: {
       height: '100%',
       borderRadius: 3,
-      background: cr.color,
+      background: cr.grad,
       width: cr.width
     }
   })))), /*#__PURE__*/React.createElement("div", {
@@ -1894,7 +1920,7 @@ function App() {
       style: {
         height: '100%',
         borderRadius: 3,
-        background: pctColor(nrPct),
+        background: pctGradient(nrPct),
         width: Math.min(nrPct, 100).toFixed(1) + '%'
       }
     })));
