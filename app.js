@@ -85,6 +85,22 @@ function parseMonthYearLabel(label) {
     year: yr
   };
 }
+function buildPersistPayload(state) {
+  return {
+    tab: state.tab,
+    income: state.income,
+    payFrequency: state.payFrequency,
+    expenseCategories: state.expenseCategories,
+    expenseLog: state.expenseLog,
+    plannedExpenses: state.plannedExpenses,
+    hustles: state.hustles,
+    goals: state.goals,
+    investments: state.investments,
+    selectedGoalId: state.selectedGoalId,
+    logMonth: state.logMonth,
+    logYear: state.logYear
+  };
+}
 function toDateStr(year, month, day) {
   return year + '-' + pad2(month + 1) + '-' + pad2(day);
 }
@@ -284,6 +300,8 @@ function App() {
   const donutCanvasRef = useRef(null);
   const saveTimer = useRef(null);
   const hasLoaded = useRef(false);
+  const importInputRef = useRef(null);
+  const [importMessage, setImportMessage] = useState('');
 
   /* load persisted data once */
   useEffect(() => {
@@ -321,20 +339,7 @@ function App() {
     if (!state || !hasLoaded.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      const toSave = {
-        tab: state.tab,
-        income: state.income,
-        payFrequency: state.payFrequency,
-        expenseCategories: state.expenseCategories,
-        expenseLog: state.expenseLog,
-        plannedExpenses: state.plannedExpenses,
-        hustles: state.hustles,
-        goals: state.goals,
-        investments: state.investments,
-        selectedGoalId: state.selectedGoalId,
-        logMonth: state.logMonth,
-        logYear: state.logYear
-      };
+      const toSave = buildPersistPayload(state);
       storageAdapter.set(STORAGE_KEY, JSON.stringify(toSave)).catch(() => setStorageWarning('Could not save. Your changes might not persist.'));
     }, 500);
     return () => clearTimeout(saveTimer.current);
@@ -570,6 +575,40 @@ function App() {
       lastUpdated: todayStr
     } : i)
   }));
+  const exportData = () => {
+    const payload = buildPersistPayload(s);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: 'application/json'
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'financial-planner-backup-' + todayStr + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  };
+  const triggerImport = () => {
+    if (importInputRef.current) importInputRef.current.click();
+  };
+  const handleImportFile = e => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        setState(Object.assign(defaultState(), parsed));
+        setImportMessage('Data imported successfully.');
+      } catch (err) {
+        setImportMessage('Could not read that file — make sure it\'s a backup exported from this app.');
+      }
+      setTimeout(() => setImportMessage(''), 4000);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
   const downloadReport = scope => {
     const months = scope === 'quarter' ? [(reportQuarter - 1) * 3, (reportQuarter - 1) * 3 + 1, (reportQuarter - 1) * 3 + 2] : [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
     const monthCount = months.length;
@@ -1199,7 +1238,31 @@ function App() {
   }, "⬇ Quarterly report"), /*#__PURE__*/React.createElement("button", {
     onClick: () => downloadReport('year'),
     style: css('flex:1;background:#0071e3;color:#fff;border:none;padding:10px;border-radius:10px;font-size:12.5px;font-weight:600;cursor:pointer;')
-  }, "⬇ Annual report")))), s.tab === 'metas' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, "⬇ Annual report"))), /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:22px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:6px;')
+  }, "Backup & transfer"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12px;color:#86868b;margin-bottom:12px;line-height:1.4;')
+  }, "Your data lives only on this device/browser. Export it here, then import that file on another device to bring your data along."), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: exportData,
+    style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;padding:10px;border-radius:10px;font-size:12.5px;font-weight:600;cursor:pointer;')
+  }, "⬇ Export data"), /*#__PURE__*/React.createElement("button", {
+    onClick: triggerImport,
+    style: css('flex:1;background:#34c759;color:#fff;border:none;padding:10px;border-radius:10px;font-size:12.5px;font-weight:600;cursor:pointer;')
+  }, "⬆ Import data")), /*#__PURE__*/React.createElement("input", {
+    ref: importInputRef,
+    type: "file",
+    accept: "application/json",
+    onChange: handleImportFile,
+    style: {
+      display: 'none'
+    }
+  }), importMessage && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;color:#0071e3;margin-top:8px;')
+  }, importMessage))), s.tab === 'metas' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px;')
   }, "Goals"), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;color:#86868b;margin-bottom:16px;')
