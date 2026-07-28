@@ -1052,7 +1052,7 @@ function App() {
   }, "Biweekly")), /*#__PURE__*/React.createElement("input", {
     type: "number",
     autoFocus: true,
-    value: s.income,
+    value: s.income || '',
     onChange: onIncome,
     onKeyDown: e => {
       if (e.key === 'Enter') setEditingIncome(false);
@@ -1115,7 +1115,11 @@ function App() {
     const v = buildGoalView(g, false);
     return /*#__PURE__*/React.createElement("div", {
       key: g.id,
-      style: css('background:#fff;border-radius:18px;padding:18px 18px 16px;margin-bottom:12px;')
+      onClick: () => {
+        selectGoal(g.id);
+        setTab('metas');
+      },
+      style: css('background:#fff;border-radius:18px;padding:18px 18px 16px;margin-bottom:12px;cursor:pointer;')
     }, /*#__PURE__*/React.createElement("div", {
       style: css('display:flex;align-items:center;gap:12px;margin-bottom:12px;')
     }, /*#__PURE__*/React.createElement("div", {
@@ -1296,14 +1300,14 @@ function App() {
     style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:4px;')
   }, "Target amount"), /*#__PURE__*/React.createElement("input", {
     type: "number",
-    value: sgSource.target,
+    value: sgSource.target || '',
     onChange: e => updateGoal(sgSource.id, 'target', parseFloat(e.target.value) || 0),
     style: css('width:100%;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:14px;background:#fbfbfd;')
   })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:4px;')
   }, "Current savings"), /*#__PURE__*/React.createElement("input", {
     type: "number",
-    value: sgSource.current,
+    value: sgSource.current || '',
     onChange: e => updateGoal(sgSource.id, 'current', parseFloat(e.target.value) || 0),
     style: css('width:100%;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:14px;background:#fbfbfd;')
   }))), /*#__PURE__*/React.createElement("label", {
@@ -1364,7 +1368,7 @@ function App() {
     type: "number",
     min: "0",
     max: "100",
-    value: sgSource.percent || 0,
+    value: sgSource.percent || '',
     onChange: e => updateGoal(sgSource.id, 'percent', Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))),
     style: css('width:90px;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:14px;background:#fbfbfd;')
   }), /*#__PURE__*/React.createElement("span", {
@@ -1412,7 +1416,7 @@ function App() {
     type: "number",
     min: "1",
     max: "31",
-    value: sgSource.reminderDay || 1,
+    value: sgSource.reminderDay || '',
     onChange: e => updateGoal(sgSource.id, 'reminderDay', Math.max(1, Math.min(31, parseInt(e.target.value, 10) || 1))),
     style: css('width:60px;padding:7px 8px;border:1px solid #e5e5ea;border-radius:8px;font-size:13px;background:#fbfbfd;')
   }), /*#__PURE__*/React.createElement("span", {
@@ -1705,7 +1709,7 @@ function App() {
     style: css('flex:1;min-width:0;border:none;background:transparent;font-size:14px;padding:4px 0;')
   }), /*#__PURE__*/React.createElement("input", {
     type: "number",
-    value: row.amount,
+    value: row.amount || '',
     onChange: e => updateExpenseRow(i, 'amount', e.target.value),
     style: css('width:90px;border:1px solid #e5e5ea;border-radius:8px;padding:6px 8px;font-size:13px;background:#fbfbfd;')
   }), /*#__PURE__*/React.createElement("button", {
@@ -1764,7 +1768,7 @@ function App() {
       style: css('display:block;font-size:11px;color:#86868b;font-weight:600;margin-bottom:4px;')
     }, "Amount / month"), /*#__PURE__*/React.createElement("input", {
       type: "number",
-      value: h.amount,
+      value: h.amount || '',
       onChange: e => updateHustle(h.id, 'amount', e.target.value),
       style: css('width:100%;padding:8px 10px;border:1px solid #e5e5ea;border-radius:9px;font-size:13.5px;background:#fbfbfd;')
     })), /*#__PURE__*/React.createElement("div", {
@@ -1843,7 +1847,7 @@ function App() {
     style: css('display:block;font-size:11px;color:#86868b;font-weight:600;margin-bottom:4px;')
   }, "Amount invested"), /*#__PURE__*/React.createElement("input", {
     type: "number",
-    value: inv.amount,
+    value: inv.amount || '',
     onChange: e => updateInvestment(inv.id, 'amount', e.target.value),
     style: css('width:100%;padding:8px 10px;border:1px solid #e5e5ea;border-radius:9px;font-size:13.5px;background:#fbfbfd;')
   })), /*#__PURE__*/React.createElement("div", {
@@ -1852,7 +1856,7 @@ function App() {
     style: css('display:block;font-size:11px;color:#86868b;font-weight:600;margin-bottom:4px;')
   }, "Return since update (%)"), /*#__PURE__*/React.createElement("input", {
     type: "number",
-    value: inv.returnPct,
+    value: inv.returnPct || '',
     onChange: e => updateInvestment(inv.id, 'returnPct', e.target.value),
     style: css('width:100%;padding:8px 10px;border:1px solid #e5e5ea;border-radius:9px;font-size:13.5px;background:#fbfbfd;')
   }))), /*#__PURE__*/React.createElement("div", {
