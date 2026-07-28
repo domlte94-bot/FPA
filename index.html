@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Financial Planner</title>
-<meta name="description" content="Planifica y ahorra para hasta 6 metas al mismo tiempo.">
+<meta name="description" content="Plan and save for up to 6 goals at once.">
 
 <link rel="manifest" href="./manifest.json">
 <meta name="theme-color" content="#0071e3">
@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="Mis Metas">
+<meta name="apple-mobile-web-app-title" content="My Goals">
 
 <link rel="icon" href="./icon-192.png" type="image/png">
 
@@ -36,7 +36,20 @@
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js').catch(() => {});
+      navigator.serviceWorker.register('./sw.js').then((reg) => {
+        // Check for a newer version every time the app is opened
+        reg.update();
+      }).catch(() => {});
+
+      // When a new service worker takes control (i.e. an update was installed),
+      // reload once automatically so you always see the latest version —
+      // no manual cache-clearing ever needed, and your saved data (localStorage) is untouched.
+      let hasReloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (hasReloaded) return;
+        hasReloaded = true;
+        window.location.reload();
+      });
     });
   }
 </script>
