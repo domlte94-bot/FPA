@@ -291,8 +291,6 @@ function App() {
   })();
   const [selectedDate, setSelectedDate] = useState(todayStr);
   const [resumenOpen, setResumenOpen] = useState(true);
-  const [plannedName, setPlannedName] = useState('');
-  const [plannedAmount, setPlannedAmount] = useState('');
   const [editingIncome, setEditingIncome] = useState(false);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
   const [reportQuarter, setReportQuarter] = useState(Math.floor(new Date().getMonth() / 3) + 1);
@@ -319,6 +317,21 @@ function App() {
             })));
           }
           delete loaded.quarterlyCategories;
+          if (loaded.investments && loaded.investments.length) {
+            loaded.investments = loaded.investments.map(inv => {
+              if (inv.currentValue === undefined && inv.returnPct !== undefined) {
+                const {
+                  returnPct,
+                  ...rest
+                } = inv;
+                return {
+                  ...rest,
+                  currentValue: Math.round((inv.amount || 0) * (1 + (returnPct || 0) / 100))
+                };
+              }
+              return inv;
+            });
+          }
           setState(Object.assign(defaultState(), loaded));
         } else {
           setState(defaultState());
@@ -362,12 +375,23 @@ function App() {
   const addExpenseRow = () => patch(s => ({
     expenseCategories: s.expenseCategories.concat([{
       name: 'New expense',
-      amount: 0
+      amount: 0,
+      fixed: false
     }])
   }));
   const removeExpenseRow = i => patch(s => ({
     expenseCategories: s.expenseCategories.filter((_, idx) => idx !== i)
   }));
+  const toggleExpenseFixed = i => patch(s => {
+    const rows = s.expenseCategories.slice();
+    rows[i] = {
+      ...rows[i],
+      fixed: !rows[i].fixed
+    };
+    return {
+      expenseCategories: rows
+    };
+  });
   const updateExpenseRow = (i, field, val) => patch(s => {
     const rows = s.expenseCategories.slice();
     rows[i] = {
@@ -378,6 +402,10 @@ function App() {
       expenseCategories: rows
     };
   });
+  const fillRecurringAmount = (categoryName, s) => {
+    const cat = s.expenseCategories.find(c => c.name === categoryName);
+    if (cat && cat.fixed) setLogAmount(String(cat.amount));else setLogAmount('');
+  };
   const addLogEntry = () => {
     const amt = parseFloat(logAmount) || 0;
     if (amt <= 0) return;
@@ -405,20 +433,6 @@ function App() {
   const removeLogEntry = id => patch(s => ({
     expenseLog: s.expenseLog.filter(e => e.id !== id)
   }));
-  const addPlannedExpense = () => {
-    const amt = parseFloat(plannedAmount) || 0;
-    if (amt <= 0 || !plannedName.trim()) return;
-    patch(s => ({
-      plannedExpenses: s.plannedExpenses.concat([{
-        id: Date.now(),
-        date: selectedDate || todayStr,
-        name: plannedName.trim(),
-        amount: amt
-      }])
-    }));
-    setPlannedName('');
-    setPlannedAmount('');
-  };
   const removePlannedExpense = id => patch(s => ({
     plannedExpenses: s.plannedExpenses.filter(p => p.id !== id)
   }));
@@ -556,7 +570,7 @@ function App() {
       id: Date.now(),
       name: 'New investment',
       amount: 0,
-      returnPct: 0,
+      currentValue: 0,
       lastUpdated: todayStr
     }])
   }));
@@ -566,7 +580,7 @@ function App() {
   const updateInvestment = (id, field, val) => patch(s => ({
     investments: s.investments.map(i => i.id === id ? {
       ...i,
-      [field]: field === 'amount' || field === 'returnPct' ? parseFloat(val) || 0 : val
+      [field]: field === 'amount' || field === 'currentValue' ? parseFloat(val) || 0 : val
     } : i)
   }));
   const markInvestmentUpdated = id => patch(s => ({
@@ -647,8 +661,13 @@ function App() {
     const esc = str => String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const rowsHtml = rows => rows.map(r => '<tr><td>' + esc(r.name) + '</td><td style="text-align:right">' + fmt(r.actual) + '</td><td style="text-align:right;color:#86868b">' + fmt(r.planned) + '</td></tr>').join('');
     const goalsHtml = goalRows.map(r => '<tr><td>' + esc(r.name) + '</td><td style="text-align:right">' + fmt(r.deposits) + '</td><td style="text-align:right">' + fmt(r.current) + ' / ' + fmt(r.target) + '</td><td style="text-align:right">' + r.pct.toFixed(0) + '%</td></tr>').join('');
-    const investHtml = s.investments.map(inv => '<tr><td>' + esc(inv.name) + '</td><td style="text-align:right">' + fmt(inv.amount) + '</td><td style="text-align:right">' + inv.returnPct + '%</td><td style="text-align:right;color:#86868b">' + esc(inv.lastUpdated || '—') + '</td></tr>').join('');
-    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Financial Report — ' + esc(periodLabel) + '</title>' + '<style>' + 'body{font-family:-apple-system,BlinkMacSystemFont,Arial,sans-serif;color:#1d1d1f;max-width:680px;margin:40px auto;padding:0 20px;}' + 'h1{font-size:24px;margin-bottom:2px;} .sub{color:#86868b;font-size:13px;margin-bottom:28px;}' + 'h2{font-size:15px;margin-top:32px;margin-bottom:10px;border-bottom:1px solid #e5e5ea;padding-bottom:6px;}' + 'table{width:100%;border-collapse:collapse;font-size:13px;} td,th{padding:7px 4px;border-bottom:1px solid #f0f0f2;text-align:left;}' + '.stats{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px;} .stat{background:#f5f5f7;border-radius:12px;padding:14px 16px;flex:1;min-width:140px;}' + '.stat .l{font-size:11px;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;} .stat .v{font-size:20px;font-weight:700;margin-top:4px;}' + '.note{font-size:11.5px;color:#86868b;margin-top:28px;line-height:1.5;}' + '</style></head><body>' + '<h1>Financial Report</h1><div class="sub">' + esc(periodLabel) + ' · generated ' + esc(todayStr) + '</div>' + '<div class="stats">' + '<div class="stat"><div class="l">Income</div><div class="v">' + fmt(periodIncome) + '</div></div>' + '<div class="stat"><div class="l">Spent</div><div class="v">' + fmt(actualTotal) + '</div></div>' + '<div class="stat"><div class="l">Budget</div><div class="v">' + fmt(plannedTotal) + '</div></div>' + '</div>' + '<h2>Expenses by category</h2><table><tr><th>Category</th><th style="text-align:right">Actual</th><th style="text-align:right">Budget</th></tr>' + rowsHtml(categoryRows) + '<tr><td><b>Non-recurring</b></td><td style="text-align:right"><b>' + fmt(actualNonRecurring) + '</b></td><td></td></tr></table>' + '<h2>Goals</h2><table><tr><th>Goal</th><th style="text-align:right">Deposited this period</th><th style="text-align:right">Saved / Target</th><th style="text-align:right">Progress</th></tr>' + goalsHtml + '</table>' + (s.investments.length ? '<h2>Investments (snapshot)</h2><table><tr><th>Investment</th><th style="text-align:right">Amount</th><th style="text-align:right">Return</th><th style="text-align:right">Last updated</th></tr>' + investHtml + '</table>' : '') + '<h2>Side hustles</h2><div style="font-size:13px;">Current combined monthly extra income: <b>' + fmt(hustleMonthlyTotal) + '</b>/mo (snapshot as of report date, not a historical total for this period).</div>' + '<div class="note">Income and budget figures reflect your current settings applied across this period — they are not a historical record of what your income or budget actually was in past months. Expense log entries and goal deposits are the actual dated records you logged.</div>' + '</body></html>';
+    const investHtml = s.investments.map(inv => {
+      const gain = (inv.currentValue || 0) - (inv.amount || 0);
+      const gainPct = inv.amount > 0 ? gain / inv.amount * 100 : 0;
+      const gainStr = (gain >= 0 ? '+' : '−') + fmt(Math.abs(gain)) + ' (' + (gain >= 0 ? '+' : '−') + Math.abs(gainPct).toFixed(1) + '%)';
+      return '<tr><td>' + esc(inv.name) + '</td><td style="text-align:right">' + fmt(inv.amount) + '</td><td style="text-align:right">' + fmt(inv.currentValue || 0) + '</td><td style="text-align:right">' + esc(gainStr) + '</td><td style="text-align:right;color:#86868b">' + esc(inv.lastUpdated || '—') + '</td></tr>';
+    }).join('');
+    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Financial Report — ' + esc(periodLabel) + '</title>' + '<style>' + 'body{font-family:-apple-system,BlinkMacSystemFont,Arial,sans-serif;color:#1d1d1f;max-width:680px;margin:40px auto;padding:0 20px;}' + 'h1{font-size:24px;margin-bottom:2px;} .sub{color:#86868b;font-size:13px;margin-bottom:28px;}' + 'h2{font-size:15px;margin-top:32px;margin-bottom:10px;border-bottom:1px solid #e5e5ea;padding-bottom:6px;}' + 'table{width:100%;border-collapse:collapse;font-size:13px;} td,th{padding:7px 4px;border-bottom:1px solid #f0f0f2;text-align:left;}' + '.stats{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px;} .stat{background:#f5f5f7;border-radius:12px;padding:14px 16px;flex:1;min-width:140px;}' + '.stat .l{font-size:11px;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;} .stat .v{font-size:20px;font-weight:700;margin-top:4px;}' + '.note{font-size:11.5px;color:#86868b;margin-top:28px;line-height:1.5;}' + '</style></head><body>' + '<h1>Financial Report</h1><div class="sub">' + esc(periodLabel) + ' · generated ' + esc(todayStr) + '</div>' + '<div class="stats">' + '<div class="stat"><div class="l">Income</div><div class="v">' + fmt(periodIncome) + '</div></div>' + '<div class="stat"><div class="l">Spent</div><div class="v">' + fmt(actualTotal) + '</div></div>' + '<div class="stat"><div class="l">Budget</div><div class="v">' + fmt(plannedTotal) + '</div></div>' + '</div>' + '<h2>Expenses by category</h2><table><tr><th>Category</th><th style="text-align:right">Actual</th><th style="text-align:right">Budget</th></tr>' + rowsHtml(categoryRows) + '<tr><td><b>Non-recurring</b></td><td style="text-align:right"><b>' + fmt(actualNonRecurring) + '</b></td><td></td></tr></table>' + '<h2>Goals</h2><table><tr><th>Goal</th><th style="text-align:right">Deposited this period</th><th style="text-align:right">Saved / Target</th><th style="text-align:right">Progress</th></tr>' + goalsHtml + '</table>' + (s.investments.length ? '<h2>Investments (snapshot)</h2><table><tr><th>Investment</th><th style="text-align:right">Invested</th><th style="text-align:right">Current value</th><th style="text-align:right">Gain</th><th style="text-align:right">Last updated</th></tr>' + investHtml + '</table>' : '') + '<h2>Side hustles</h2><div style="font-size:13px;">Current combined monthly extra income: <b>' + fmt(hustleMonthlyTotal) + '</b>/mo (snapshot as of report date, not a historical total for this period).</div>' + '<div class="note">Income and budget figures reflect your current settings applied across this period — they are not a historical record of what your income or budget actually was in past months. Expense log entries and goal deposits are the actual dated records you logged.</div>' + '</body></html>';
     const blob = new Blob([html], {
       type: 'text/html'
     });
@@ -894,14 +913,19 @@ function App() {
   const categoryResumenRows = s.expenseCategories.map(c => {
     const actual = periodEntries.filter(e => e.recurring && e.name === c.name).reduce((a, e) => a + e.amount, 0);
     const pct = c.amount > 0 ? actual / c.amount * 100 : 0;
+    const paid = actual > 0 && actual >= c.amount;
     return {
       name: c.name,
+      fixed: !!c.fixed,
+      paid,
       planned_fmt: fmt(c.amount),
       actual_fmt: fmt(actual),
       color: pctColor(pct),
       width: Math.min(pct, 100).toFixed(1) + '%'
     };
   });
+  const fixedResumenRows = categoryResumenRows.filter(r => r.fixed);
+  const variableResumenRows = categoryResumenRows.filter(r => !r.fixed);
   const calendarWeeks = buildCalendarWeeks(s.logYear, s.logMonth);
   const actualByDate = {},
     plannedByDate = {};
@@ -932,14 +956,21 @@ function App() {
     homeSpendHeadline = "You're on track this month.";
   }
   const investmentTotal = sum(s.investments);
+  const investmentValueTotal = s.investments.reduce((a, i) => a + (i.currentValue || 0), 0);
   const investmentViews = s.investments.map(inv => {
     const lastUpdatedDate = new Date((inv.lastUpdated || todayStr) + 'T00:00:00');
     const monthsSince = (ctx.today.getFullYear() - lastUpdatedDate.getFullYear()) * 12 + (ctx.today.getMonth() - lastUpdatedDate.getMonth());
     const isStale = monthsSince >= 6;
+    const gainAmount = (inv.currentValue || 0) - (inv.amount || 0);
+    const gainPct = inv.amount > 0 ? gainAmount / inv.amount * 100 : 0;
+    const dateLabel = MONTH_NAMES[lastUpdatedDate.getMonth()] + ' ' + lastUpdatedDate.getDate() + ', ' + lastUpdatedDate.getFullYear();
     return {
       ...inv,
       monthsSince,
-      isStale
+      isStale,
+      gainAmount,
+      gainPct,
+      dateLabel
     };
   });
   const recurringCategoryOptions = s.expenseCategories.map(c => c.name);
@@ -978,16 +1009,14 @@ function App() {
     style: css('min-height:100vh;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",Inter,system-ui,sans-serif;color:#1d1d1f;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('padding-bottom:96px;')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('position:sticky;top:0;z-index:20;background:rgba(255,255,255,0.85);backdrop-filter:blur(14px);border-bottom:1px solid rgba(0,0,0,0.06);padding:16px 20px;')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:17px;font-weight:700;letter-spacing:-0.01em;')
-  }, "Financial Planner"), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:12.5px;color:#86868b;')
-  }, "Your goals, expenses, and investments")), storageWarning && /*#__PURE__*/React.createElement("div", {
+  }, storageWarning && /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff2ef;color:#ff3b30;font-size:12.5px;padding:8px 20px;')
   }, storageWarning), /*#__PURE__*/React.createElement("div", {
-    style: css('max-width:720px;margin:0 auto;padding:20px 20px 0;')
+    style: {
+      maxWidth: 720,
+      margin: '0 auto',
+      padding: 'calc(20px + env(safe-area-inset-top)) 20px 0'
+    }
   }, s.tab === 'inicio' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;flex-direction:column;align-items:center;padding:8px 0 20px;')
   }, /*#__PURE__*/React.createElement("div", {
@@ -1564,7 +1593,10 @@ function App() {
     const hasPlanned = !!plannedByDate[ds];
     return /*#__PURE__*/React.createElement("button", {
       key: di,
-      onClick: () => setSelectedDate(ds),
+      onClick: () => {
+        setSelectedDate(ds);
+        if (logType === 'recurring') fillRecurringAmount(logCategory || s.expenseCategories[0] && s.expenseCategories[0].name || '', s);
+      },
       style: {
         background: isSelected ? '#0071e3' : '#f5f5f7',
         color: isSelected ? '#fff' : '#1d1d1f',
@@ -1649,7 +1681,10 @@ function App() {
   }, "Log an expense for this day"), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:8px;margin-bottom:10px;')
   }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setLogType('recurring'),
+    onClick: () => {
+      setLogType('recurring');
+      fillRecurringAmount(logCategory || s.expenseCategories[0] && s.expenseCategories[0].name || '', s);
+    },
     style: {
       flex: 1,
       background: logType === 'recurring' ? '#0071e3' : '#f5f5f7',
@@ -1676,7 +1711,10 @@ function App() {
     }
   }, "Non-recurring")), logType === 'recurring' ? /*#__PURE__*/React.createElement("select", {
     value: effectiveLogCategory,
-    onChange: e => setLogCategory(e.target.value),
+    onChange: e => {
+      setLogCategory(e.target.value);
+      fillRecurringAmount(e.target.value, s);
+    },
     style: css('width:100%;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:13px;background:#fbfbfd;margin-bottom:8px;')
   }, recurringCategoryOptions.map((n, i) => /*#__PURE__*/React.createElement("option", {
     key: i,
@@ -1688,7 +1726,7 @@ function App() {
     onChange: e => setLogName(e.target.value),
     style: css('width:100%;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:13px;background:#fbfbfd;margin-bottom:8px;')
   }), /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;gap:8px;margin-bottom:16px;')
+    style: css('display:flex;gap:8px;')
   }, /*#__PURE__*/React.createElement("input", {
     type: "number",
     placeholder: "Amount spent",
@@ -1698,26 +1736,7 @@ function App() {
   }), /*#__PURE__*/React.createElement("button", {
     onClick: addLogEntry,
     style: css('background:#0071e3;color:#fff;border:none;padding:9px 16px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;')
-  }, "Log")), /*#__PURE__*/React.createElement("label", {
-    style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:8px;')
-  }, "Plan a future expense for this day"), /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;gap:8px;')
-  }, /*#__PURE__*/React.createElement("input", {
-    type: "text",
-    placeholder: "Name (e.g. annual insurance)",
-    value: plannedName,
-    onChange: e => setPlannedName(e.target.value),
-    style: css('flex:1.4;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:13px;background:#fbfbfd;')
-  }), /*#__PURE__*/React.createElement("input", {
-    type: "number",
-    placeholder: "Amount",
-    value: plannedAmount,
-    onChange: e => setPlannedAmount(e.target.value),
-    style: css('flex:1;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:13px;background:#fbfbfd;')
-  }), /*#__PURE__*/React.createElement("button", {
-    onClick: addPlannedExpense,
-    style: css('background:#f5f5f7;color:#1d1d1f;border:none;padding:9px 14px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;')
-  }, "Plan")))), resumenOpen && /*#__PURE__*/React.createElement("div", {
+  }, "Log")))), resumenOpen && /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:14px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:4px;')
@@ -1742,7 +1761,47 @@ function App() {
       color: pctColor(resumenTotalPct),
       marginTop: 4
     }
-  }, resumenTotalPct.toFixed(0), "% of budget", resumenTotalPct > 100 ? ' — over budget' : '')), categoryResumenRows.map((cr, i) => /*#__PURE__*/React.createElement("div", {
+  }, resumenTotalPct.toFixed(0), "% of budget", resumenTotalPct > 100 ? ' — over budget' : '')), fixedResumenRows.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: css('display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-bottom:14px;')
+  }, fixedResumenRows.map((cr, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      background: cr.paid ? '#eafbf0' : '#f5f5f7',
+      borderRadius: 11,
+      padding: '10px 10px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: 20,
+      height: 20,
+      borderRadius: '50%',
+      flex: 'none',
+      background: cr.paid ? '#34c759' : '#e5e5ea',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center'
+    }
+  }, cr.paid && /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 24 24",
+    width: "12",
+    height: "12",
+    fill: "none",
+    stroke: "#fff",
+    strokeWidth: "3",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M4 12l5 5L20 6"
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: css('min-width:0;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12px;font-weight:600;color:#1d1d1f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;')
+  }, cr.name), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:10.5px;color:#86868b;')
+  }, cr.planned_fmt))))), variableResumenRows.map((cr, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
     style: css('margin-bottom:10px;')
   }, /*#__PURE__*/React.createElement("div", {
@@ -1761,8 +1820,10 @@ function App() {
   }, /*#__PURE__*/React.createElement("span", null, "Of that, non-recurring"), /*#__PURE__*/React.createElement("span", null, fmt(resumenActualNonRecurringNum)))), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:16px;padding:16px;')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
-  }, "Planned budget"), s.expenseCategories.map((row, i) => /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:2px;')
+  }, "Planned budget"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;color:#86868b;margin-bottom:10px;')
+  }, "Mark \"Fixed\" for costs that are always the same (rent, insurance) — those auto-fill when you log them. Leave unmarked for things that vary (groceries, gas)."), s.expenseCategories.map((row, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
     style: css('display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #f0f0f2;')
   }, /*#__PURE__*/React.createElement("input", {
@@ -1770,11 +1831,24 @@ function App() {
     value: row.name,
     onChange: e => updateExpenseRow(i, 'name', e.target.value),
     style: css('flex:1;min-width:0;border:none;background:transparent;font-size:14px;padding:4px 0;')
-  }), /*#__PURE__*/React.createElement("input", {
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: () => toggleExpenseFixed(i),
+    style: {
+      background: row.fixed ? '#0071e3' : '#f5f5f7',
+      color: row.fixed ? '#fff' : '#86868b',
+      border: 'none',
+      borderRadius: 7,
+      padding: '6px 9px',
+      fontSize: 11,
+      fontWeight: 600,
+      cursor: 'pointer',
+      whiteSpace: 'nowrap'
+    }
+  }, row.fixed ? '✓ Fixed' : 'Fixed'), /*#__PURE__*/React.createElement("input", {
     type: "number",
     value: row.amount || '',
     onChange: e => updateExpenseRow(i, 'amount', e.target.value),
-    style: css('width:90px;border:1px solid #e5e5ea;border-radius:8px;padding:6px 8px;font-size:13px;background:#fbfbfd;')
+    style: css('width:80px;border:1px solid #e5e5ea;border-radius:8px;padding:6px 8px;font-size:13px;background:#fbfbfd;')
   }), /*#__PURE__*/React.createElement("button", {
     onClick: () => removeExpenseRow(i),
     style: css('background:none;border:none;color:#ff3b30;cursor:pointer;font-size:15px;')
@@ -1881,15 +1955,21 @@ function App() {
     style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px;')
   }, "Investments"), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;color:#86868b;margin-bottom:16px;')
-  }, "Track what's growing your money outside your goals. Review returns every 6 months."), /*#__PURE__*/React.createElement("div", {
+  }, "Track what's growing your money outside your goals. Update the current value every so often — 6 months is a good rhythm."), /*#__PURE__*/React.createElement("div", {
     style: css('background:linear-gradient(135deg,#0071e3,#34c759);border-radius:20px;padding:22px;color:#fff;margin-bottom:18px;box-shadow:0 16px 40px rgba(0,113,227,0.25);')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;opacity:0.85;')
-  }, "Total invested"), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:36px;font-weight:700;margin:4px 0 10px;')
-  }, fmt(investmentTotal)), /*#__PURE__*/React.createElement("div", {
+  }, "Current value"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:36px;font-weight:700;margin:4px 0 4px;')
+  }, fmt(investmentValueTotal)), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;opacity:0.9;margin-bottom:10px;')
+  }, fmt(investmentTotal), " invested · ", (() => {
+    const g = investmentValueTotal - investmentTotal;
+    const pct = investmentTotal > 0 ? g / investmentTotal * 100 : 0;
+    return (g >= 0 ? '+' : '−') + fmt(Math.abs(g)) + ' (' + (g >= 0 ? '+' : '−') + Math.abs(pct).toFixed(1) + '%)';
+  })()), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13.5px;line-height:1.5;opacity:0.95;')
-  }, s.investments.length === 0 ? 'Add an investment below to start tracking your returns.' : 'Across ' + s.investments.length + (s.investments.length === 1 ? ' investment.' : ' investments.'))), investmentViews.map(inv => /*#__PURE__*/React.createElement("div", {
+  }, s.investments.length === 0 ? 'Add an investment below to start tracking it.' : 'Across ' + s.investments.length + (s.investments.length === 1 ? ' investment.' : ' investments.'))), investmentViews.map(inv => /*#__PURE__*/React.createElement("div", {
     key: inv.id,
     style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:12px;')
   }, /*#__PURE__*/React.createElement("div", {
@@ -1917,22 +1997,28 @@ function App() {
     style: css('flex:1;min-width:90px;')
   }, /*#__PURE__*/React.createElement("label", {
     style: css('display:block;font-size:11px;color:#86868b;font-weight:600;margin-bottom:4px;')
-  }, "Return since update (%)"), /*#__PURE__*/React.createElement("input", {
+  }, "Current value"), /*#__PURE__*/React.createElement("input", {
     type: "number",
-    value: inv.returnPct || '',
-    onChange: e => updateInvestment(inv.id, 'returnPct', e.target.value),
+    value: inv.currentValue || '',
+    onChange: e => updateInvestment(inv.id, 'currentValue', e.target.value),
     style: css('width:100%;padding:8px 10px;border:1px solid #e5e5ea;border-radius:9px;font-size:13.5px;background:#fbfbfd;')
   }))), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;justify-content:space-between;align-items:center;margin-top:10px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 11.5,
+      fontSize: 13,
+      fontWeight: 700,
+      color: inv.gainAmount >= 0 ? '#34c759' : '#ff3b30'
+    }
+  }, inv.gainAmount >= 0 ? '+' : '−', fmt(Math.abs(inv.gainAmount)), " (", inv.gainAmount >= 0 ? '+' : '−', Math.abs(inv.gainPct).toFixed(1), "%)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
       color: inv.isStale ? '#ff9500' : '#86868b'
     }
-  }, inv.monthsSince <= 0 ? 'Updated today' : 'Updated ' + inv.monthsSince + (inv.monthsSince === 1 ? ' month ago' : ' months ago')), inv.isStale && /*#__PURE__*/React.createElement("button", {
+  }, "as of ", inv.dateLabel)), inv.isStale && /*#__PURE__*/React.createElement("button", {
     onClick: () => markInvestmentUpdated(inv.id),
-    style: css('background:#fff2e5;border:none;color:#ff9500;border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer;')
-  }, "🔔 Mark updated")))), /*#__PURE__*/React.createElement("button", {
+    style: css('width:100%;margin-top:10px;background:#fff2e5;border:none;color:#ff9500;border-radius:8px;padding:8px;font-size:11.5px;font-weight:700;cursor:pointer;')
+  }, "🔔 It's been ", inv.monthsSince, " months — update the value?"))), /*#__PURE__*/React.createElement("button", {
     onClick: addInvestment,
     style: css('width:100%;padding:13px;background:#0071e3;color:#fff;border:none;border-radius:14px;font-size:14.5px;font-weight:600;cursor:pointer;')
   }, "+ Add investment")))), /*#__PURE__*/React.createElement("div", {
