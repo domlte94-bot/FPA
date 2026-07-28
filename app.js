@@ -6,6 +6,7 @@ const {
 
 /* ---------- constants ---------- */
 const PALETTE = ['#0071e3', '#34c759', '#ff9500', '#ff3b30', '#af52de', '#5ac8fa'];
+const NONRECURRING_COLOR = '#8e8e93';
 const ICONS = [{
   key: 'home',
   path: 'M3 11.5L12 4l9 7.5M5.5 10v9a1 1 0 0 0 1 1h4v-6h3v6h4a1 1 0 0 0 1-1v-9'
@@ -90,6 +91,7 @@ function buildPersistPayload(state) {
     tab: state.tab,
     income: state.income,
     payFrequency: state.payFrequency,
+    nonRecurringBudget: state.nonRecurringBudget,
     expenseCategories: state.expenseCategories,
     expenseLog: state.expenseLog,
     plannedExpenses: state.plannedExpenses,
@@ -189,30 +191,47 @@ function defaultState() {
     tab: 'inicio',
     income: 3173,
     payFrequency: 'monthly',
+    nonRecurringBudget: 0,
     expenseCategories: [{
       name: "Rent",
-      amount: 450
+      amount: 450,
+      fixed: true,
+      color: PALETTE[0]
     }, {
       name: "Car insurance",
-      amount: 115
+      amount: 115,
+      fixed: true,
+      color: PALETTE[1]
     }, {
       name: "Gas",
-      amount: 37
+      amount: 37,
+      fixed: false,
+      color: PALETTE[2]
     }, {
       name: "Groceries",
-      amount: 600
+      amount: 600,
+      fixed: false,
+      color: PALETTE[3]
     }, {
       name: "Utilities (electricity/water/internet)",
-      amount: 100
+      amount: 100,
+      fixed: true,
+      color: PALETTE[4]
     }, {
       name: "Phone",
-      amount: 40
+      amount: 40,
+      fixed: true,
+      color: PALETTE[5]
     }, {
       name: "Personal / skincare",
-      amount: 80
+      amount: 80,
+      fixed: false,
+      color: PALETTE[0]
     }, {
       name: "Vehicle maintenance",
-      amount: 50
+      amount: 50,
+      fixed: false,
+      color: PALETTE[1]
     }],
     expenseLog: [],
     plannedExpenses: [],
@@ -248,7 +267,7 @@ function monthlyIncomeOf(s) {
   return s.payFrequency === 'biweekly' ? (s.income || 0) * 26 / 12 : s.income || 0;
 }
 function computeCtx(s) {
-  const totalExpenses = sum(s.expenseCategories);
+  const totalExpenses = sum(s.expenseCategories) + (s.nonRecurringBudget || 0);
   const hustleTotal = sum(s.hustles);
   const generalHustleTotal = s.hustles.filter(h => !h.goalId).reduce((a, h) => a + (h.amount || 0), 0);
   const monthlyIncome = monthlyIncomeOf(s);
@@ -332,6 +351,12 @@ function App() {
               return inv;
             });
           }
+          if (loaded.expenseCategories && loaded.expenseCategories.length) {
+            loaded.expenseCategories = loaded.expenseCategories.map((c, i) => c.color ? c : {
+              ...c,
+              color: PALETTE[i % PALETTE.length]
+            });
+          }
           setState(Object.assign(defaultState(), loaded));
         } else {
           setState(defaultState());
@@ -372,11 +397,15 @@ function App() {
   const setPayFrequency = freq => patch({
     payFrequency: freq
   });
+  const onNonRecurringBudget = e => patch({
+    nonRecurringBudget: parseFloat(e.target.value) || 0
+  });
   const addExpenseRow = () => patch(s => ({
     expenseCategories: s.expenseCategories.concat([{
       name: 'New expense',
       amount: 0,
-      fixed: false
+      fixed: false,
+      color: PALETTE[s.expenseCategories.length % PALETTE.length]
     }])
   }));
   const removeExpenseRow = i => patch(s => ({
@@ -910,14 +939,16 @@ function App() {
   const resumenActualTotalNum = resumenActualRecurringNum + resumenActualNonRecurringNum;
   const resumenPlannedTotalNum = monthlyTotal;
   const resumenTotalPct = resumenPlannedTotalNum > 0 ? resumenActualTotalNum / resumenPlannedTotalNum * 100 : 0;
-  const categoryResumenRows = s.expenseCategories.map(c => {
+  const categoryResumenRows = s.expenseCategories.map((c, i) => {
     const actual = periodEntries.filter(e => e.recurring && e.name === c.name).reduce((a, e) => a + e.amount, 0);
     const pct = c.amount > 0 ? actual / c.amount * 100 : 0;
     const paid = actual > 0 && actual >= c.amount;
+    const catColor = c.color || PALETTE[i % PALETTE.length];
     return {
       name: c.name,
       fixed: !!c.fixed,
       paid,
+      catColor,
       planned_fmt: fmt(c.amount),
       actual_fmt: fmt(actual),
       color: pctColor(pct),
@@ -927,11 +958,19 @@ function App() {
   const fixedResumenRows = categoryResumenRows.filter(r => r.fixed);
   const variableResumenRows = categoryResumenRows.filter(r => !r.fixed);
   const calendarWeeks = buildCalendarWeeks(s.logYear, s.logMonth);
+  const categoryColorByName = {};
+  s.expenseCategories.forEach((c, i) => {
+    categoryColorByName[c.name] = c.color || PALETTE[i % PALETTE.length];
+  });
   const actualByDate = {},
-    plannedByDate = {};
+    plannedByDate = {},
+    colorsByDate = {};
   s.expenseLog.forEach(e => {
     const ds = entryDateStr(e);
     actualByDate[ds] = (actualByDate[ds] || 0) + e.amount;
+    const c = e.recurring ? categoryColorByName[e.name] || NONRECURRING_COLOR : NONRECURRING_COLOR;
+    if (!colorsByDate[ds]) colorsByDate[ds] = [];
+    if (!colorsByDate[ds].includes(c)) colorsByDate[ds].push(c);
   });
   s.plannedExpenses.forEach(p => {
     plannedByDate[p.date] = (plannedByDate[p.date] || 0) + p.amount;
@@ -1589,8 +1628,7 @@ function App() {
     const ds = toDateStr(s.logYear, s.logMonth, day);
     const isSelected = ds === selectedDate;
     const isToday = ds === todayStr;
-    const hasActual = !!actualByDate[ds];
-    const hasPlanned = !!plannedByDate[ds];
+    const dayColors = (colorsByDate[ds] || []).slice(0, 4);
     return /*#__PURE__*/React.createElement("button", {
       key: di,
       onClick: () => {
@@ -1621,28 +1659,16 @@ function App() {
         gap: 2,
         height: 5
       }
-    }, hasActual && /*#__PURE__*/React.createElement("span", {
+    }, dayColors.map((c, ci) => /*#__PURE__*/React.createElement("span", {
+      key: ci,
       style: {
         width: 5,
         height: 5,
         borderRadius: '50%',
-        background: isSelected ? '#fff' : '#34c759'
+        background: isSelected ? '#fff' : c
       }
-    }), hasPlanned && /*#__PURE__*/React.createElement("span", {
-      style: {
-        width: 5,
-        height: 5,
-        borderRadius: '50%',
-        background: isSelected ? '#fff' : '#0071e3'
-      }
-    })));
-  }))), /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;gap:16px;font-size:11.5px;color:#6e6e73;margin-top:10px;')
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-    style: css('display:inline-block;width:7px;height:7px;border-radius:50%;background:#34c759;margin-right:5px;')
-  }), "Spent"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-    style: css('display:inline-block;width:7px;height:7px;border-radius:50%;background:#0071e3;margin-right:5px;')
-  }), "Planned"))), selectedDate && /*#__PURE__*/React.createElement("div", {
+    }))));
+  })))), selectedDate && /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:14px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:12px;')
@@ -1745,8 +1771,18 @@ function App() {
   }, "Comparison between what you planned and what you actually spent (everything included)."), /*#__PURE__*/React.createElement("div", {
     style: css('margin-bottom:12px;')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;')
-  }, /*#__PURE__*/React.createElement("span", null, "Total spent"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, fmt(resumenActualTotalNum)), " / ", fmt(resumenPlannedTotalNum))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      fontSize: 13,
+      marginBottom: 6,
+      color: pctColor(resumenTotalPct)
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: 600
+    }
+  }, "Total spent"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, fmt(resumenActualTotalNum)), " / ", fmt(resumenPlannedTotalNum))), /*#__PURE__*/React.createElement("div", {
     style: css('height:8px;border-radius:4px;background:#f0f0f2;overflow:hidden;')
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -1766,9 +1802,10 @@ function App() {
   }, fixedResumenRows.map((cr, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
     style: {
-      background: cr.paid ? '#eafbf0' : '#f5f5f7',
+      background: '#fff',
+      border: cr.paid ? '1.5px solid #34c759' : '1.5px solid #f0f0f2',
       borderRadius: 11,
-      padding: '10px 10px',
+      padding: '9px 10px',
       display: 'flex',
       alignItems: 'center',
       gap: 8
@@ -1798,15 +1835,35 @@ function App() {
   }))), /*#__PURE__*/React.createElement("div", {
     style: css('min-width:0;')
   }, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;gap:5px;')
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: 7,
+      height: 7,
+      borderRadius: '50%',
+      background: cr.catColor,
+      flex: 'none'
+    }
+  }), /*#__PURE__*/React.createElement("span", {
     style: css('font-size:12px;font-weight:600;color:#1d1d1f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;')
-  }, cr.name), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:10.5px;color:#86868b;')
+  }, cr.name)), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:10.5px;color:#86868b;margin-left:12px;')
   }, cr.planned_fmt))))), variableResumenRows.map((cr, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
     style: css('margin-bottom:10px;')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px;')
-  }, /*#__PURE__*/React.createElement("span", null, cr.name), /*#__PURE__*/React.createElement("span", null, cr.actual_fmt, " / ", cr.planned_fmt)), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;justify-content:space-between;align-items:center;font-size:12.5px;margin-bottom:4px;')
+  }, /*#__PURE__*/React.createElement("span", {
+    style: css('display:flex;align-items:center;gap:6px;')
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: 7,
+      height: 7,
+      borderRadius: '50%',
+      background: cr.catColor,
+      flex: 'none'
+    }
+  }), cr.name), /*#__PURE__*/React.createElement("span", null, cr.actual_fmt, " / ", cr.planned_fmt)), /*#__PURE__*/React.createElement("div", {
     style: css('height:6px;border-radius:3px;background:#f0f0f2;overflow:hidden;')
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -1816,8 +1873,32 @@ function App() {
       width: cr.width
     }
   })))), /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;justify-content:space-between;font-size:12.5px;color:#86868b;margin-top:12px;padding-top:10px;border-top:1px solid #f0f0f2;')
-  }, /*#__PURE__*/React.createElement("span", null, "Of that, non-recurring"), /*#__PURE__*/React.createElement("span", null, fmt(resumenActualNonRecurringNum)))), /*#__PURE__*/React.createElement("div", {
+    style: css('margin-top:12px;padding-top:10px;border-top:1px solid #f0f0f2;')
+  }, (() => {
+    const nrPct = s.nonRecurringBudget > 0 ? resumenActualNonRecurringNum / s.nonRecurringBudget * 100 : 0;
+    return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px;')
+    }, /*#__PURE__*/React.createElement("span", {
+      style: css('display:flex;align-items:center;gap:6px;')
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: 7,
+        height: 7,
+        borderRadius: '50%',
+        background: NONRECURRING_COLOR,
+        flex: 'none'
+      }
+    }), "Non-recurring (one-off)"), /*#__PURE__*/React.createElement("span", null, fmt(resumenActualNonRecurringNum), " / ", fmt(s.nonRecurringBudget || 0))), /*#__PURE__*/React.createElement("div", {
+      style: css('height:6px;border-radius:3px;background:#f0f0f2;overflow:hidden;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: '100%',
+        borderRadius: 3,
+        background: pctColor(nrPct),
+        width: Math.min(nrPct, 100).toFixed(1) + '%'
+      }
+    })));
+  })())), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:16px;padding:16px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:2px;')
@@ -1826,7 +1907,15 @@ function App() {
   }, "Mark \"Fixed\" for costs that are always the same (rent, insurance) — those auto-fill when you log them. Leave unmarked for things that vary (groceries, gas)."), s.expenseCategories.map((row, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
     style: css('display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #f0f0f2;')
-  }, /*#__PURE__*/React.createElement("input", {
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: 10,
+      height: 10,
+      borderRadius: '50%',
+      background: row.color || PALETTE[i % PALETTE.length],
+      flex: 'none'
+    }
+  }), /*#__PURE__*/React.createElement("input", {
     type: "text",
     value: row.name,
     onChange: e => updateExpenseRow(i, 'name', e.target.value),
@@ -1856,6 +1945,27 @@ function App() {
     onClick: addExpenseRow,
     style: css('margin-top:10px;background:#f5f5f7;border:none;padding:8px 14px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;')
   }, "+ Add expense"), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;align-items:center;padding:10px 0;border-top:1px solid #f0f0f2;margin-top:10px;')
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: 10,
+      height: 10,
+      borderRadius: '50%',
+      background: NONRECURRING_COLOR,
+      flex: 'none'
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: css('flex:1;min-width:0;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:14px;')
+  }, "Non-recurring allowance"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:10.5px;color:#86868b;')
+  }, "Outings, one-off buys — a monthly cap for everything that isn't a fixed category")), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    value: s.nonRecurringBudget || '',
+    onChange: onNonRecurringBudget,
+    style: css('width:80px;border:1px solid #e5e5ea;border-radius:8px;padding:6px 8px;font-size:13px;background:#fbfbfd;')
+  })), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;justify-content:space-between;font-weight:700;font-size:13.5px;margin-top:10px;padding-top:8px;border-top:1px solid #f0f0f2;')
   }, /*#__PURE__*/React.createElement("span", null, "Monthly total"), /*#__PURE__*/React.createElement("span", null, fmt(monthlyTotal))))), s.tab === 'extra' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px;')
