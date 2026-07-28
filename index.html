@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Financial Planner</title>
+<meta name="description" content="Planifica y ahorra para hasta 6 metas al mismo tiempo.">
+
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#0071e3">
+
+<!-- iOS "Add to Home Screen" support -->
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Mis Metas">
+
+<link rel="icon" href="./icon-192.png" type="image/png">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js" crossorigin></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+
+<style>
+  *{box-sizing:border-box;}
+  html,body{margin:0;}
+  body{-webkit-font-smoothing:antialiased;}
+  ::placeholder{color:#a1a1a6;}
+  input:focus, select:focus{outline:2px solid #0071e3; outline-offset:1px;}
+  input[type=date]{font-family:inherit;}
+  button{font-family:inherit;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="./app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>

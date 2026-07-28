@@ -1,0 +1,1928 @@
+const {
+  useState,
+  useEffect,
+  useRef
+} = React;
+
+/* ---------- constants ---------- */
+const PALETTE = ['#0071e3', '#34c759', '#ff9500', '#ff3b30', '#af52de', '#5ac8fa'];
+const ICONS = [{
+  key: 'home',
+  path: 'M3 11.5L12 4l9 7.5M5.5 10v9a1 1 0 0 0 1 1h4v-6h3v6h4a1 1 0 0 0 1-1v-9'
+}, {
+  key: 'car',
+  path: 'M4 16h16M5 16l1.5-5a2 2 0 0 1 2-1.5h7a2 2 0 0 1 2 1.5L19 16M6 16v2.5a1 1 0 0 1-1 1H4.5a1 1 0 0 1-1-1V16M19 16v2.5a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1V16'
+}, {
+  key: 'plane',
+  path: 'M3 12l18-9-9 18-2-8-7-1z'
+}, {
+  key: 'gift',
+  path: 'M4 8h16v4H4zM5 12h14v9H5zM12 8v13M8.5 8a1.8 1.8 0 1 1 3.5-0.7A1.8 1.8 0 1 1 15.5 8'
+}, {
+  key: 'heart',
+  path: 'M12 20s-7-4.35-9.5-8.5C.5 8 2 4.5 6 4.5c2.2 0 3.7 1.2 6 3.7 2.3-2.5 3.8-3.7 6-3.7 4 0 5.5 3.5 3.5 7C19 15.65 12 20 12 20z'
+}, {
+  key: 'star',
+  path: 'M12 2l2.9 6.5L21 9.3l-5 4.6L17.5 21 12 17.6 6.5 21 8 13.9l-5-4.6 6.1-.8L12 2z'
+}];
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const WEEKDAY_NAMES = ["M", "T", "W", "T", "F", "S", "S"];
+const STORAGE_KEY = 'pf_data_v2';
+
+/* category icons (auto-guessed from name) */
+const CATEGORY_ICON_PATHS = {
+  home: 'M3 11.5L12 4l9 7.5M5.5 10v9a1 1 0 0 0 1 1h4v-6h3v6h4a1 1 0 0 0 1-1v-9',
+  shield: 'M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z',
+  car: 'M4 16h16M5 16l1.5-5a2 2 0 0 1 2-1.5h7a2 2 0 0 1 2 1.5L19 16M6 16v2.5a1 1 0 0 1-1 1H4.5a1 1 0 0 1-1-1V16M19 16v2.5a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1V16',
+  bag: 'M6 8h12l-1 12H7L6 8zM9 8V6a3 3 0 0 1 6 0v2',
+  bolt: 'M13 2L4 14h6l-1 8 9-12h-6l1-8z',
+  phone: 'M6 3h4l2 5-3 2a12 12 0 0 0 6 6l2-3 5 2v4a2 2 0 0 1-2 2C10.5 21 3 13.5 3 5a2 2 0 0 1 2-2z',
+  heart: 'M12 20s-7-4.35-9.5-8.5C.5 8 2 4.5 6 4.5c2.2 0 3.7 1.2 6 3.7 2.3-2.5 3.8-3.7 6-3.7 4 0 5.5 3.5 3.5 7C19 15.65 12 20 12 20z',
+  wrench: 'M14.7 6.3a4 4 0 1 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.8 2.8-2-2 2.8-2.8z',
+  star: 'M12 2l2.9 6.5L21 9.3l-5 4.6L17.5 21 12 17.6 6.5 21 8 13.9l-5-4.6 6.1-.8L12 2z'
+};
+const CATEGORY_ICON_RULES = [{
+  re: /arriendo|renta|alquiler|hipoteca|rent|mortgage/i,
+  icon: 'home'
+}, {
+  re: /seguro|insurance/i,
+  icon: 'shield'
+}, {
+  re: /gasolina|combustible|auto|carro|veh[ií]c|gas|fuel|car/i,
+  icon: 'car'
+}, {
+  re: /comida|super|mercado|restaurante|food|groceries|grocery|restaurant/i,
+  icon: 'bag'
+}, {
+  re: /servicio|luz|agua|internet|el[eé]ctric|utilit|electric|water/i,
+  icon: 'bolt'
+}, {
+  re: /celular|tel[eé]fono|phone|cell/i,
+  icon: 'phone'
+}, {
+  re: /personal|skincare|belleza/i,
+  icon: 'heart'
+}, {
+  re: /mantenimiento|reparaci[oó]n|maintenance|repair/i,
+  icon: 'wrench'
+}];
+function categoryIconPath(name) {
+  const rule = CATEGORY_ICON_RULES.find(r => r.re.test(name || ''));
+  return CATEGORY_ICON_PATHS[rule ? rule.icon : 'star'];
+}
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+function entryDateStr(e) {
+  return e.date || toDateStr(e.year, e.month, e.day || 1);
+}
+function parseMonthYearLabel(label) {
+  const parts = (label || '').split(' ');
+  const mi = MONTH_NAMES.indexOf(parts[0]);
+  const yr = parseInt(parts[1], 10);
+  return {
+    month: mi,
+    year: yr
+  };
+}
+function toDateStr(year, month, day) {
+  return year + '-' + pad2(month + 1) + '-' + pad2(day);
+}
+function buildCalendarWeeks(year, month) {
+  const firstDow = (new Date(year, month, 1).getDay() + 6) % 7; // Monday = 0
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < firstDow; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return weeks;
+}
+const storageAdapter = {
+  async get(key) {
+    if (typeof window !== 'undefined' && window.storage && typeof window.storage.get === 'function') {
+      try {
+        return await window.storage.get(key);
+      } catch (e) {/* fall through to localStorage */}
+    }
+    try {
+      const raw = window.localStorage.getItem(key);
+      return raw ? {
+        key,
+        value: raw,
+        shared: false
+      } : null;
+    } catch (e) {
+      return null;
+    }
+  },
+  async set(key, value) {
+    if (typeof window !== 'undefined' && window.storage && typeof window.storage.set === 'function') {
+      try {
+        return await window.storage.set(key, value);
+      } catch (e) {/* fall through to localStorage */}
+    }
+    window.localStorage.setItem(key, value);
+    return {
+      key,
+      value,
+      shared: false
+    };
+  }
+};
+
+/* ---------- helpers ---------- */
+function css(s) {
+  const o = {};
+  (s || '').split(';').forEach(rule => {
+    if (!rule.trim()) return;
+    const idx = rule.indexOf(':');
+    if (idx < 0) return;
+    const prop = rule.slice(0, idx).trim().replace(/-([a-z])/g, (m, c) => c.toUpperCase());
+    const val = rule.slice(idx + 1).trim();
+    if (prop) o[prop] = val;
+  });
+  return o;
+}
+function fmt(n) {
+  return '$' + Math.round(n || 0).toLocaleString('en-US');
+}
+function sum(rows) {
+  return rows.reduce((a, r) => a + (parseFloat(r.amount) || 0), 0);
+}
+function monthsBetween(from, to) {
+  return Math.max((to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth()), 1);
+}
+function addMonths(date, n) {
+  const d = new Date(date);
+  d.setMonth(d.getMonth() + n);
+  return d;
+}
+function currentMonthKey() {
+  const d = new Date();
+  return d.getFullYear() + '-' + d.getMonth();
+}
+function iconPathFor(key) {
+  const f = ICONS.find(i => i.key === key);
+  return f ? f.path : ICONS[0].path;
+}
+function defaultState() {
+  const today = new Date();
+  return {
+    tab: 'inicio',
+    income: 3173,
+    payFrequency: 'monthly',
+    expenseCategories: [{
+      name: "Rent",
+      amount: 450
+    }, {
+      name: "Car insurance",
+      amount: 115
+    }, {
+      name: "Gas",
+      amount: 37
+    }, {
+      name: "Groceries",
+      amount: 600
+    }, {
+      name: "Utilities (electricity/water/internet)",
+      amount: 100
+    }, {
+      name: "Phone",
+      amount: 40
+    }, {
+      name: "Personal / skincare",
+      amount: 80
+    }, {
+      name: "Vehicle maintenance",
+      amount: 50
+    }],
+    expenseLog: [],
+    plannedExpenses: [],
+    hustles: [{
+      id: 1,
+      name: "Freelance projects (Muvves)",
+      amount: 0,
+      streak: 0,
+      lastMonth: '',
+      goalId: null
+    }],
+    goals: [{
+      id: 1,
+      name: "Construction",
+      icon: 'home',
+      color: PALETTE[0],
+      target: 75000,
+      current: 0,
+      mode: 'auto',
+      percent: 100,
+      customDate: '',
+      reminderOn: false,
+      reminderDay: 1,
+      savingsLog: []
+    }],
+    selectedGoalId: 1,
+    investments: [],
+    logMonth: today.getMonth(),
+    logYear: today.getFullYear()
+  };
+}
+function monthlyIncomeOf(s) {
+  return s.payFrequency === 'biweekly' ? (s.income || 0) * 26 / 12 : s.income || 0;
+}
+function computeCtx(s) {
+  const totalExpenses = sum(s.expenseCategories);
+  const hustleTotal = sum(s.hustles);
+  const generalHustleTotal = s.hustles.filter(h => !h.goalId).reduce((a, h) => a + (h.amount || 0), 0);
+  const monthlyIncome = monthlyIncomeOf(s);
+  const baseAvailable = monthlyIncome - totalExpenses;
+  const boostedAvailable = monthlyIncome + generalHustleTotal - totalExpenses;
+  const manualPercentTotal = s.goals.filter(g => g.mode === 'manual').reduce((a, g) => a + (g.percent || 0), 0);
+  const autoCount = Math.max(s.goals.filter(g => g.mode !== 'manual').length, 1);
+  const autoPercentEach = Math.max(100 - manualPercentTotal, 0) / autoCount;
+  const assignedByGoal = {};
+  s.hustles.forEach(h => {
+    if (h.goalId) assignedByGoal[h.goalId] = (assignedByGoal[h.goalId] || 0) + (h.amount || 0);
+  });
+  return {
+    totalExpenses,
+    hustleTotal,
+    generalHustleTotal,
+    monthlyIncome,
+    baseAvailable,
+    boostedAvailable,
+    manualPercentTotal,
+    autoCount,
+    autoPercentEach,
+    assignedByGoal,
+    today: new Date()
+  };
+}
+
+/* ---------- app ---------- */
+function App() {
+  const [state, setState] = useState(null);
+  const [storageWarning, setStorageWarning] = useState('');
+  const [depositAmount, setDepositAmount] = useState('');
+  const [logAmount, setLogAmount] = useState('');
+  const [logName, setLogName] = useState('');
+  const [logType, setLogType] = useState('recurring');
+  const [logCategory, setLogCategory] = useState('');
+  const todayStr = (() => {
+    const t = new Date();
+    return toDateStr(t.getFullYear(), t.getMonth(), t.getDate());
+  })();
+  const [selectedDate, setSelectedDate] = useState(todayStr);
+  const [resumenOpen, setResumenOpen] = useState(true);
+  const [plannedName, setPlannedName] = useState('');
+  const [plannedAmount, setPlannedAmount] = useState('');
+  const [editingIncome, setEditingIncome] = useState(false);
+  const [reportYear, setReportYear] = useState(new Date().getFullYear());
+  const [reportQuarter, setReportQuarter] = useState(Math.floor(new Date().getMonth() / 3) + 1);
+  const lineCanvasRef = useRef(null);
+  const donutCanvasRef = useRef(null);
+  const saveTimer = useRef(null);
+  const hasLoaded = useRef(false);
+
+  /* load persisted data once */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await storageAdapter.get(STORAGE_KEY);
+        if (cancelled) return;
+        if (res && res.value) {
+          const loaded = JSON.parse(res.value);
+          if (loaded.quarterlyCategories && loaded.quarterlyCategories.length) {
+            loaded.expenseCategories = (loaded.expenseCategories || []).concat(loaded.quarterlyCategories.map(c => ({
+              name: c.name,
+              amount: Math.round((c.amount || 0) / 3)
+            })));
+          }
+          delete loaded.quarterlyCategories;
+          setState(Object.assign(defaultState(), loaded));
+        } else {
+          setState(defaultState());
+        }
+      } catch (e) {
+        if (!cancelled) setState(defaultState());
+      } finally {
+        if (!cancelled) hasLoaded.current = true;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /* persist (debounced) */
+  useEffect(() => {
+    if (!state || !hasLoaded.current) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      const toSave = {
+        tab: state.tab,
+        income: state.income,
+        payFrequency: state.payFrequency,
+        expenseCategories: state.expenseCategories,
+        expenseLog: state.expenseLog,
+        plannedExpenses: state.plannedExpenses,
+        hustles: state.hustles,
+        goals: state.goals,
+        investments: state.investments,
+        selectedGoalId: state.selectedGoalId,
+        logMonth: state.logMonth,
+        logYear: state.logYear
+      };
+      storageAdapter.set(STORAGE_KEY, JSON.stringify(toSave)).catch(() => setStorageWarning('Could not save. Your changes might not persist.'));
+    }, 500);
+    return () => clearTimeout(saveTimer.current);
+  }, [state]);
+  const patch = fn => setState(s => ({
+    ...s,
+    ...(typeof fn === 'function' ? fn(s) : fn)
+  }));
+
+  /* ---- handlers ---- */
+  const setTab = name => patch({
+    tab: name
+  });
+  const onIncome = e => patch({
+    income: parseFloat(e.target.value) || 0
+  });
+  const setPayFrequency = freq => patch({
+    payFrequency: freq
+  });
+  const addExpenseRow = () => patch(s => ({
+    expenseCategories: s.expenseCategories.concat([{
+      name: 'New expense',
+      amount: 0
+    }])
+  }));
+  const removeExpenseRow = i => patch(s => ({
+    expenseCategories: s.expenseCategories.filter((_, idx) => idx !== i)
+  }));
+  const updateExpenseRow = (i, field, val) => patch(s => {
+    const rows = s.expenseCategories.slice();
+    rows[i] = {
+      ...rows[i],
+      [field]: field === 'amount' ? parseFloat(val) || 0 : val
+    };
+    return {
+      expenseCategories: rows
+    };
+  });
+  const addLogEntry = () => {
+    const amt = parseFloat(logAmount) || 0;
+    if (amt <= 0) return;
+    const recurring = logType === 'recurring';
+    const d = new Date((selectedDate || todayStr) + 'T00:00:00');
+    patch(s => {
+      const recurringCats = s.expenseCategories.map(c => c.name);
+      const name = recurring ? logCategory || recurringCats[0] || 'Expense' : logName.trim() || 'Expense';
+      return {
+        expenseLog: s.expenseLog.concat([{
+          id: Date.now(),
+          date: selectedDate || todayStr,
+          year: d.getFullYear(),
+          month: d.getMonth(),
+          day: d.getDate(),
+          amount: amt,
+          name,
+          recurring
+        }])
+      };
+    });
+    setLogAmount('');
+    setLogName('');
+  };
+  const removeLogEntry = id => patch(s => ({
+    expenseLog: s.expenseLog.filter(e => e.id !== id)
+  }));
+  const addPlannedExpense = () => {
+    const amt = parseFloat(plannedAmount) || 0;
+    if (amt <= 0 || !plannedName.trim()) return;
+    patch(s => ({
+      plannedExpenses: s.plannedExpenses.concat([{
+        id: Date.now(),
+        date: selectedDate || todayStr,
+        name: plannedName.trim(),
+        amount: amt
+      }])
+    }));
+    setPlannedName('');
+    setPlannedAmount('');
+  };
+  const removePlannedExpense = id => patch(s => ({
+    plannedExpenses: s.plannedExpenses.filter(p => p.id !== id)
+  }));
+  const markPlannedAsSpent = id => {
+    patch(s => {
+      const p = s.plannedExpenses.find(x => x.id === id);
+      if (!p) return {};
+      const d = new Date(p.date + 'T00:00:00');
+      return {
+        plannedExpenses: s.plannedExpenses.filter(x => x.id !== id),
+        expenseLog: s.expenseLog.concat([{
+          id: Date.now(),
+          date: p.date,
+          year: d.getFullYear(),
+          month: d.getMonth(),
+          day: d.getDate(),
+          amount: p.amount,
+          name: p.name,
+          recurring: false
+        }])
+      };
+    });
+  };
+  const selectGoal = id => patch({
+    selectedGoalId: id
+  });
+  const addGoal = () => {
+    patch(s => {
+      if (s.goals.length >= 6) return {};
+      const id = Date.now();
+      const newGoal = {
+        id,
+        name: 'New goal',
+        icon: 'star',
+        color: PALETTE[s.goals.length % PALETTE.length],
+        target: 1000,
+        current: 0,
+        mode: 'auto',
+        percent: 0,
+        customDate: '',
+        reminderOn: false,
+        reminderDay: 1,
+        savingsLog: []
+      };
+      return {
+        goals: s.goals.concat([newGoal]),
+        selectedGoalId: id
+      };
+    });
+  };
+  const removeGoal = id => patch(s => {
+    const goals = s.goals.filter(g => g.id !== id);
+    return {
+      goals,
+      selectedGoalId: s.selectedGoalId === id ? goals[0] ? goals[0].id : null : s.selectedGoalId
+    };
+  });
+  const updateGoal = (id, field, val) => patch(s => ({
+    goals: s.goals.map(g => g.id === id ? {
+      ...g,
+      [field]: val
+    } : g)
+  }));
+  const setGoalColor = (id, hex) => updateGoal(id, 'color', hex);
+  const setGoalIcon = (id, key) => updateGoal(id, 'icon', key);
+  const toggleGoalMode = id => patch(s => ({
+    goals: s.goals.map(g => g.id === id ? {
+      ...g,
+      mode: g.mode === 'manual' ? 'auto' : 'manual'
+    } : g)
+  }));
+  const toggleReminder = id => patch(s => ({
+    goals: s.goals.map(g => g.id === id ? {
+      ...g,
+      reminderOn: !g.reminderOn
+    } : g)
+  }));
+  const registerDeposit = id => {
+    const amt = parseFloat(depositAmount) || 0;
+    if (amt <= 0) return;
+    const label = MONTH_NAMES[new Date().getMonth()] + ' ' + new Date().getFullYear();
+    patch(s => ({
+      goals: s.goals.map(g => g.id === id ? {
+        ...g,
+        current: (g.current || 0) + amt,
+        savingsLog: [{
+          id: Date.now(),
+          label,
+          amount: amt
+        }].concat(g.savingsLog || []).slice(0, 12)
+      } : g)
+    }));
+    setDepositAmount('');
+  };
+  const addHustle = () => patch(s => ({
+    hustles: s.hustles.concat([{
+      id: Date.now(),
+      name: 'New extra income',
+      amount: 0,
+      streak: 0,
+      lastMonth: '',
+      goalId: null
+    }])
+  }));
+  const removeHustle = id => patch(s => ({
+    hustles: s.hustles.filter(h => h.id !== id)
+  }));
+  const updateHustle = (id, field, val) => patch(s => ({
+    hustles: s.hustles.map(h => h.id === id ? {
+      ...h,
+      [field]: field === 'amount' ? parseFloat(val) || 0 : val
+    } : h)
+  }));
+  const setHustleGoal = (id, goalId) => patch(s => ({
+    hustles: s.hustles.map(h => h.id === id ? {
+      ...h,
+      goalId: goalId || null
+    } : h)
+  }));
+  const checkInHustle = id => {
+    const key = currentMonthKey();
+    patch(s => ({
+      hustles: s.hustles.map(h => {
+        if (h.id !== id || h.lastMonth === key) return h;
+        return {
+          ...h,
+          streak: (h.streak || 0) + 1,
+          lastMonth: key
+        };
+      })
+    }));
+  };
+  const addInvestment = () => patch(s => ({
+    investments: s.investments.concat([{
+      id: Date.now(),
+      name: 'New investment',
+      amount: 0,
+      returnPct: 0,
+      lastUpdated: todayStr
+    }])
+  }));
+  const removeInvestment = id => patch(s => ({
+    investments: s.investments.filter(i => i.id !== id)
+  }));
+  const updateInvestment = (id, field, val) => patch(s => ({
+    investments: s.investments.map(i => i.id === id ? {
+      ...i,
+      [field]: field === 'amount' || field === 'returnPct' ? parseFloat(val) || 0 : val
+    } : i)
+  }));
+  const markInvestmentUpdated = id => patch(s => ({
+    investments: s.investments.map(i => i.id === id ? {
+      ...i,
+      lastUpdated: todayStr
+    } : i)
+  }));
+  const downloadReport = scope => {
+    const months = scope === 'quarter' ? [(reportQuarter - 1) * 3, (reportQuarter - 1) * 3 + 1, (reportQuarter - 1) * 3 + 2] : [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+    const monthCount = months.length;
+    const periodLabel = scope === 'quarter' ? 'Q' + reportQuarter + ' ' + reportYear : 'Year ' + reportYear;
+    const ctxNow = computeCtx(s);
+    const periodExpenseEntries = s.expenseLog.filter(e => e.year === reportYear && months.includes(e.month));
+    const actualRecurring = periodExpenseEntries.filter(e => e.recurring).reduce((a, e) => a + e.amount, 0);
+    const actualNonRecurring = periodExpenseEntries.filter(e => !e.recurring).reduce((a, e) => a + e.amount, 0);
+    const actualTotal = actualRecurring + actualNonRecurring;
+    const plannedTotal = ctxNow.totalExpenses * monthCount;
+    const periodIncome = ctxNow.monthlyIncome * monthCount;
+    const categoryRows = s.expenseCategories.map(c => {
+      const actual = periodExpenseEntries.filter(e => e.recurring && e.name === c.name).reduce((a, e) => a + e.amount, 0);
+      const planned = c.amount * monthCount;
+      return {
+        name: c.name,
+        actual,
+        planned
+      };
+    });
+    const goalRows = s.goals.map(g => {
+      const deposits = (g.savingsLog || []).filter(entry => {
+        const p = parseMonthYearLabel(entry.label);
+        return p.year === reportYear && months.includes(p.month);
+      }).reduce((a, entry) => a + entry.amount, 0);
+      const pct = g.target > 0 ? Math.min(100, g.current / g.target * 100) : 0;
+      return {
+        name: g.name,
+        deposits,
+        current: g.current,
+        target: g.target,
+        pct
+      };
+    });
+    const hustleMonthlyTotal = sum(s.hustles);
+    const esc = str => String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const rowsHtml = rows => rows.map(r => '<tr><td>' + esc(r.name) + '</td><td style="text-align:right">' + fmt(r.actual) + '</td><td style="text-align:right;color:#86868b">' + fmt(r.planned) + '</td></tr>').join('');
+    const goalsHtml = goalRows.map(r => '<tr><td>' + esc(r.name) + '</td><td style="text-align:right">' + fmt(r.deposits) + '</td><td style="text-align:right">' + fmt(r.current) + ' / ' + fmt(r.target) + '</td><td style="text-align:right">' + r.pct.toFixed(0) + '%</td></tr>').join('');
+    const investHtml = s.investments.map(inv => '<tr><td>' + esc(inv.name) + '</td><td style="text-align:right">' + fmt(inv.amount) + '</td><td style="text-align:right">' + inv.returnPct + '%</td><td style="text-align:right;color:#86868b">' + esc(inv.lastUpdated || '—') + '</td></tr>').join('');
+    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Financial Report — ' + esc(periodLabel) + '</title>' + '<style>' + 'body{font-family:-apple-system,BlinkMacSystemFont,Arial,sans-serif;color:#1d1d1f;max-width:680px;margin:40px auto;padding:0 20px;}' + 'h1{font-size:24px;margin-bottom:2px;} .sub{color:#86868b;font-size:13px;margin-bottom:28px;}' + 'h2{font-size:15px;margin-top:32px;margin-bottom:10px;border-bottom:1px solid #e5e5ea;padding-bottom:6px;}' + 'table{width:100%;border-collapse:collapse;font-size:13px;} td,th{padding:7px 4px;border-bottom:1px solid #f0f0f2;text-align:left;}' + '.stats{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px;} .stat{background:#f5f5f7;border-radius:12px;padding:14px 16px;flex:1;min-width:140px;}' + '.stat .l{font-size:11px;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;} .stat .v{font-size:20px;font-weight:700;margin-top:4px;}' + '.note{font-size:11.5px;color:#86868b;margin-top:28px;line-height:1.5;}' + '</style></head><body>' + '<h1>Financial Report</h1><div class="sub">' + esc(periodLabel) + ' · generated ' + esc(todayStr) + '</div>' + '<div class="stats">' + '<div class="stat"><div class="l">Income</div><div class="v">' + fmt(periodIncome) + '</div></div>' + '<div class="stat"><div class="l">Spent</div><div class="v">' + fmt(actualTotal) + '</div></div>' + '<div class="stat"><div class="l">Budget</div><div class="v">' + fmt(plannedTotal) + '</div></div>' + '</div>' + '<h2>Expenses by category</h2><table><tr><th>Category</th><th style="text-align:right">Actual</th><th style="text-align:right">Budget</th></tr>' + rowsHtml(categoryRows) + '<tr><td><b>Non-recurring</b></td><td style="text-align:right"><b>' + fmt(actualNonRecurring) + '</b></td><td></td></tr></table>' + '<h2>Goals</h2><table><tr><th>Goal</th><th style="text-align:right">Deposited this period</th><th style="text-align:right">Saved / Target</th><th style="text-align:right">Progress</th></tr>' + goalsHtml + '</table>' + (s.investments.length ? '<h2>Investments (snapshot)</h2><table><tr><th>Investment</th><th style="text-align:right">Amount</th><th style="text-align:right">Return</th><th style="text-align:right">Last updated</th></tr>' + investHtml + '</table>' : '') + '<h2>Side hustles</h2><div style="font-size:13px;">Current combined monthly extra income: <b>' + fmt(hustleMonthlyTotal) + '</b>/mo (snapshot as of report date, not a historical total for this period).</div>' + '<div class="note">Income and budget figures reflect your current settings applied across this period — they are not a historical record of what your income or budget actually was in past months. Expense log entries and goal deposits are the actual dated records you logged.</div>' + '</body></html>';
+    const blob = new Blob([html], {
+      type: 'text/html'
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'Financial-Report-' + periodLabel.replace(/\s+/g, '-') + '.html';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  };
+  const calPrevMonth = () => patch(s => {
+    const m = s.logMonth - 1,
+      wrap = m < 0;
+    return {
+      logMonth: wrap ? 11 : m,
+      logYear: wrap ? s.logYear - 1 : s.logYear
+    };
+  });
+  const calNextMonth = () => patch(s => {
+    const m = s.logMonth + 1,
+      wrap = m > 11;
+    return {
+      logMonth: wrap ? 0 : m,
+      logYear: wrap ? s.logYear + 1 : s.logYear
+    };
+  });
+
+  /* ---- chart drawing ---- */
+  const drawCharts = (s, ctx) => {
+    const canvas = lineCanvasRef.current;
+    const dcanvas = donutCanvasRef.current;
+    const {
+      boostedAvailable,
+      baseAvailable,
+      autoPercentEach,
+      assignedByGoal,
+      totalExpenses,
+      generalHustleTotal
+    } = ctx;
+    if (canvas) {
+      const goal = s.goals.find(g => g.id === s.selectedGoalId);
+      const c2 = canvas.getContext('2d');
+      const W = canvas.width,
+        H = canvas.height;
+      c2.clearRect(0, 0, W, H);
+      if (goal) {
+        const percent = goal.mode === 'manual' ? goal.percent || 0 : autoPercentEach;
+        const monthlyBoosted = boostedAvailable * (percent / 100) + (assignedByGoal[goal.id] || 0);
+        const monthlyBase = baseAvailable * (percent / 100);
+        const remaining = Math.max(goal.target - goal.current, 0);
+        const monthsToGoal = monthlyBoosted > 0 ? Math.ceil(remaining / monthlyBoosted) : Infinity;
+        const N = isFinite(monthsToGoal) ? Math.min(monthsToGoal, 240) : 24;
+        const dataBoost = [],
+          dataBase = [];
+        for (let i = 0; i <= N; i++) {
+          dataBoost.push(Math.min(goal.current + monthlyBoosted * i, goal.target * 1.05));
+          dataBase.push(Math.min(goal.current + Math.max(monthlyBase, 0) * i, goal.target * 1.05));
+        }
+        const padL = 54,
+          padR = 12,
+          padT = 14,
+          padB = 18;
+        const plotW = W - padL - padR,
+          plotH = H - padT - padB;
+        const maxY = Math.max(goal.target * 1.08, ...dataBoost, ...dataBase, 1);
+        const xAt = i => padL + plotW * (N === 0 ? 0 : i / N);
+        const yAt = v => padT + plotH - plotH * (v / maxY);
+        c2.strokeStyle = '#f0f0f2';
+        c2.fillStyle = '#86868b';
+        c2.font = '11px -apple-system, sans-serif';
+        c2.textAlign = 'right';
+        for (let st = 0; st <= 4; st++) {
+          const v = maxY * st / 4,
+            y = yAt(v);
+          c2.beginPath();
+          c2.moveTo(padL, y);
+          c2.lineTo(W - padR, y);
+          c2.stroke();
+          c2.fillText(fmt(v), padL - 8, y + 4);
+        }
+        c2.strokeStyle = '#c7c7cc';
+        c2.setLineDash([4, 4]);
+        c2.lineWidth = 1.5;
+        const gy = yAt(goal.target);
+        c2.beginPath();
+        c2.moveTo(padL, gy);
+        c2.lineTo(W - padR, gy);
+        c2.stroke();
+        c2.setLineDash([]);
+        c2.beginPath();
+        c2.moveTo(xAt(0), yAt(dataBase[0]));
+        dataBase.forEach((v, i) => c2.lineTo(xAt(i), yAt(v)));
+        c2.strokeStyle = '#c7c7cc';
+        c2.setLineDash([3, 3]);
+        c2.lineWidth = 2;
+        c2.stroke();
+        c2.setLineDash([]);
+        c2.beginPath();
+        c2.moveTo(xAt(0), yAt(dataBoost[0]));
+        dataBoost.forEach((v, i) => c2.lineTo(xAt(i), yAt(v)));
+        c2.lineTo(xAt(dataBoost.length - 1), yAt(0));
+        c2.lineTo(xAt(0), yAt(0));
+        c2.closePath();
+        c2.fillStyle = goal.color + '20';
+        c2.fill();
+        c2.beginPath();
+        c2.moveTo(xAt(0), yAt(dataBoost[0]));
+        dataBoost.forEach((v, i) => c2.lineTo(xAt(i), yAt(v)));
+        c2.strokeStyle = goal.color;
+        c2.lineWidth = 2.5;
+        c2.stroke();
+      }
+    }
+    let donutCats = [];
+    if (dcanvas) {
+      const dctx = dcanvas.getContext('2d');
+      const DW = dcanvas.width,
+        DH = dcanvas.height;
+      dctx.clearRect(0, 0, DW, DH);
+      const cats = [];
+      if (totalExpenses > 0) cats.push({
+        label: 'Gastos',
+        value: totalExpenses,
+        color: '#c7c7cc'
+      });
+      s.goals.forEach(g => {
+        const percent = g.mode === 'manual' ? g.percent || 0 : autoPercentEach;
+        const m = boostedAvailable * (percent / 100) + (assignedByGoal[g.id] || 0);
+        if (m > 0) cats.push({
+          label: g.name,
+          value: m,
+          color: g.color
+        });
+      });
+      const allocated = cats.slice(totalExpenses > 0 ? 1 : 0).reduce((a, c) => a + c.value, 0);
+      const leftover = Math.max(ctx.monthlyIncome + generalHustleTotal - totalExpenses - allocated, 0);
+      if (leftover > 1) cats.push({
+        label: 'Sin asignar',
+        value: leftover,
+        color: '#f0f0f2'
+      });
+      const total = cats.reduce((a, c) => a + c.value, 0) || 1;
+      const cx = DW / 2,
+        cy = DH / 2,
+        rOuter = Math.min(DW, DH) / 2 - 4,
+        rInner = rOuter * 0.6;
+      let start = -Math.PI / 2;
+      cats.forEach(c => {
+        const angle = c.value / total * Math.PI * 2;
+        dctx.beginPath();
+        dctx.moveTo(cx, cy);
+        dctx.arc(cx, cy, rOuter, start, start + angle);
+        dctx.closePath();
+        dctx.fillStyle = c.color;
+        dctx.fill();
+        start += angle;
+      });
+      dctx.beginPath();
+      dctx.arc(cx, cy, rInner, 0, Math.PI * 2);
+      dctx.fillStyle = '#fff';
+      dctx.fill();
+      donutCats = cats;
+    }
+    return donutCats;
+  };
+  const [donutLegend, setDonutLegend] = useState([]);
+  useEffect(() => {
+    if (!state) return;
+    const ctx = computeCtx(state);
+    const cats = drawCharts(state, ctx);
+    setDonutLegend((cats || []).map(c => ({
+      label: c.label + ' — ' + fmt(c.value),
+      color: c.color
+    })));
+    // eslint-disable-next-line
+  }, [state]);
+  if (!state) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: css('min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f5f7;color:#86868b;font-family:-apple-system,BlinkMacSystemFont,Inter,system-ui,sans-serif;font-size:14px;')
+    }, "Loading…");
+  }
+  const s = state;
+  const ctx = computeCtx(s);
+  function buildGoalView(goal, isDetail) {
+    const percent = goal.mode === 'manual' ? goal.percent || 0 : ctx.autoPercentEach;
+    const monthlyBoosted = ctx.boostedAvailable * (percent / 100) + (ctx.assignedByGoal[goal.id] || 0);
+    const remaining = Math.max(goal.target - goal.current, 0);
+    const monthsToGoal = monthlyBoosted > 0 ? Math.ceil(remaining / monthlyBoosted) : Infinity;
+    const estDate = isFinite(monthsToGoal) ? addMonths(ctx.today, monthsToGoal) : null;
+    const estDateLabel = estDate ? MONTH_NAMES[estDate.getMonth()] + ' ' + estDate.getFullYear() : 'No savings assigned';
+    const progressPct = goal.target > 0 ? Math.min(100, goal.current / goal.target * 100) : 0;
+    const view = {
+      goal,
+      percent,
+      monthlyBoosted,
+      progressPct,
+      monthsToGoal,
+      progressLabel: progressPct.toFixed(0) + '%',
+      progressWidth: progressPct.toFixed(1) + '%',
+      monthlyLabel: fmt(monthlyBoosted),
+      percentLabel: Math.round(percent) + '%',
+      estDateLabel,
+      monthsLabel: isFinite(monthsToGoal) ? monthsToGoal + (monthsToGoal === 1 ? ' month' : ' months') : 'no timeline'
+    };
+    if (!isDetail) return view;
+    let customMsg = '',
+      customMsgColor = '#34c759';
+    if (goal.customDate) {
+      const cd = new Date(goal.customDate + 'T00:00:00');
+      const monthsUntil = monthsBetween(ctx.today, cd);
+      const requiredMonthly = remaining / monthsUntil;
+      const delta = requiredMonthly - monthlyBoosted;
+      if (delta > 1) {
+        customMsg = 'You need ' + fmt(delta) + ' more per month to reach it by ' + MONTH_NAMES[cd.getMonth()] + ' ' + cd.getFullYear() + '.';
+        customMsgColor = '#ff9500';
+      } else {
+        customMsg = "You're on track — at this pace you'll get there before that date.";
+        customMsgColor = '#34c759';
+      }
+    }
+    view.customMsg = customMsg;
+    view.customMsgColor = customMsgColor;
+    return view;
+  }
+  const monthlyTotal = ctx.totalExpenses,
+    hustleTotal = ctx.hustleTotal;
+  const totalCurrent = s.goals.reduce((a, g) => a + (g.current || 0), 0);
+  const totalTarget = s.goals.reduce((a, g) => a + (g.target || 0), 0);
+  const overallPct = totalTarget > 0 ? Math.min(100, totalCurrent / totalTarget * 100) : 0;
+  const globalHustleMessage = hustleTotal <= 0 ? 'Add an extra income below to see how many months you can save on your goals.' : 'Your side hustles add up to ' + fmt(hustleTotal) + '/mo extra — assign them to a specific goal or leave them general to split automatically.';
+  const overAllocatedWarning = ctx.manualPercentTotal > 100 ? 'Your manual percentages add up to (' + ctx.manualPercentTotal.toFixed(0) + '%), which is over 100%.' : '';
+  const sgSource = s.goals.find(g => g.id === s.selectedGoalId);
+  const sg = sgSource ? buildGoalView(sgSource, true) : null;
+  const pctColor = pct => pct > 100 ? '#ff3b30' : pct >= 80 ? '#ff9500' : '#34c759';
+  const periodEntries = s.expenseLog.filter(e => e.year === s.logYear && e.month === s.logMonth);
+  const resumenActualRecurringNum = periodEntries.filter(e => e.recurring).reduce((a, e) => a + e.amount, 0);
+  const resumenActualNonRecurringNum = periodEntries.filter(e => !e.recurring).reduce((a, e) => a + e.amount, 0);
+  const resumenActualTotalNum = resumenActualRecurringNum + resumenActualNonRecurringNum;
+  const resumenPlannedTotalNum = monthlyTotal;
+  const resumenTotalPct = resumenPlannedTotalNum > 0 ? resumenActualTotalNum / resumenPlannedTotalNum * 100 : 0;
+  const categoryResumenRows = s.expenseCategories.map(c => {
+    const actual = periodEntries.filter(e => e.recurring && e.name === c.name).reduce((a, e) => a + e.amount, 0);
+    const pct = c.amount > 0 ? actual / c.amount * 100 : 0;
+    return {
+      name: c.name,
+      planned_fmt: fmt(c.amount),
+      actual_fmt: fmt(actual),
+      color: pctColor(pct),
+      width: Math.min(pct, 100).toFixed(1) + '%'
+    };
+  });
+  const calendarWeeks = buildCalendarWeeks(s.logYear, s.logMonth);
+  const actualByDate = {},
+    plannedByDate = {};
+  s.expenseLog.forEach(e => {
+    const ds = entryDateStr(e);
+    actualByDate[ds] = (actualByDate[ds] || 0) + e.amount;
+  });
+  s.plannedExpenses.forEach(p => {
+    plannedByDate[p.date] = (plannedByDate[p.date] || 0) + p.amount;
+  });
+  const selectedDayActualEntries = s.expenseLog.filter(e => entryDateStr(e) === selectedDate);
+  const selectedDayPlannedEntries = s.plannedExpenses.filter(p => p.date === selectedDate);
+  const now = new Date();
+  const nowMonthPrefix = now.getFullYear() + '-' + pad2(now.getMonth() + 1);
+  const homeMonthEntries = s.expenseLog.filter(e => entryDateStr(e).slice(0, 7) === nowMonthPrefix);
+  const homeSpentTotal = homeMonthEntries.reduce((a, e) => a + e.amount, 0);
+  const homeSpentPct = ctx.totalExpenses > 0 ? homeSpentTotal / ctx.totalExpenses * 100 : 0;
+  const homeSpentColor = pctColor(homeSpentPct);
+  const homeLeftToSpend = ctx.totalExpenses - homeSpentTotal;
+  let homeSpendHeadline;
+  if (ctx.totalExpenses <= 0) {
+    homeSpendHeadline = 'Set your expense budget to track your spending.';
+  } else if (homeSpentPct > 100) {
+    homeSpendHeadline = "You're over your budget this month.";
+  } else if (homeSpentPct >= 80) {
+    homeSpendHeadline = "Careful — you're close to your budget.";
+  } else {
+    homeSpendHeadline = "You're on track this month.";
+  }
+  const investmentTotal = sum(s.investments);
+  const investmentViews = s.investments.map(inv => {
+    const lastUpdatedDate = new Date((inv.lastUpdated || todayStr) + 'T00:00:00');
+    const monthsSince = (ctx.today.getFullYear() - lastUpdatedDate.getFullYear()) * 12 + (ctx.today.getMonth() - lastUpdatedDate.getMonth());
+    const isStale = monthsSince >= 6;
+    return {
+      ...inv,
+      monthsSince,
+      isStale
+    };
+  });
+  const recurringCategoryOptions = s.expenseCategories.map(c => c.name);
+  const effectiveLogCategory = logCategory || recurringCategoryOptions[0] || '';
+  const currentKey = currentMonthKey();
+  const goalOptionsFull = s.goals.map(g => ({
+    id: g.id,
+    name: g.name
+  }));
+
+  /* ================= RENDER ================= */
+  const TabButton = ({
+    name,
+    label,
+    icon
+  }) => {
+    const active = s.tab === name;
+    const color = active ? '#0071e3' : '#86868b';
+    return /*#__PURE__*/React.createElement("button", {
+      onClick: () => setTab(name),
+      style: css('flex:1;background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 2px;cursor:pointer;color:' + color + ';')
+    }, /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 24 24",
+      width: "21",
+      height: "21",
+      fill: "none",
+      stroke: color,
+      strokeWidth: "2",
+      strokeLinecap: "round",
+      strokeLinejoin: "round"
+    }, icon(color)), /*#__PURE__*/React.createElement("span", {
+      style: css('font-size:10px;font-weight:600;')
+    }, label));
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: css('min-height:100vh;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",Inter,system-ui,sans-serif;color:#1d1d1f;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('padding-bottom:96px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('position:sticky;top:0;z-index:20;background:rgba(255,255,255,0.85);backdrop-filter:blur(14px);border-bottom:1px solid rgba(0,0,0,0.06);padding:16px 20px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:17px;font-weight:700;letter-spacing:-0.01em;')
+  }, "Financial Planner"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12.5px;color:#86868b;')
+  }, "Your goals, expenses, and investments")), storageWarning && /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff2ef;color:#ff3b30;font-size:12.5px;padding:8px 20px;')
+  }, storageWarning), /*#__PURE__*/React.createElement("div", {
+    style: css('max-width:720px;margin:0 auto;padding:20px 20px 0;')
+  }, s.tab === 'inicio' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;flex-direction:column;align-items:center;padding:8px 0 20px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative',
+      width: 200,
+      height: 200
+    }
+  }, /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 200 200",
+    width: "200",
+    height: "200"
+  }, /*#__PURE__*/React.createElement("circle", {
+    cx: "100",
+    cy: "100",
+    r: "86",
+    fill: "none",
+    stroke: "#f0f0f2",
+    strokeWidth: "16"
+  }), /*#__PURE__*/React.createElement("circle", {
+    cx: "100",
+    cy: "100",
+    r: "86",
+    fill: "none",
+    stroke: homeSpentColor,
+    strokeWidth: "16",
+    strokeLinecap: "round",
+    strokeDasharray: 2 * Math.PI * 86,
+    strokeDashoffset: 2 * Math.PI * 86 * (1 - Math.min(homeSpentPct, 100) / 100),
+    transform: "rotate(90 100 100) translate(200 0) scale(-1 1)"
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'absolute',
+      inset: 0,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 30,
+      fontWeight: 800,
+      letterSpacing: '-0.02em',
+      color: homeSpentColor,
+      textAlign: 'center',
+      lineHeight: 1.1
+    }
+  }, fmt(homeSpentTotal)), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;color:#86868b;margin-top:3px;text-align:center;')
+  }, "spent so far"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:10.5px;color:#86868b;margin-top:6px;text-align:center;')
+  }, "of ", fmt(ctx.totalExpenses), " budget"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 15,
+      fontWeight: 600,
+      color: homeSpentColor,
+      marginTop: 16,
+      textAlign: 'center',
+      maxWidth: 320
+    }
+  }, homeSpendHeadline)), /*#__PURE__*/React.createElement("div", {
+    style: css('display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:22px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:14px;padding:13px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;justify-content:space-between;align-items:center;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
+  }, s.payFrequency === 'biweekly' ? 'Income / paycheck' : 'Monthly income'), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setEditingIncome(v => !v),
+    style: css('background:none;border:none;color:#0071e3;font-size:10.5px;font-weight:700;cursor:pointer;padding:0;')
+  }, editingIncome ? 'Done' : 'Edit')), editingIncome ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:6px;margin-top:6px;margin-bottom:6px;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setPayFrequency('monthly'),
+    style: {
+      flex: 1,
+      background: s.payFrequency !== 'biweekly' ? '#0071e3' : '#f5f5f7',
+      color: s.payFrequency !== 'biweekly' ? '#fff' : '#1d1d1f',
+      border: 'none',
+      padding: '5px 4px',
+      borderRadius: 7,
+      fontSize: 10.5,
+      fontWeight: 600,
+      cursor: 'pointer'
+    }
+  }, "Monthly"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setPayFrequency('biweekly'),
+    style: {
+      flex: 1,
+      background: s.payFrequency === 'biweekly' ? '#0071e3' : '#f5f5f7',
+      color: s.payFrequency === 'biweekly' ? '#fff' : '#1d1d1f',
+      border: 'none',
+      padding: '5px 4px',
+      borderRadius: 7,
+      fontSize: 10.5,
+      fontWeight: 600,
+      cursor: 'pointer'
+    }
+  }, "Biweekly")), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    autoFocus: true,
+    value: s.income,
+    onChange: onIncome,
+    onKeyDown: e => {
+      if (e.key === 'Enter') setEditingIncome(false);
+    },
+    style: css('width:100%;padding:4px 6px;border:1px solid #e5e5ea;border-radius:8px;font-size:17px;font-weight:700;background:#fbfbfd;')
+  }), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:9.5px;color:#86868b;margin-top:4px;')
+  }, "≈ ", fmt(ctx.monthlyIncome), "/mo (26 paychecks/yr)")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
+  }, fmt(s.income)), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:9.5px;color:#86868b;margin-top:2px;')
+  }, "≈ ", fmt(ctx.monthlyIncome), "/mo"))), /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:14px;padding:13px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
+  }, "Available / month"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
+  }, fmt(Math.max(ctx.boostedAvailable, 0)))), /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:14px;padding:13px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
+  }, "Total saved"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
+  }, fmt(totalCurrent)), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:9.5px;color:#86868b;margin-top:2px;')
+  }, overallPct.toFixed(0), "% of goal")), /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:14px;padding:13px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
+  }, "Total invested"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
+  }, fmt(investmentTotal)), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:9.5px;color:#86868b;margin-top:2px;')
+  }, s.investments.length, " ", s.investments.length === 1 ? 'investment' : 'investments'))), donutLegend.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:22px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;')
+  }, /*#__PURE__*/React.createElement("canvas", {
+    ref: donutCanvasRef,
+    width: "140",
+    height: "140",
+    style: css('flex:none;')
+  }), /*#__PURE__*/React.createElement("div", {
+    style: css('flex:1;min-width:160px;display:flex;flex-direction:column;gap:6px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:2px;')
+  }, "How your income is split"), donutLegend.map((c, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: css('display:flex;align-items:center;gap:8px;font-size:12.5px;color:#1d1d1f;')
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      display: 'inline-block',
+      width: 10,
+      height: 10,
+      borderRadius: 2,
+      background: c.color,
+      flex: 'none'
+    }
+  }), /*#__PURE__*/React.createElement("span", null, c.label))))), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:10px;')
+  }, "Your goals"), s.goals.map(g => {
+    const v = buildGoalView(g, false);
+    return /*#__PURE__*/React.createElement("div", {
+      key: g.id,
+      style: css('background:#fff;border-radius:18px;padding:18px 18px 16px;margin-bottom:12px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;align-items:center;gap:12px;margin-bottom:12px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: 44,
+        height: 44,
+        borderRadius: 12,
+        background: g.color,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flex: 'none'
+      }
+    }, /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 24 24",
+      width: "22",
+      height: "22",
+      fill: "none",
+      stroke: "#fff",
+      strokeWidth: "2",
+      strokeLinecap: "round",
+      strokeLinejoin: "round"
+    }, /*#__PURE__*/React.createElement("path", {
+      d: iconPathFor(g.icon)
+    }))), /*#__PURE__*/React.createElement("div", {
+      style: css('flex:1;min-width:0;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:15.5px;font-weight:600;')
+    }, g.name), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12.5px;color:#86868b;')
+    }, fmt(g.current), " of ", fmt(g.target))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 19,
+        fontWeight: 700,
+        color: g.color
+      }
+    }, v.progressLabel)), /*#__PURE__*/React.createElement("div", {
+      style: css('height:8px;border-radius:4px;background:#f0f0f2;overflow:hidden;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: '100%',
+        borderRadius: 4,
+        background: g.color,
+        width: v.progressWidth
+      }
+    })), /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;justify-content:space-between;margin-top:10px;font-size:12.5px;color:#86868b;')
+    }, /*#__PURE__*/React.createElement("span", null, v.monthlyLabel, "/mo (", v.percentLabel, ")"), /*#__PURE__*/React.createElement("span", null, "Est. target: ", v.estDateLabel)));
+  }), /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:22px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
+  }, "Reports"), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;margin-bottom:10px;')
+  }, /*#__PURE__*/React.createElement("select", {
+    value: reportQuarter,
+    onChange: e => setReportQuarter(parseInt(e.target.value, 10)),
+    style: css('flex:1;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:13px;background:#fbfbfd;')
+  }, /*#__PURE__*/React.createElement("option", {
+    value: 1
+  }, "Q1 (Jan–Mar)"), /*#__PURE__*/React.createElement("option", {
+    value: 2
+  }, "Q2 (Apr–Jun)"), /*#__PURE__*/React.createElement("option", {
+    value: 3
+  }, "Q3 (Jul–Sep)"), /*#__PURE__*/React.createElement("option", {
+    value: 4
+  }, "Q4 (Oct–Dec)")), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    value: reportYear,
+    onChange: e => setReportYear(parseInt(e.target.value, 10) || new Date().getFullYear()),
+    style: css('width:90px;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:13px;background:#fbfbfd;')
+  })), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => downloadReport('quarter'),
+    style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;padding:10px;border-radius:10px;font-size:12.5px;font-weight:600;cursor:pointer;')
+  }, "⬇ Quarterly report"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => downloadReport('year'),
+    style: css('flex:1;background:#0071e3;color:#fff;border:none;padding:10px;border-radius:10px;font-size:12.5px;font-weight:600;cursor:pointer;')
+  }, "⬇ Annual report")))), s.tab === 'metas' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px;')
+  }, "Goals"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;color:#86868b;margin-bottom:16px;')
+  }, s.goals.length, " of 6 goals"), overAllocatedWarning && /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff2ef;border-radius:12px;padding:12px 14px;font-size:13px;color:#ff3b30;margin-bottom:14px;')
+  }, overAllocatedWarning), /*#__PURE__*/React.createElement("div", {
+    style: css('display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:10px;margin-bottom:20px;')
+  }, s.goals.map(g => {
+    const v = buildGoalView(g, false);
+    const selected = g.id === s.selectedGoalId;
+    return /*#__PURE__*/React.createElement("button", {
+      key: g.id,
+      onClick: () => selectGoal(g.id),
+      style: {
+        background: selected ? '#eef6ff' : '#fff',
+        border: 'none',
+        borderRadius: 16,
+        padding: '14px 8px 10px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 6,
+        cursor: 'pointer',
+        boxShadow: selected ? '0 0 0 2px ' + g.color : 'none'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: 40,
+        height: 40,
+        borderRadius: 11,
+        background: g.color,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }
+    }, /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 24 24",
+      width: "20",
+      height: "20",
+      fill: "none",
+      stroke: "#fff",
+      strokeWidth: "2",
+      strokeLinecap: "round",
+      strokeLinejoin: "round"
+    }, /*#__PURE__*/React.createElement("path", {
+      d: iconPathFor(g.icon)
+    }))), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:11.5px;font-weight:600;text-align:center;line-height:1.2;')
+    }, g.name), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:10.5px;color:#86868b;')
+    }, v.progressLabel));
+  }), s.goals.length < 6 && /*#__PURE__*/React.createElement("button", {
+    onClick: addGoal,
+    style: css('background:#fff;border:1.5px dashed #d2d2d7;border-radius:16px;padding:14px 8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:pointer;min-height:88px;')
+  }, /*#__PURE__*/React.createElement("span", {
+    style: css('font-size:22px;color:#0071e3;line-height:1;')
+  }, "+"), /*#__PURE__*/React.createElement("span", {
+    style: css('font-size:11px;color:#0071e3;font-weight:600;')
+  }, "Goal"))), s.goals.length >= 6 && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12px;color:#86868b;margin:-10px 0 16px;')
+  }, "You already have 6 goals — the max. Fewer goals helps you prioritize."), sg && /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:18px;padding:18px;margin-bottom:14px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;gap:12px;margin-bottom:14px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: 40,
+      height: 40,
+      borderRadius: 11,
+      background: sgSource.color,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      flex: 'none'
+    }
+  }, /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 24 24",
+    width: "20",
+    height: "20",
+    fill: "none",
+    stroke: "#fff",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: iconPathFor(sgSource.icon)
+  }))), /*#__PURE__*/React.createElement("input", {
+    type: "text",
+    value: sgSource.name,
+    onChange: e => updateGoal(sgSource.id, 'name', e.target.value),
+    style: css('flex:1;min-width:0;font-size:16px;font-weight:600;border:none;background:transparent;padding:6px 0;')
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: () => removeGoal(sgSource.id),
+    style: css('background:#f5f5f7;border:none;color:#ff3b30;width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:15px;')
+  }, "×")), /*#__PURE__*/React.createElement("div", {
+    style: css('display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;')
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:4px;')
+  }, "Target amount"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    value: sgSource.target,
+    onChange: e => updateGoal(sgSource.id, 'target', parseFloat(e.target.value) || 0),
+    style: css('width:100%;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:14px;background:#fbfbfd;')
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:4px;')
+  }, "Current savings"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    value: sgSource.current,
+    onChange: e => updateGoal(sgSource.id, 'current', parseFloat(e.target.value) || 0),
+    style: css('width:100%;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:14px;background:#fbfbfd;')
+  }))), /*#__PURE__*/React.createElement("label", {
+    style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:6px;')
+  }, "Color"), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;margin-bottom:14px;')
+  }, PALETTE.map(hex => /*#__PURE__*/React.createElement("button", {
+    key: hex,
+    onClick: () => setGoalColor(sgSource.id, hex),
+    style: {
+      width: 26,
+      height: 26,
+      borderRadius: '50%',
+      background: hex,
+      border: 'none',
+      cursor: 'pointer',
+      boxShadow: hex === sgSource.color ? '0 0 0 2px #fff, 0 0 0 3px ' + hex : 'none'
+    }
+  }))), /*#__PURE__*/React.createElement("label", {
+    style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:6px;')
+  }, "Icon"), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;margin-bottom:16px;')
+  }, ICONS.map(ic => /*#__PURE__*/React.createElement("button", {
+    key: ic.key,
+    onClick: () => setGoalIcon(sgSource.id, ic.key),
+    style: {
+      width: 32,
+      height: 32,
+      borderRadius: 9,
+      background: ic.key === sgSource.icon ? sgSource.color : '#f5f5f7',
+      border: 'none',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 24 24",
+    width: "16",
+    height: "16",
+    fill: "none",
+    stroke: ic.key === sgSource.icon ? '#fff' : '#86868b',
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: ic.path
+  }))))), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;gap:8px;margin-bottom:10px;')
+  }, /*#__PURE__*/React.createElement("label", {
+    style: css('font-size:11.5px;color:#86868b;font-weight:600;')
+  }, "% of monthly savings"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => toggleGoalMode(sgSource.id),
+    style: css('margin-left:auto;background:#f5f5f7;border:none;padding:5px 10px;border-radius:8px;font-size:11.5px;font-weight:600;color:#1d1d1f;cursor:pointer;')
+  }, sgSource.mode === 'manual' ? 'Manual' : 'Auto')), sgSource.mode === 'manual' ? /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;gap:8px;margin-bottom:10px;')
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "0",
+    max: "100",
+    value: sgSource.percent || 0,
+    onChange: e => updateGoal(sgSource.id, 'percent', Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))),
+    style: css('width:90px;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:14px;background:#fbfbfd;')
+  }), /*#__PURE__*/React.createElement("span", {
+    style: css('font-size:13px;color:#86868b;')
+  }, "% → ", sg.monthlyLabel, "/mo")) : /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;color:#1d1d1f;background:#f5f5f7;border-radius:10px;padding:9px 10px;margin-bottom:10px;')
+  }, "Auto split: ", /*#__PURE__*/React.createElement("b", null, sg.percentLabel), " → ", /*#__PURE__*/React.createElement("b", null, sg.monthlyLabel), "/mo"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;color:#6e6e73;margin-bottom:14px;')
+  }, "You'll reach your goal in ", /*#__PURE__*/React.createElement("b", {
+    style: css('color:#1d1d1f;')
+  }, sg.estDateLabel), " (", sg.monthsLabel, ")"), /*#__PURE__*/React.createElement("label", {
+    style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:4px;')
+  }, "Target date (optional)"), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: sgSource.customDate || '',
+    onChange: e => updateGoal(sgSource.id, 'customDate', e.target.value),
+    style: css('width:100%;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:14px;background:#fbfbfd;margin-bottom:6px;')
+  }), sg.customMsg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: sg.customMsgColor,
+      marginBottom: 14
+    }
+  }, sg.customMsg), /*#__PURE__*/React.createElement("div", {
+    style: css('border-top:1px solid #f0f0f2;margin-top:6px;padding-top:14px;')
+  }, /*#__PURE__*/React.createElement("label", {
+    style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:8px;')
+  }, "Deposit reminder"), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;gap:10px;margin-bottom:10px;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => toggleReminder(sgSource.id),
+    style: {
+      background: sgSource.reminderOn ? '#0071e3' : '#f5f5f7',
+      border: 'none',
+      color: sgSource.reminderOn ? '#fff' : '#1d1d1f',
+      padding: '8px 12px',
+      borderRadius: 9,
+      fontSize: 12.5,
+      fontWeight: 600,
+      cursor: 'pointer'
+    }
+  }, sgSource.reminderOn ? 'On' : 'Turn on'), /*#__PURE__*/React.createElement("span", {
+    style: css('font-size:12.5px;color:#86868b;')
+  }, "day"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "1",
+    max: "31",
+    value: sgSource.reminderDay || 1,
+    onChange: e => updateGoal(sgSource.id, 'reminderDay', Math.max(1, Math.min(31, parseInt(e.target.value, 10) || 1))),
+    style: css('width:60px;padding:7px 8px;border:1px solid #e5e5ea;border-radius:8px;font-size:13px;background:#fbfbfd;')
+  }), /*#__PURE__*/React.createElement("span", {
+    style: css('font-size:12.5px;color:#86868b;')
+  }, "of each month")), sgSource.reminderOn && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12.5px;color:#0071e3;')
+  }, "🔔 We'll remind you to deposit on day ", sgSource.reminderDay, ".")), /*#__PURE__*/React.createElement("div", {
+    style: css('border-top:1px solid #f0f0f2;margin-top:14px;padding-top:14px;')
+  }, /*#__PURE__*/React.createElement("label", {
+    style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:8px;')
+  }, "Log monthly savings"), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;margin-bottom:10px;')
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    placeholder: "Amount deposited",
+    value: depositAmount,
+    onChange: e => setDepositAmount(e.target.value),
+    style: css('flex:1;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:14px;background:#fbfbfd;')
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: () => registerDeposit(sgSource.id),
+    style: css('background:#0071e3;color:#fff;border:none;padding:9px 16px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;')
+  }, "Log")), (sgSource.savingsLog || []).map(entry => /*#__PURE__*/React.createElement("div", {
+    key: entry.id,
+    style: css('display:flex;justify-content:space-between;font-size:12.5px;color:#6e6e73;padding:4px 0;border-bottom:1px solid #f5f5f7;')
+  }, /*#__PURE__*/React.createElement("span", null, entry.label), /*#__PURE__*/React.createElement("span", null, fmt(entry.amount))))), /*#__PURE__*/React.createElement("div", {
+    style: css('border-top:1px solid #f0f0f2;margin-top:14px;padding-top:14px;')
+  }, /*#__PURE__*/React.createElement("label", {
+    style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:8px;')
+  }, "Savings projection"), /*#__PURE__*/React.createElement("canvas", {
+    ref: lineCanvasRef,
+    width: "600",
+    height: "200",
+    style: css('width:100%;display:block;')
+  }), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:16px;font-size:12px;color:#6e6e73;margin-top:8px;')
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      display: 'inline-block',
+      width: 10,
+      height: 10,
+      borderRadius: 2,
+      background: sgSource.color,
+      marginRight: 5
+    }
+  }), "With side hustles"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    style: css('display:inline-block;width:10px;height:10px;border-radius:2px;background:#c7c7cc;margin-right:5px;')
+  }), "Salary only"))))), s.tab === 'gastos' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px;')
+  }, "Expenses"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;color:#86868b;margin-bottom:16px;')
+  }, "Tap a day to view or log expenses. Tap the month to see the full summary."), /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:14px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: calPrevMonth,
+    style: css('background:#f5f5f7;border:none;width:30px;height:30px;border-radius:9px;font-size:15px;cursor:pointer;color:#1d1d1f;')
+  }, "‹"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setResumenOpen(o => !o),
+    style: css('background:none;border:none;font-size:15px;font-weight:700;cursor:pointer;color:#1d1d1f;')
+  }, MONTH_NAMES[s.logMonth], " ", s.logYear, " ", /*#__PURE__*/React.createElement("span", {
+    style: css('color:#0071e3;font-size:12px;font-weight:600;')
+  }, resumenOpen ? '▲ summary' : '▼ summary')), /*#__PURE__*/React.createElement("button", {
+    onClick: calNextMonth,
+    style: css('background:#f5f5f7;border:none;width:30px;height:30px;border-radius:9px;font-size:15px;cursor:pointer;color:#1d1d1f;')
+  }, "›")), /*#__PURE__*/React.createElement("div", {
+    style: css('display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px;')
+  }, WEEKDAY_NAMES.map((w, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: css('text-align:center;font-size:10.5px;color:#86868b;font-weight:600;padding:4px 0;')
+  }, w))), calendarWeeks.map((week, wi) => /*#__PURE__*/React.createElement("div", {
+    key: wi,
+    style: css('display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px;')
+  }, week.map((day, di) => {
+    if (!day) return /*#__PURE__*/React.createElement("div", {
+      key: di
+    });
+    const ds = toDateStr(s.logYear, s.logMonth, day);
+    const isSelected = ds === selectedDate;
+    const isToday = ds === todayStr;
+    const hasActual = !!actualByDate[ds];
+    const hasPlanned = !!plannedByDate[ds];
+    return /*#__PURE__*/React.createElement("button", {
+      key: di,
+      onClick: () => setSelectedDate(ds),
+      style: {
+        background: isSelected ? '#0071e3' : '#f5f5f7',
+        color: isSelected ? '#fff' : '#1d1d1f',
+        border: isToday && !isSelected ? '1.5px solid #0071e3' : 'none',
+        borderRadius: 10,
+        padding: '6px 2px 5px',
+        cursor: 'pointer',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 3,
+        minHeight: 40
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 12.5,
+        fontWeight: isToday ? 700 : 500
+      }
+    }, day), /*#__PURE__*/React.createElement("span", {
+      style: {
+        display: 'flex',
+        gap: 2,
+        height: 5
+      }
+    }, hasActual && /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: 5,
+        height: 5,
+        borderRadius: '50%',
+        background: isSelected ? '#fff' : '#34c759'
+      }
+    }), hasPlanned && /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: 5,
+        height: 5,
+        borderRadius: '50%',
+        background: isSelected ? '#fff' : '#0071e3'
+      }
+    })));
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:16px;font-size:11.5px;color:#6e6e73;margin-top:10px;')
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    style: css('display:inline-block;width:7px;height:7px;border-radius:50%;background:#34c759;margin-right:5px;')
+  }), "Spent"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    style: css('display:inline-block;width:7px;height:7px;border-radius:50%;background:#0071e3;margin-right:5px;')
+  }), "Planned"))), selectedDate && /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:14px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:12px;')
+  }, (() => {
+    const d = new Date(selectedDate + 'T00:00:00');
+    return MONTH_NAMES[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
+  })()), selectedDayActualEntries.length === 0 && selectedDayPlannedEntries.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12.5px;color:#86868b;margin-bottom:12px;')
+  }, "Nothing logged for this day yet."), selectedDayActualEntries.map(entry => /*#__PURE__*/React.createElement("div", {
+    key: entry.id,
+    style: css('display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:6px 0;border-bottom:1px solid #f0f0f2;')
+  }, /*#__PURE__*/React.createElement("span", null, entry.name || 'Expense', /*#__PURE__*/React.createElement("span", {
+    style: css('color:#86868b;font-size:11px;')
+  }, " · ", entry.recurring ? 'recurring' : 'non-recurring', " · spent")), /*#__PURE__*/React.createElement("span", {
+    style: css('display:flex;align-items:center;gap:8px;')
+  }, fmt(entry.amount), /*#__PURE__*/React.createElement("button", {
+    onClick: () => removeLogEntry(entry.id),
+    style: css('background:none;border:none;color:#ff3b30;cursor:pointer;font-size:14px;')
+  }, "×")))), selectedDayPlannedEntries.map(p => /*#__PURE__*/React.createElement("div", {
+    key: p.id,
+    style: css('display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:6px 0;border-bottom:1px solid #f0f0f2;')
+  }, /*#__PURE__*/React.createElement("span", null, p.name, /*#__PURE__*/React.createElement("span", {
+    style: css('color:#0071e3;font-size:11px;')
+  }, " · planned")), /*#__PURE__*/React.createElement("span", {
+    style: css('display:flex;align-items:center;gap:8px;')
+  }, fmt(p.amount), /*#__PURE__*/React.createElement("button", {
+    onClick: () => markPlannedAsSpent(p.id),
+    style: css('background:#f0f0f2;border:none;color:#1d1d1f;border-radius:7px;padding:4px 8px;font-size:11px;font-weight:600;cursor:pointer;')
+  }, "Already spent"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => removePlannedExpense(p.id),
+    style: css('background:none;border:none;color:#ff3b30;cursor:pointer;font-size:14px;')
+  }, "×")))), /*#__PURE__*/React.createElement("div", {
+    style: css('border-top:1px solid #f0f0f2;margin-top:12px;padding-top:14px;')
+  }, /*#__PURE__*/React.createElement("label", {
+    style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:8px;')
+  }, "Log an expense for this day"), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;margin-bottom:10px;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setLogType('recurring'),
+    style: {
+      flex: 1,
+      background: logType === 'recurring' ? '#0071e3' : '#f5f5f7',
+      color: logType === 'recurring' ? '#fff' : '#1d1d1f',
+      border: 'none',
+      padding: 9,
+      borderRadius: 9,
+      fontSize: 12.5,
+      fontWeight: 600,
+      cursor: 'pointer'
+    }
+  }, "Recurring"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setLogType('nonrecurring'),
+    style: {
+      flex: 1,
+      background: logType !== 'recurring' ? '#0071e3' : '#f5f5f7',
+      color: logType !== 'recurring' ? '#fff' : '#1d1d1f',
+      border: 'none',
+      padding: 9,
+      borderRadius: 9,
+      fontSize: 12.5,
+      fontWeight: 600,
+      cursor: 'pointer'
+    }
+  }, "Non-recurring")), logType === 'recurring' ? /*#__PURE__*/React.createElement("select", {
+    value: effectiveLogCategory,
+    onChange: e => setLogCategory(e.target.value),
+    style: css('width:100%;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:13px;background:#fbfbfd;margin-bottom:8px;')
+  }, recurringCategoryOptions.map((n, i) => /*#__PURE__*/React.createElement("option", {
+    key: i,
+    value: n
+  }, n))) : /*#__PURE__*/React.createElement("input", {
+    type: "text",
+    placeholder: "Expense name (e.g. repair, gift)",
+    value: logName,
+    onChange: e => setLogName(e.target.value),
+    style: css('width:100%;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:13px;background:#fbfbfd;margin-bottom:8px;')
+  }), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;margin-bottom:16px;')
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    placeholder: "Amount spent",
+    value: logAmount,
+    onChange: e => setLogAmount(e.target.value),
+    style: css('flex:1;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:13px;background:#fbfbfd;')
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: addLogEntry,
+    style: css('background:#0071e3;color:#fff;border:none;padding:9px 16px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;')
+  }, "Log")), /*#__PURE__*/React.createElement("label", {
+    style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:8px;')
+  }, "Plan a future expense for this day"), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;')
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "text",
+    placeholder: "Name (e.g. annual insurance)",
+    value: plannedName,
+    onChange: e => setPlannedName(e.target.value),
+    style: css('flex:1.4;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:13px;background:#fbfbfd;')
+  }), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    placeholder: "Amount",
+    value: plannedAmount,
+    onChange: e => setPlannedAmount(e.target.value),
+    style: css('flex:1;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:13px;background:#fbfbfd;')
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: addPlannedExpense,
+    style: css('background:#f5f5f7;color:#1d1d1f;border:none;padding:9px 14px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;')
+  }, "Plan")))), resumenOpen && /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:14px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:4px;')
+  }, "Expense summary — ", MONTH_NAMES[s.logMonth], " ", s.logYear), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12.5px;color:#86868b;margin-bottom:12px;')
+  }, "Comparison between what you planned and what you actually spent (everything included)."), /*#__PURE__*/React.createElement("div", {
+    style: css('margin-bottom:12px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px;')
+  }, /*#__PURE__*/React.createElement("span", null, "Total spent"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", null, fmt(resumenActualTotalNum)), " / ", fmt(resumenPlannedTotalNum))), /*#__PURE__*/React.createElement("div", {
+    style: css('height:8px;border-radius:4px;background:#f0f0f2;overflow:hidden;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: '100%',
+      borderRadius: 4,
+      background: pctColor(resumenTotalPct),
+      width: Math.min(resumenTotalPct, 100).toFixed(1) + '%'
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: pctColor(resumenTotalPct),
+      marginTop: 4
+    }
+  }, resumenTotalPct.toFixed(0), "% of budget", resumenTotalPct > 100 ? ' — over budget' : '')), categoryResumenRows.map((cr, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: css('margin-bottom:10px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px;')
+  }, /*#__PURE__*/React.createElement("span", null, cr.name), /*#__PURE__*/React.createElement("span", null, cr.actual_fmt, " / ", cr.planned_fmt)), /*#__PURE__*/React.createElement("div", {
+    style: css('height:6px;border-radius:3px;background:#f0f0f2;overflow:hidden;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: '100%',
+      borderRadius: 3,
+      background: cr.color,
+      width: cr.width
+    }
+  })))), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;justify-content:space-between;font-size:12.5px;color:#86868b;margin-top:12px;padding-top:10px;border-top:1px solid #f0f0f2;')
+  }, /*#__PURE__*/React.createElement("span", null, "Of that, non-recurring"), /*#__PURE__*/React.createElement("span", null, fmt(resumenActualNonRecurringNum)))), /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:16px;padding:16px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
+  }, "Planned budget"), s.expenseCategories.map((row, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: css('display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #f0f0f2;')
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "text",
+    value: row.name,
+    onChange: e => updateExpenseRow(i, 'name', e.target.value),
+    style: css('flex:1;min-width:0;border:none;background:transparent;font-size:14px;padding:4px 0;')
+  }), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    value: row.amount,
+    onChange: e => updateExpenseRow(i, 'amount', e.target.value),
+    style: css('width:90px;border:1px solid #e5e5ea;border-radius:8px;padding:6px 8px;font-size:13px;background:#fbfbfd;')
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: () => removeExpenseRow(i),
+    style: css('background:none;border:none;color:#ff3b30;cursor:pointer;font-size:15px;')
+  }, "×"))), /*#__PURE__*/React.createElement("button", {
+    onClick: addExpenseRow,
+    style: css('margin-top:10px;background:#f5f5f7;border:none;padding:8px 14px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;')
+  }, "+ Add expense"), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;justify-content:space-between;font-weight:700;font-size:13.5px;margin-top:10px;padding-top:8px;border-top:1px solid #f0f0f2;')
+  }, /*#__PURE__*/React.createElement("span", null, "Monthly total"), /*#__PURE__*/React.createElement("span", null, fmt(monthlyTotal))))), s.tab === 'extra' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px;')
+  }, "Extra income"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;color:#86868b;margin-bottom:16px;')
+  }, "Freelance, sales, commissions — every extra dollar speeds up your goals."), /*#__PURE__*/React.createElement("div", {
+    style: css('background:linear-gradient(135deg,#0071e3,#34c759);border-radius:20px;padding:22px;color:#fff;margin-bottom:18px;box-shadow:0 16px 40px rgba(0,113,227,0.25);')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;opacity:0.85;')
+  }, "Total extra / month"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:36px;font-weight:700;margin:4px 0 10px;')
+  }, fmt(hustleTotal)), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13.5px;line-height:1.5;opacity:0.95;')
+  }, globalHustleMessage)), s.hustles.map(h => {
+    const streak = h.streak || 0;
+    let badgeLabel = '',
+      badgeColor = '';
+    if (streak >= 12) {
+      badgeLabel = 'Gold';
+      badgeColor = '#ff9500';
+    } else if (streak >= 6) {
+      badgeLabel = 'Silver';
+      badgeColor = '#8e8e93';
+    } else if (streak >= 3) {
+      badgeLabel = 'Bronze';
+      badgeColor = '#cd7f32';
+    }
+    const checkedThisMonth = h.lastMonth === currentKey;
+    return /*#__PURE__*/React.createElement("div", {
+      key: h.id,
+      style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:12px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;gap:10px;align-items:center;margin-bottom:10px;')
+    }, /*#__PURE__*/React.createElement("input", {
+      type: "text",
+      value: h.name,
+      onChange: e => updateHustle(h.id, 'name', e.target.value),
+      style: css('flex:1;min-width:0;font-size:15px;font-weight:600;border:none;background:transparent;padding:4px 0;')
+    }), /*#__PURE__*/React.createElement("button", {
+      onClick: () => removeHustle(h.id),
+      style: css('background:#f5f5f7;border:none;color:#ff3b30;width:26px;height:26px;border-radius:8px;cursor:pointer;font-size:14px;')
+    }, "×")), /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;gap:10px;align-items:center;flex-wrap:wrap;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('flex:1;min-width:90px;')
+    }, /*#__PURE__*/React.createElement("label", {
+      style: css('display:block;font-size:11px;color:#86868b;font-weight:600;margin-bottom:4px;')
+    }, "Amount / month"), /*#__PURE__*/React.createElement("input", {
+      type: "number",
+      value: h.amount,
+      onChange: e => updateHustle(h.id, 'amount', e.target.value),
+      style: css('width:100%;padding:8px 10px;border:1px solid #e5e5ea;border-radius:9px;font-size:13.5px;background:#fbfbfd;')
+    })), /*#__PURE__*/React.createElement("div", {
+      style: css('flex:1;min-width:120px;')
+    }, /*#__PURE__*/React.createElement("label", {
+      style: css('display:block;font-size:11px;color:#86868b;font-weight:600;margin-bottom:4px;')
+    }, "Assign to goal"), /*#__PURE__*/React.createElement("select", {
+      value: h.goalId || '',
+      onChange: e => setHustleGoal(h.id, e.target.value ? parseFloat(e.target.value) : null),
+      style: css('width:100%;padding:8px 10px;border:1px solid #e5e5ea;border-radius:9px;font-size:13px;background:#fbfbfd;')
+    }, /*#__PURE__*/React.createElement("option", {
+      value: ""
+    }, "General (all)"), goalOptionsFull.map(go => /*#__PURE__*/React.createElement("option", {
+      key: go.id,
+      value: go.id
+    }, go.name)))), badgeLabel && /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: badgeColor,
+        color: '#fff',
+        fontSize: 11,
+        fontWeight: 700,
+        padding: '5px 10px',
+        borderRadius: 20,
+        whiteSpace: 'nowrap'
+      }
+    }, badgeLabel), /*#__PURE__*/React.createElement("button", {
+      onClick: () => checkInHustle(h.id),
+      disabled: checkedThisMonth,
+      style: {
+        background: checkedThisMonth ? '#f0f0f2' : '#1d1d1f',
+        color: checkedThisMonth ? '#86868b' : '#fff',
+        border: 'none',
+        padding: '9px 12px',
+        borderRadius: 9,
+        fontSize: 12.5,
+        fontWeight: 600,
+        cursor: 'pointer',
+        whiteSpace: 'nowrap'
+      }
+    }, checkedThisMonth ? '✓ Checked' : 'Check in')), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:11.5px;color:#86868b;margin-top:8px;')
+    }, "🔥 Streak: ", streak, " ", streak === 1 ? 'month' : 'months'));
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: addHustle,
+    style: css('width:100%;padding:13px;background:#34c759;color:#fff;border:none;border-radius:14px;font-size:14.5px;font-weight:600;cursor:pointer;')
+  }, "+ Add side hustle")), s.tab === 'invest' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px;')
+  }, "Investments"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;color:#86868b;margin-bottom:16px;')
+  }, "Track what's growing your money outside your goals. Review returns every 6 months."), /*#__PURE__*/React.createElement("div", {
+    style: css('background:linear-gradient(135deg,#0071e3,#34c759);border-radius:20px;padding:22px;color:#fff;margin-bottom:18px;box-shadow:0 16px 40px rgba(0,113,227,0.25);')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;opacity:0.85;')
+  }, "Total invested"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:36px;font-weight:700;margin:4px 0 10px;')
+  }, fmt(investmentTotal)), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13.5px;line-height:1.5;opacity:0.95;')
+  }, s.investments.length === 0 ? 'Add an investment below to start tracking your returns.' : 'Across ' + s.investments.length + (s.investments.length === 1 ? ' investment.' : ' investments.'))), investmentViews.map(inv => /*#__PURE__*/React.createElement("div", {
+    key: inv.id,
+    style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:12px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:10px;align-items:center;margin-bottom:10px;')
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "text",
+    value: inv.name,
+    onChange: e => updateInvestment(inv.id, 'name', e.target.value),
+    style: css('flex:1;min-width:0;font-size:15px;font-weight:600;border:none;background:transparent;padding:4px 0;')
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: () => removeInvestment(inv.id),
+    style: css('background:#f5f5f7;border:none;color:#ff3b30;width:26px;height:26px;border-radius:8px;cursor:pointer;font-size:14px;')
+  }, "×")), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:10px;align-items:center;flex-wrap:wrap;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('flex:1;min-width:90px;')
+  }, /*#__PURE__*/React.createElement("label", {
+    style: css('display:block;font-size:11px;color:#86868b;font-weight:600;margin-bottom:4px;')
+  }, "Amount invested"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    value: inv.amount,
+    onChange: e => updateInvestment(inv.id, 'amount', e.target.value),
+    style: css('width:100%;padding:8px 10px;border:1px solid #e5e5ea;border-radius:9px;font-size:13.5px;background:#fbfbfd;')
+  })), /*#__PURE__*/React.createElement("div", {
+    style: css('flex:1;min-width:90px;')
+  }, /*#__PURE__*/React.createElement("label", {
+    style: css('display:block;font-size:11px;color:#86868b;font-weight:600;margin-bottom:4px;')
+  }, "Return since update (%)"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    value: inv.returnPct,
+    onChange: e => updateInvestment(inv.id, 'returnPct', e.target.value),
+    style: css('width:100%;padding:8px 10px;border:1px solid #e5e5ea;border-radius:9px;font-size:13.5px;background:#fbfbfd;')
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;justify-content:space-between;align-items:center;margin-top:10px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: inv.isStale ? '#ff9500' : '#86868b'
+    }
+  }, inv.monthsSince <= 0 ? 'Updated today' : 'Updated ' + inv.monthsSince + (inv.monthsSince === 1 ? ' month ago' : ' months ago')), inv.isStale && /*#__PURE__*/React.createElement("button", {
+    onClick: () => markInvestmentUpdated(inv.id),
+    style: css('background:#fff2e5;border:none;color:#ff9500;border-radius:8px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer;')
+  }, "🔔 Mark updated")))), /*#__PURE__*/React.createElement("button", {
+    onClick: addInvestment,
+    style: css('width:100%;padding:13px;background:#0071e3;color:#fff;border:none;border-radius:14px;font-size:14.5px;font-weight:600;cursor:pointer;')
+  }, "+ Add investment")))), /*#__PURE__*/React.createElement("div", {
+    style: css('position:fixed;bottom:0;left:0;right:0;z-index:30;background:rgba(255,255,255,0.94);backdrop-filter:blur(14px);border-top:1px solid rgba(0,0,0,0.08);display:flex;padding:8px 4px calc(8px + env(safe-area-inset-bottom));')
+  }, /*#__PURE__*/React.createElement(TabButton, {
+    name: "inicio",
+    label: "Home",
+    icon: () => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
+      d: "M3 11.5L12 4l9 7.5"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M5.5 10v9a1 1 0 0 0 1 1h4v-6h3v6h4a1 1 0 0 0 1-1v-9"
+    }))
+  }), /*#__PURE__*/React.createElement(TabButton, {
+    name: "metas",
+    label: "Goals",
+    icon: color => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("circle", {
+      cx: "12",
+      cy: "12",
+      r: "9"
+    }), /*#__PURE__*/React.createElement("circle", {
+      cx: "12",
+      cy: "12",
+      r: "4.5"
+    }), /*#__PURE__*/React.createElement("circle", {
+      cx: "12",
+      cy: "12",
+      r: "0.6",
+      fill: color
+    }))
+  }), /*#__PURE__*/React.createElement(TabButton, {
+    name: "gastos",
+    label: "Expenses",
+    icon: () => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("rect", {
+      x: "3",
+      y: "6",
+      width: "18",
+      height: "13",
+      rx: "2"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M3 10h18"
+    }))
+  }), /*#__PURE__*/React.createElement(TabButton, {
+    name: "extra",
+    label: "Extra",
+    icon: () => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
+      d: "M3 17l6-6 4 4 8-8"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M15 7h6v6"
+    }))
+  }), /*#__PURE__*/React.createElement(TabButton, {
+    name: "invest",
+    label: "Invest",
+    icon: () => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
+      d: "M3 3v18h18"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M7 15l4-5 3 3 5-7"
+    }))
+  })));
+}
+ReactDOM.createRoot(document.getElementById('root')).render(/*#__PURE__*/React.createElement(App, null));
