@@ -91,16 +91,19 @@ function buildPersistPayload(state) {
     tab: state.tab,
     income: state.income,
     payFrequency: state.payFrequency,
+    nextPaydayDate: state.nextPaydayDate,
     nonRecurringBudget: state.nonRecurringBudget,
+    pendingLeftover: state.pendingLeftover,
+    spendingBoost: state.spendingBoost,
+    lastProcessedMonth: state.lastProcessedMonth,
+    lastProcessedYear: state.lastProcessedYear,
     expenseCategories: state.expenseCategories,
     expenseLog: state.expenseLog,
     plannedExpenses: state.plannedExpenses,
     hustles: state.hustles,
     goals: state.goals,
     investments: state.investments,
-    selectedGoalId: state.selectedGoalId,
-    logMonth: state.logMonth,
-    logYear: state.logYear
+    selectedGoalId: state.selectedGoalId
   };
 }
 function toDateStr(year, month, day) {
@@ -191,7 +194,12 @@ function defaultState() {
     tab: 'inicio',
     income: 3173,
     payFrequency: 'monthly',
+    nextPaydayDate: '',
     nonRecurringBudget: 0,
+    pendingLeftover: null,
+    spendingBoost: 0,
+    lastProcessedMonth: today.getMonth(),
+    lastProcessedYear: today.getFullYear(),
     expenseCategories: [{
       name: "Rent",
       amount: 450,
@@ -266,8 +274,17 @@ function defaultState() {
 function monthlyIncomeOf(s) {
   return s.payFrequency === 'biweekly' ? (s.income || 0) * 26 / 12 : s.income || 0;
 }
+function nextPaydayFrom(anchorStr, today) {
+  if (!anchorStr) return null;
+  let d = new Date(anchorStr + 'T00:00:00');
+  if (isNaN(d.getTime())) return null;
+  const t = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  while (d.getTime() < t.getTime()) d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 14);
+  while (d.getTime() - 14 * 86400000 >= t.getTime()) d = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 14);
+  return d;
+}
 function computeCtx(s) {
-  const totalExpenses = sum(s.expenseCategories) + (s.nonRecurringBudget || 0);
+  const totalExpenses = sum(s.expenseCategories) + (s.nonRecurringBudget || 0) + (s.spendingBoost || 0);
   const hustleTotal = sum(s.hustles);
   const generalHustleTotal = s.hustles.filter(h => !h.goalId).reduce((a, h) => a + (h.amount || 0), 0);
   const monthlyIncome = monthlyIncomeOf(s);
@@ -309,9 +326,10 @@ function App() {
     return toDateStr(t.getFullYear(), t.getMonth(), t.getDate());
   })();
   const [selectedDate, setSelectedDate] = useState(todayStr);
-  const [resumenOpen, setResumenOpen] = useState(true);
   const [editingIncome, setEditingIncome] = useState(false);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
+  const [allocatingLeftover, setAllocatingLeftover] = useState(false);
+  const [leftoverSplits, setLeftoverSplits] = useState({});
   const [reportQuarter, setReportQuarter] = useState(Math.floor(new Date().getMonth() / 3) + 1);
   const lineCanvasRef = useRef(null);
   const donutCanvasRef = useRef(null);
@@ -357,6 +375,27 @@ function App() {
               color: PALETTE[i % PALETTE.length]
             });
           }
+          const todayNow = new Date();
+          const curMonth = todayNow.getMonth(),
+            curYear = todayNow.getFullYear();
+          if (typeof loaded.lastProcessedMonth === 'number' && typeof loaded.lastProcessedYear === 'number' && (loaded.lastProcessedMonth !== curMonth || loaded.lastProcessedYear !== curYear)) {
+            const prevMonth = loaded.lastProcessedMonth,
+              prevYear = loaded.lastProcessedYear;
+            const cats = loaded.expenseCategories || [];
+            const budgetForPrevMonth = cats.reduce((a, c) => a + (c.amount || 0), 0) + (loaded.nonRecurringBudget || 0);
+            const spentPrevMonth = (loaded.expenseLog || []).filter(e => {
+              const d = new Date(entryDateStr(e) + 'T00:00:00');
+              return d.getFullYear() === prevYear && d.getMonth() === prevMonth;
+            }).reduce((a, e) => a + e.amount, 0);
+            const leftover = Math.round(budgetForPrevMonth - spentPrevMonth);
+            loaded.pendingLeftover = leftover > 0 ? {
+              amount: leftover,
+              label: MONTH_NAMES[prevMonth] + ' ' + prevYear
+            } : null;
+            loaded.spendingBoost = 0;
+            loaded.lastProcessedMonth = curMonth;
+            loaded.lastProcessedYear = curYear;
+          }
           setState(Object.assign(defaultState(), loaded));
         } else {
           setState(defaultState());
@@ -396,6 +435,36 @@ function App() {
   });
   const setPayFrequency = freq => patch({
     payFrequency: freq
+  });
+  const onNextPaydayDate = e => patch({
+    nextPaydayDate: e.target.value
+  });
+  const applyLeftoverAllocation = (spendingAmt, goalAmts) => {
+    patch(s => {
+      let goals = s.goals;
+      const label = (s.pendingLeftover && s.pendingLeftover.label ? s.pendingLeftover.label : 'Last month') + ' leftover';
+      goals = s.goals.map(g => {
+        const amt = goalAmts[g.id] || 0;
+        if (amt <= 0) return g;
+        return {
+          ...g,
+          current: (g.current || 0) + amt,
+          savingsLog: [{
+            id: Date.now() + Math.random(),
+            label,
+            amount: amt
+          }].concat(g.savingsLog || []).slice(0, 12)
+        };
+      });
+      return {
+        goals,
+        spendingBoost: (s.spendingBoost || 0) + (spendingAmt || 0),
+        pendingLeftover: null
+      };
+    });
+  };
+  const dismissLeftover = () => patch({
+    pendingLeftover: null
   });
   const onNonRecurringBudget = e => patch({
     nonRecurringBudget: parseFloat(e.target.value) || 0
@@ -984,6 +1053,9 @@ function App() {
   const homeMonthEntries = s.expenseLog.filter(e => entryDateStr(e).slice(0, 7) === nowMonthPrefix);
   const homeSpentTotal = homeMonthEntries.reduce((a, e) => a + e.amount, 0);
   const homeSpentPct = ctx.totalExpenses > 0 ? homeSpentTotal / ctx.totalExpenses * 100 : 0;
+  const nextPayday = s.payFrequency === 'biweekly' ? nextPaydayFrom(s.nextPaydayDate, ctx.today) : null;
+  const daysUntilPayday = nextPayday ? Math.round((nextPayday.getTime() - new Date(ctx.today.getFullYear(), ctx.today.getMonth(), ctx.today.getDate()).getTime()) / 86400000) : null;
+  const nextPaydayLabel = nextPayday ? MONTH_NAMES[nextPayday.getMonth()] + ' ' + nextPayday.getDate() + ', ' + nextPayday.getFullYear() : '';
   const homeSpentColor = pctColor(homeSpentPct);
   const homeLeftToSpend = ctx.totalExpenses - homeSpentTotal;
   let homeSpendHeadline;
@@ -1059,6 +1131,26 @@ function App() {
       padding: 'calc(20px + env(safe-area-inset-top)) 20px 0'
     }
   }, s.tab === 'inicio' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;justify-content:flex-end;margin-bottom:4px;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setTab('settings'),
+    style: css('background:#fff;border:none;width:34px;height:34px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;')
+  }, /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 24 24",
+    width: "18",
+    height: "18",
+    fill: "none",
+    stroke: "#6e6e73",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  }, /*#__PURE__*/React.createElement("circle", {
+    cx: "12",
+    cy: "12",
+    r: "3"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+  })))), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;flex-direction:column;align-items:center;padding:8px 0 20px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -1143,7 +1235,78 @@ function App() {
       textAlign: 'center',
       maxWidth: 320
     }
-  }, homeSpendHeadline)), /*#__PURE__*/React.createElement("div", {
+  }, homeSpendHeadline)), s.pendingLeftover && /*#__PURE__*/React.createElement("div", {
+    style: css('background:linear-gradient(135deg,#0071e3,#34c759);border-radius:18px;padding:18px;color:#fff;margin-bottom:16px;box-shadow:0 12px 30px rgba(0,113,227,0.25);')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;font-weight:600;opacity:0.9;')
+  }, "Leftover from ", s.pendingLeftover.label), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:28px;font-weight:800;margin:4px 0 8px;')
+  }, fmt(s.pendingLeftover.amount)), !allocatingLeftover ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;opacity:0.95;margin-bottom:12px;')
+  }, "You had this left over — what do you want to do with it?"), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setLeftoverSplits({});
+      setAllocatingLeftover(true);
+    },
+    style: css('flex:1;background:#fff;color:#0071e3;border:none;padding:10px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;')
+  }, "Decide now"), /*#__PURE__*/React.createElement("button", {
+    onClick: dismissLeftover,
+    style: css('background:rgba(255,255,255,0.2);color:#fff;border:none;padding:10px 14px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;')
+  }, "Skip"))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12px;opacity:0.9;margin-bottom:10px;')
+  }, "Split it however you like — spending, one goal, or several."), /*#__PURE__*/React.createElement("div", {
+    style: css('background:rgba(255,255,255,0.15);border-radius:12px;padding:10px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;')
+  }, /*#__PURE__*/React.createElement("span", {
+    style: css('font-size:13px;')
+  }, "Add to spending"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    placeholder: "0",
+    value: leftoverSplits.spending || '',
+    onChange: e => setLeftoverSplits(v => ({
+      ...v,
+      spending: e.target.value
+    })),
+    style: css('width:80px;padding:6px 8px;border:none;border-radius:8px;font-size:13px;text-align:right;')
+  })), s.goals.map(g => /*#__PURE__*/React.createElement("div", {
+    key: g.id,
+    style: css('background:rgba(255,255,255,0.15);border-radius:12px;padding:10px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;')
+  }, /*#__PURE__*/React.createElement("span", {
+    style: css('font-size:13px;')
+  }, g.name), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    placeholder: "0",
+    value: leftoverSplits[g.id] || '',
+    onChange: e => setLeftoverSplits(v => ({
+      ...v,
+      [g.id]: e.target.value
+    })),
+    style: css('width:80px;padding:6px 8px;border:none;border-radius:8px;font-size:13px;text-align:right;')
+  }))), (() => {
+    const allocated = Object.values(leftoverSplits).reduce((a, v) => a + (parseFloat(v) || 0), 0);
+    const remaining = s.pendingLeftover.amount - allocated;
+    return /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12px;opacity:0.9;margin-bottom:10px;')
+    }, fmt(Math.max(remaining, 0)), " left to assign", remaining < 0 ? " — that's more than you have" : '');
+  })(), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      const spendingAmt = parseFloat(leftoverSplits.spending) || 0;
+      const goalAmts = {};
+      s.goals.forEach(g => {
+        goalAmts[g.id] = parseFloat(leftoverSplits[g.id]) || 0;
+      });
+      applyLeftoverAllocation(spendingAmt, goalAmts);
+      setAllocatingLeftover(false);
+      setLeftoverSplits({});
+    },
+    style: css('flex:1;background:#fff;color:#0071e3;border:none;padding:10px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;')
+  }, "Confirm"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setAllocatingLeftover(false),
+    style: css('background:rgba(255,255,255,0.2);color:#fff;border:none;padding:10px 14px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;')
+  }, "Cancel")))), /*#__PURE__*/React.createElement("div", {
     style: css('display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:22px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:14px;padding:13px;')
@@ -1193,11 +1356,22 @@ function App() {
     style: css('width:100%;padding:4px 6px;border:1px solid #e5e5ea;border-radius:8px;font-size:17px;font-weight:700;background:#fbfbfd;')
   }), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("div", {
     style: css('font-size:9.5px;color:#86868b;margin-top:4px;')
-  }, "≈ ", fmt(ctx.monthlyIncome), "/mo (26 paychecks/yr)")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, "≈ ", fmt(ctx.monthlyIncome), "/mo (26 paychecks/yr)"), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("div", {
+    style: css('margin-top:8px;')
+  }, /*#__PURE__*/React.createElement("label", {
+    style: css('display:block;font-size:9.5px;color:#86868b;font-weight:600;margin-bottom:3px;')
+  }, "A recent or upcoming payday"), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: s.nextPaydayDate || '',
+    onChange: onNextPaydayDate,
+    style: css('width:100%;padding:5px 6px;border:1px solid #e5e5ea;border-radius:8px;font-size:12px;background:#fbfbfd;')
+  }))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
   }, fmt(s.income)), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("div", {
     style: css('font-size:9.5px;color:#86868b;margin-top:2px;')
-  }, "≈ ", fmt(ctx.monthlyIncome), "/mo"))), /*#__PURE__*/React.createElement("div", {
+  }, "≈ ", fmt(ctx.monthlyIncome), "/mo"), s.payFrequency === 'biweekly' && nextPayday && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:9.5px;color:#0071e3;margin-top:2px;font-weight:600;')
+  }, "Next payday: ", nextPaydayLabel, " (", daysUntilPayday === 0 ? 'today' : daysUntilPayday === 1 ? 'tomorrow' : 'in ' + daysUntilPayday + 'd', ")"))), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:14px;padding:13px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
@@ -1301,7 +1475,25 @@ function App() {
     })), /*#__PURE__*/React.createElement("div", {
       style: css('display:flex;justify-content:space-between;margin-top:10px;font-size:12.5px;color:#86868b;')
     }, /*#__PURE__*/React.createElement("span", null, v.monthlyLabel, "/mo (", v.percentLabel, ")"), /*#__PURE__*/React.createElement("span", null, "Est. target: ", v.estDateLabel)));
-  }), /*#__PURE__*/React.createElement("div", {
+  })), s.tab === 'settings' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;gap:10px;margin-bottom:16px;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setTab('inicio'),
+    style: css('background:#fff;border:none;width:34px;height:34px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;')
+  }, /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 24 24",
+    width: "18",
+    height: "18",
+    fill: "none",
+    stroke: "#1d1d1f",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M15 18l-6-6 6-6"
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;')
+  }, "Settings")), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:22px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
@@ -1631,12 +1823,9 @@ function App() {
   }, /*#__PURE__*/React.createElement("button", {
     onClick: calPrevMonth,
     style: css('background:#f5f5f7;border:none;width:30px;height:30px;border-radius:9px;font-size:15px;cursor:pointer;color:#1d1d1f;')
-  }, "‹"), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setResumenOpen(o => !o),
-    style: css('background:none;border:none;font-size:15px;font-weight:700;cursor:pointer;color:#1d1d1f;')
-  }, MONTH_NAMES[s.logMonth], " ", s.logYear, " ", /*#__PURE__*/React.createElement("span", {
-    style: css('color:#0071e3;font-size:12px;font-weight:600;')
-  }, resumenOpen ? '▲ summary' : '▼ summary')), /*#__PURE__*/React.createElement("button", {
+  }, "‹"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:15px;font-weight:700;color:#1d1d1f;')
+  }, MONTH_NAMES[s.logMonth], " ", s.logYear), /*#__PURE__*/React.createElement("button", {
     onClick: calNextMonth,
     style: css('background:#f5f5f7;border:none;width:30px;height:30px;border-radius:9px;font-size:15px;cursor:pointer;color:#1d1d1f;')
   }, "›")), /*#__PURE__*/React.createElement("div", {
@@ -1788,7 +1977,7 @@ function App() {
   }), /*#__PURE__*/React.createElement("button", {
     onClick: addLogEntry,
     style: css('background:#0071e3;color:#fff;border:none;padding:9px 16px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;')
-  }, "Log")))), resumenOpen && /*#__PURE__*/React.createElement("div", {
+  }, "Log")))), true && /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:14px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:4px;')
@@ -1823,7 +2012,7 @@ function App() {
       color: pctColor(resumenTotalPct),
       marginTop: 4
     }
-  }, resumenTotalPct.toFixed(0), "% of budget", resumenTotalPct > 100 ? ' — over budget' : '')), fixedResumenRows.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, resumenTotalPct.toFixed(0), "% of budget", resumenTotalPct > 100 ? ' — over budget' : ' · ' + fmt(resumenPlannedTotalNum - resumenActualTotalNum) + ' left over so far')), fixedResumenRows.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: css('display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-bottom:14px;')
   }, fixedResumenRows.map((cr, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
