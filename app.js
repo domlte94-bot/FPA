@@ -313,6 +313,50 @@ function computeCtx(s) {
 }
 
 /* ---------- app ---------- */
+function InfoTip({
+  text
+}) {
+  const [open, setOpen] = React.useState(false);
+  return /*#__PURE__*/React.createElement("span", {
+    style: {
+      position: 'relative',
+      display: 'inline-block'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setOpen(o => !o),
+    style: {
+      background: '#e5e5ea',
+      border: 'none',
+      borderRadius: '50%',
+      width: 16,
+      height: 16,
+      fontSize: 10,
+      fontWeight: 700,
+      color: '#6e6e73',
+      cursor: 'pointer',
+      lineHeight: '16px',
+      padding: 0,
+      marginLeft: 6,
+      verticalAlign: 'middle'
+    }
+  }, "i"), open && /*#__PURE__*/React.createElement("span", {
+    style: {
+      position: 'absolute',
+      top: 22,
+      left: 0,
+      zIndex: 20,
+      background: '#1d1d1f',
+      color: '#fff',
+      fontSize: 11.5,
+      lineHeight: 1.45,
+      padding: '10px 12px',
+      borderRadius: 10,
+      width: 230,
+      boxShadow: '0 10px 26px rgba(0,0,0,0.25)',
+      display: 'block'
+    }
+  }, text));
+}
 function App() {
   const [state, setState] = useState(null);
   const [storageWarning, setStorageWarning] = useState('');
@@ -512,9 +556,12 @@ function App() {
       color: PALETTE[s.expenseCategories.length % PALETTE.length]
     }])
   }));
-  const removeExpenseRow = i => patch(s => ({
-    expenseCategories: s.expenseCategories.filter((_, idx) => idx !== i)
-  }));
+  const removeExpenseRow = i => {
+    if (!window.confirm('Delete this budget category? This won\'t remove past logged expenses.')) return;
+    patch(s => ({
+      expenseCategories: s.expenseCategories.filter((_, idx) => idx !== i)
+    }));
+  };
   const toggleExpenseFixed = i => patch(s => {
     const rows = s.expenseCategories.slice();
     rows[i] = {
@@ -616,13 +663,16 @@ function App() {
       };
     });
   };
-  const removeGoal = id => patch(s => {
-    const goals = s.goals.filter(g => g.id !== id);
-    return {
-      goals,
-      selectedGoalId: s.selectedGoalId === id ? goals[0] ? goals[0].id : null : s.selectedGoalId
-    };
-  });
+  const removeGoal = id => {
+    if (!window.confirm('Delete this goal? Its saved progress and history will be lost.')) return;
+    patch(s => {
+      const goals = s.goals.filter(g => g.id !== id);
+      return {
+        goals,
+        selectedGoalId: s.selectedGoalId === id ? goals[0] ? goals[0].id : null : s.selectedGoalId
+      };
+    });
+  };
   const updateGoal = (id, field, val) => patch(s => ({
     goals: s.goals.map(g => g.id === id ? {
       ...g,
@@ -670,9 +720,12 @@ function App() {
       goalId: null
     }])
   }));
-  const removeHustle = id => patch(s => ({
-    hustles: s.hustles.filter(h => h.id !== id)
-  }));
+  const removeHustle = id => {
+    if (!window.confirm('Delete this side hustle? Its streak history will be lost.')) return;
+    patch(s => ({
+      hustles: s.hustles.filter(h => h.id !== id)
+    }));
+  };
   const updateHustle = (id, field, val) => patch(s => ({
     hustles: s.hustles.map(h => h.id === id ? {
       ...h,
@@ -707,9 +760,12 @@ function App() {
       lastUpdated: todayStr
     }])
   }));
-  const removeInvestment = id => patch(s => ({
-    investments: s.investments.filter(i => i.id !== id)
-  }));
+  const removeInvestment = id => {
+    if (!window.confirm('Delete this investment from your tracker?')) return;
+    patch(s => ({
+      investments: s.investments.filter(i => i.id !== id)
+    }));
+  };
   const updateInvestment = (id, field, val) => patch(s => ({
     investments: s.investments.map(i => i.id === id ? {
       ...i,
@@ -1529,7 +1585,7 @@ function App() {
   }))), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;')
   }, "Settings")), /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:22px;')
+    style: css('border-top:1px solid #e5e5ea;padding-top:16px;margin-bottom:24px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
   }, "Reports"), /*#__PURE__*/React.createElement("div", {
@@ -1555,17 +1611,17 @@ function App() {
     style: css('display:flex;gap:8px;')
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => downloadReport('quarter'),
-    style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;padding:10px;border-radius:10px;font-size:12.5px;font-weight:600;cursor:pointer;')
+    style: css('flex:1;background:#eceded;color:#1d1d1f;border:none;padding:10px;border-radius:10px;font-size:12.5px;font-weight:600;cursor:pointer;')
   }, "⬇ Quarterly report"), /*#__PURE__*/React.createElement("button", {
     onClick: () => downloadReport('year'),
-    style: css('flex:1;background:#0071e3;color:#fff;border:none;padding:10px;border-radius:10px;font-size:12.5px;font-weight:600;cursor:pointer;')
+    style: css('flex:1;background:#eceded;color:#1d1d1f;border:none;padding:10px;border-radius:10px;font-size:12.5px;font-weight:600;cursor:pointer;')
   }, "⬇ Annual report"))), /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:22px;')
+    style: css('border-top:1px solid #e5e5ea;padding-top:16px;margin-bottom:24px;')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:6px;')
-  }, "Backup & transfer"), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:12px;color:#86868b;margin-bottom:12px;line-height:1.4;')
-  }, "Your data lives only on this device/browser. Export it here, then import that file on another device to bring your data along."), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:12px;')
+  }, "Backup & transfer", /*#__PURE__*/React.createElement(InfoTip, {
+    text: "Your data lives only on this device/browser. Export it here, then import that file on another device to bring your data along."
+  })), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:8px;')
   }, /*#__PURE__*/React.createElement("button", {
     onClick: exportData,
@@ -1591,8 +1647,14 @@ function App() {
     const assignedTotal = s.goals.reduce((a, g) => a + buildGoalView(g, false).monthlyBoosted, 0);
     const unassigned = ctx.boostedAvailable - assignedTotal;
     return unassigned > 1 ? /*#__PURE__*/React.createElement("div", {
-      style: css('font-size:13px;color:#0071e3;font-weight:600;margin-bottom:16px;')
-    }, fmt(unassigned), "/mo not yet assigned to any goal") : /*#__PURE__*/React.createElement("div", {
+      style: css('background:linear-gradient(135deg,#0071e3,#34c759);border-radius:14px;padding:14px 16px;color:#fff;margin:12px 0 16px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12px;font-weight:600;opacity:0.9;')
+    }, "Unassigned each month"), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:20px;font-weight:800;margin-top:2px;')
+    }, fmt(unassigned), "/mo"), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12px;opacity:0.9;margin-top:2px;')
+    }, "Not covered by any goal's % — raise a goal's share below to put it to work.")) : /*#__PURE__*/React.createElement("div", {
       style: css('font-size:13px;color:#86868b;margin-bottom:16px;')
     }, s.goals.length, " of 6 goals");
   })(), overAllocatedWarning && /*#__PURE__*/React.createElement("div", {
@@ -1856,10 +1918,10 @@ function App() {
   }), "With side hustles"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     style: css('display:inline-block;width:10px;height:10px;border-radius:2px;background:#c7c7cc;margin-right:5px;')
   }), "Salary only"))))), s.tab === 'gastos' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px;')
-  }, "Expenses"), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13px;color:#86868b;margin-bottom:16px;')
-  }, "Tap a day to view or log expenses. Tap the month to see the full summary."), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:16px;')
+  }, "Expenses", /*#__PURE__*/React.createElement(InfoTip, {
+    text: "Tap a day to view or log expenses. Tap the month to see the full summary."
+  })), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:14px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;')
@@ -2159,10 +2221,10 @@ function App() {
   })())), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:16px;padding:16px;')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:2px;')
-  }, "Planned budget"), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:11.5px;color:#86868b;margin-bottom:10px;')
-  }, "Mark \"Fixed\" for costs that are always the same (rent, insurance) — those auto-fill when you log them. Leave unmarked for things that vary (groceries, gas)."), s.expenseCategories.map((row, i) => /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
+  }, "Planned budget", /*#__PURE__*/React.createElement(InfoTip, {
+    text: "Mark \"Fixed\" for costs that are always the same (rent, insurance) — those auto-fill when you log them. Leave unmarked for things that vary (groceries, gas)."
+  })), s.expenseCategories.map((row, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
     style: css('display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #f0f0f2;')
   }, /*#__PURE__*/React.createElement("span", {
@@ -2226,10 +2288,10 @@ function App() {
   })), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;justify-content:space-between;font-weight:700;font-size:13.5px;margin-top:10px;padding-top:8px;border-top:1px solid #f0f0f2;')
   }, /*#__PURE__*/React.createElement("span", null, "Monthly total"), /*#__PURE__*/React.createElement("span", null, fmt(monthlyTotal))))), s.tab === 'extra' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px;')
-  }, "Extra income"), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13px;color:#86868b;margin-bottom:16px;')
-  }, "Freelance, sales, commissions — every extra dollar speeds up your goals."), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:16px;')
+  }, "Extra income", /*#__PURE__*/React.createElement(InfoTip, {
+    text: "Freelance, sales, commissions — every extra dollar speeds up your goals."
+  })), /*#__PURE__*/React.createElement("div", {
     style: css('background:linear-gradient(135deg,#0071e3,#34c759);border-radius:20px;padding:22px;color:#fff;margin-bottom:18px;box-shadow:0 16px 40px rgba(0,113,227,0.25);')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;opacity:0.85;')
@@ -2320,10 +2382,10 @@ function App() {
     onClick: addHustle,
     style: css('width:100%;padding:13px;background:#34c759;color:#fff;border:none;border-radius:14px;font-size:14.5px;font-weight:600;cursor:pointer;')
   }, "+ Add side hustle")), s.tab === 'invest' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px;')
-  }, "Investments"), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13px;color:#86868b;margin-bottom:16px;')
-  }, "Track what's growing your money outside your goals. Update the current value every so often — 6 months is a good rhythm."), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:16px;')
+  }, "Investments", /*#__PURE__*/React.createElement(InfoTip, {
+    text: "Track what's growing your money outside your goals. Update the current value every so often — 6 months is a good rhythm."
+  })), /*#__PURE__*/React.createElement("div", {
     style: css('background:linear-gradient(135deg,#0071e3,#34c759);border-radius:20px;padding:22px;color:#fff;margin-bottom:18px;box-shadow:0 16px 40px rgba(0,113,227,0.25);')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;opacity:0.85;')
