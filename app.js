@@ -378,9 +378,17 @@ function App() {
           const todayNow = new Date();
           const curMonth = todayNow.getMonth(),
             curYear = todayNow.getFullYear();
-          if (typeof loaded.lastProcessedMonth === 'number' && typeof loaded.lastProcessedYear === 'number' && (loaded.lastProcessedMonth !== curMonth || loaded.lastProcessedYear !== curYear)) {
-            const prevMonth = loaded.lastProcessedMonth,
-              prevYear = loaded.lastProcessedYear;
+          const hasRecorded = typeof loaded.lastProcessedMonth === 'number' && typeof loaded.lastProcessedYear === 'number';
+          const recordedIsOld = hasRecorded && (loaded.lastProcessedMonth !== curMonth || loaded.lastProcessedYear !== curYear);
+          if (recordedIsOld || !hasRecorded) {
+            // If we've never tracked this before (upgrading from an older version), compare against
+            // last calendar month so the very first leftover prompt still shows up right away.
+            let prevMonth = hasRecorded ? loaded.lastProcessedMonth : curMonth - 1;
+            let prevYear = hasRecorded ? loaded.lastProcessedYear : curYear;
+            if (prevMonth < 0) {
+              prevMonth = 11;
+              prevYear -= 1;
+            }
             const cats = loaded.expenseCategories || [];
             const budgetForPrevMonth = cats.reduce((a, c) => a + (c.amount || 0), 0) + (loaded.nonRecurringBudget || 0);
             const spentPrevMonth = (loaded.expenseLog || []).filter(e => {
@@ -463,9 +471,36 @@ function App() {
       };
     });
   };
-  const dismissLeftover = () => patch({
-    pendingLeftover: null
-  });
+  const dismissLeftover = () => {
+    patch(s => {
+      if (!s.pendingLeftover || s.pendingLeftover.amount <= 0) return {
+        pendingLeftover: null
+      };
+      const amount = s.pendingLeftover.amount;
+      const label = s.pendingLeftover.label + ' leftover';
+      const manualPercentTotal = s.goals.filter(g => g.mode === 'manual').reduce((a, g) => a + (g.percent || 0), 0);
+      const autoCount = Math.max(s.goals.filter(g => g.mode !== 'manual').length, 1);
+      const autoPercentEach = Math.max(100 - manualPercentTotal, 0) / autoCount;
+      const goals = s.goals.map(g => {
+        const percent = g.mode === 'manual' ? g.percent || 0 : autoPercentEach;
+        const share = Math.round(amount * (percent / 100));
+        if (share <= 0) return g;
+        return {
+          ...g,
+          current: (g.current || 0) + share,
+          savingsLog: [{
+            id: Date.now() + Math.random(),
+            label,
+            amount: share
+          }].concat(g.savingsLog || []).slice(0, 12)
+        };
+      });
+      return {
+        goals,
+        pendingLeftover: null
+      };
+    });
+  };
   const onNonRecurringBudget = e => patch({
     nonRecurringBudget: parseFloat(e.target.value) || 0
   });
@@ -1243,7 +1278,7 @@ function App() {
     style: css('font-size:28px;font-weight:800;margin:4px 0 8px;')
   }, fmt(s.pendingLeftover.amount)), !allocatingLeftover ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;opacity:0.95;margin-bottom:12px;')
-  }, "You had this left over — what do you want to do with it?"), /*#__PURE__*/React.createElement("div", {
+  }, "You had this left over — split it yourself, or we'll add it all to savings for you."), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:8px;')
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => {
@@ -1251,10 +1286,10 @@ function App() {
       setAllocatingLeftover(true);
     },
     style: css('flex:1;background:#fff;color:#0071e3;border:none;padding:10px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;')
-  }, "Decide now"), /*#__PURE__*/React.createElement("button", {
+  }, "Split it up"), /*#__PURE__*/React.createElement("button", {
     onClick: dismissLeftover,
     style: css('background:rgba(255,255,255,0.2);color:#fff;border:none;padding:10px 14px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;')
-  }, "Skip"))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, "Just save it all"))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12px;opacity:0.9;margin-bottom:10px;')
   }, "Split it however you like — spending, one goal, or several."), /*#__PURE__*/React.createElement("div", {
     style: css('background:rgba(255,255,255,0.15);border-radius:12px;padding:10px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;')
@@ -1551,8 +1586,16 @@ function App() {
   }, importMessage))), s.tab === 'metas' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px;')
   }, "Goals"), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13px;color:#86868b;margin-bottom:16px;')
-  }, s.goals.length, " of 6 goals"), overAllocatedWarning && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;color:#86868b;margin-bottom:2px;')
+  }, "Set savings targets and see how your money is split between them."), (() => {
+    const assignedTotal = s.goals.reduce((a, g) => a + buildGoalView(g, false).monthlyBoosted, 0);
+    const unassigned = ctx.boostedAvailable - assignedTotal;
+    return unassigned > 1 ? /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:13px;color:#0071e3;font-weight:600;margin-bottom:16px;')
+    }, fmt(unassigned), "/mo not yet assigned to any goal") : /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:13px;color:#86868b;margin-bottom:16px;')
+    }, s.goals.length, " of 6 goals");
+  })(), overAllocatedWarning && /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff2ef;border-radius:12px;padding:12px 14px;font-size:13px;color:#ff3b30;margin-bottom:14px;')
   }, overAllocatedWarning), /*#__PURE__*/React.createElement("div", {
     style: css('display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:10px;margin-bottom:20px;')
