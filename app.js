@@ -92,6 +92,7 @@ function buildPersistPayload(state) {
     income: state.income,
     payFrequency: state.payFrequency,
     nextPaydayDate: state.nextPaydayDate,
+    paycheckLog: state.paycheckLog,
     nonRecurringBudget: state.nonRecurringBudget,
     pendingLeftover: state.pendingLeftover,
     spendingBoost: state.spendingBoost,
@@ -195,6 +196,7 @@ function defaultState() {
     income: 3173,
     payFrequency: 'monthly',
     nextPaydayDate: '',
+    paycheckLog: [],
     nonRecurringBudget: 0,
     pendingLeftover: null,
     spendingBoost: 0,
@@ -283,11 +285,26 @@ function nextPaydayFrom(anchorStr, today) {
   while (d.getTime() - 14 * 86400000 >= t.getTime()) d = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 14);
   return d;
 }
+function receivedThisMonth(s, today) {
+  const y = today.getFullYear(),
+    m = today.getMonth();
+  return (s.paycheckLog || []).filter(p => {
+    const d = new Date(p.date + 'T00:00:00');
+    return d.getFullYear() === y && d.getMonth() === m;
+  }).reduce((a, p) => a + p.amount, 0);
+}
+function actualMonthlyIncomeOf(s, today) {
+  if (s.payFrequency !== 'biweekly') return s.income || 0;
+  const received = receivedThisMonth(s, today);
+  return received > 0 ? received : monthlyIncomeOf(s);
+}
 function computeCtx(s) {
+  const today = new Date();
   const totalExpenses = sum(s.expenseCategories) + (s.nonRecurringBudget || 0) + (s.spendingBoost || 0);
   const hustleTotal = sum(s.hustles);
   const generalHustleTotal = s.hustles.filter(h => !h.goalId).reduce((a, h) => a + (h.amount || 0), 0);
-  const monthlyIncome = monthlyIncomeOf(s);
+  const monthlyIncome = actualMonthlyIncomeOf(s, today);
+  const usingActualPaychecks = s.payFrequency === 'biweekly' && receivedThisMonth(s, today) > 0;
   const baseAvailable = monthlyIncome - totalExpenses;
   const boostedAvailable = monthlyIncome + generalHustleTotal - totalExpenses;
   const manualPercentTotal = s.goals.filter(g => g.mode === 'manual').reduce((a, g) => a + (g.percent || 0), 0);
@@ -302,13 +319,14 @@ function computeCtx(s) {
     hustleTotal,
     generalHustleTotal,
     monthlyIncome,
+    usingActualPaychecks,
     baseAvailable,
     boostedAvailable,
     manualPercentTotal,
     autoCount,
     autoPercentEach,
     assignedByGoal,
-    today: new Date()
+    today
   };
 }
 
@@ -491,6 +509,27 @@ function App() {
   const onNextPaydayDate = e => patch({
     nextPaydayDate: e.target.value
   });
+  const markPaidToday = () => {
+    patch(s => {
+      const amt = s.income || 0;
+      const entry = {
+        id: Date.now(),
+        date: todayStr,
+        amount: amt
+      };
+      const anchor = s.nextPaydayDate ? new Date(s.nextPaydayDate + 'T00:00:00') : new Date();
+      const advanced = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() + 14);
+      let next = advanced;
+      const today = new Date();
+      while (next.getTime() < new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()) {
+        next = new Date(next.getFullYear(), next.getMonth(), next.getDate() + 14);
+      }
+      return {
+        paycheckLog: (s.paycheckLog || []).concat([entry]).slice(-52),
+        nextPaydayDate: toDateStr(next.getFullYear(), next.getMonth(), next.getDate())
+      };
+    });
+  };
   const applyLeftoverAllocation = (spendingAmt, goalAmts) => {
     patch(s => {
       let goals = s.goals;
@@ -1458,11 +1497,16 @@ function App() {
     style: css('width:100%;padding:5px 6px;border:1px solid #e5e5ea;border-radius:8px;font-size:12px;background:#fbfbfd;')
   }))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
-  }, fmt(s.income)), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("div", {
+  }, fmt(s.income)), s.payFrequency === 'biweekly' && (ctx.usingActualPaychecks ? /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:9.5px;color:#34c759;margin-top:2px;font-weight:600;')
+  }, "✓ ", fmt(receivedThisMonth(s, ctx.today)), " received this month") : /*#__PURE__*/React.createElement("div", {
     style: css('font-size:9.5px;color:#86868b;margin-top:2px;')
-  }, "≈ ", fmt(ctx.monthlyIncome), "/mo"), s.payFrequency === 'biweekly' && nextPayday && /*#__PURE__*/React.createElement("div", {
+  }, "≈ ", fmt(ctx.monthlyIncome), "/mo (estimate, no paycheck logged yet)")), s.payFrequency === 'biweekly' && nextPayday && /*#__PURE__*/React.createElement("div", {
     style: css('font-size:9.5px;color:#0071e3;margin-top:2px;font-weight:600;')
-  }, "Next payday: ", nextPaydayLabel, " (", daysUntilPayday === 0 ? 'today' : daysUntilPayday === 1 ? 'tomorrow' : 'in ' + daysUntilPayday + 'd', ")"))), /*#__PURE__*/React.createElement("div", {
+  }, "Next payday: ", nextPaydayLabel, " (", daysUntilPayday === 0 ? 'today' : daysUntilPayday === 1 ? 'tomorrow' : 'in ' + daysUntilPayday + 'd', ")"), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("button", {
+    onClick: markPaidToday,
+    style: css('width:100%;margin-top:8px;background:#0071e3;color:#fff;border:none;padding:7px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;')
+  }, "✓ I got paid (", fmt(s.income), ")"))), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:14px;padding:13px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
