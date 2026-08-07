@@ -116,6 +116,7 @@ function buildPersistPayload(state) {
     nonRecurringBudget: state.nonRecurringBudget,
     hasSeenWelcome: state.hasSeenWelcome,
     skippedBudgetSetup: state.skippedBudgetSetup,
+    incomeHistory: state.incomeHistory,
     seenTabIntro: state.seenTabIntro,
     incomeProfile: state.incomeProfile,
     studentAge: state.studentAge,
@@ -229,6 +230,7 @@ function defaultState() {
     nonRecurringBudget: 0,
     hasSeenWelcome: false,
     skippedBudgetSetup: false,
+    incomeHistory: [],
     seenTabIntro: {
       inicio: false,
       metas: false,
@@ -350,12 +352,15 @@ function InfoTip({
       background: '#1d1d1f',
       color: '#fff',
       fontSize: 11.5,
+      fontWeight: 400,
       lineHeight: 1.45,
       padding: '10px 12px',
       borderRadius: 10,
       width: 230,
       boxShadow: '0 10px 26px rgba(0,0,0,0.25)',
-      display: 'block'
+      display: 'block',
+      textTransform: 'none',
+      letterSpacing: 'normal'
     }
   }, text));
 }
@@ -404,7 +409,7 @@ const STRINGS = {
     depositReminder: 'Deposit reminder',
     setReminder: 'Set reminder',
     savingsProjection: 'Savings projection (next 12 months)',
-    hitDate: '🎯 Want to hit a specific date?',
+    hitDate: 'Want to hit a specific date?',
     settings: 'Settings',
     welcome: 'Welcome',
     getStarted: 'Get started',
@@ -495,7 +500,7 @@ const STRINGS = {
     depositReminder: 'Recordatorio de depósito',
     setReminder: 'Recordatorio',
     savingsProjection: 'Proyección de ahorro (próximos 12 meses)',
-    hitDate: '🎯 ¿Quieres llegar en una fecha específica?',
+    hitDate: '¿Quieres llegar en una fecha específica?',
     settings: 'Ajustes',
     welcome: 'Bienvenida',
     getStarted: 'Comenzar',
@@ -588,6 +593,9 @@ function App() {
   const [showColorPopup, setShowColorPopup] = useState(false);
   const [showIconPopup, setShowIconPopup] = useState(false);
   const [showReminderPopup, setShowReminderPopup] = useState(false);
+  const [showAddPaycheck, setShowAddPaycheck] = useState(false);
+  const [newPaycheckDate, setNewPaycheckDate] = useState('');
+  const [newPaycheckAmount, setNewPaycheckAmount] = useState('');
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
   const [allocatingLeftover, setAllocatingLeftover] = useState(false);
   const [welcomeStep, setWelcomeStep] = useState(0);
@@ -748,6 +756,25 @@ function App() {
   const setPayFrequency = freq => patch({
     payFrequency: freq
   });
+  const finishEditingIncome = () => {
+    setEditingIncome(false);
+  };
+  const removeIncomeHistoryEntry = id => patch(s => ({
+    incomeHistory: (s.incomeHistory || []).filter(e => e.id !== id)
+  }));
+  const addManualPaycheck = (dateStr, amount) => {
+    if (!dateStr || !amount) return;
+    patch(s => ({
+      paycheckLog: (s.paycheckLog || []).concat([{
+        id: Date.now(),
+        date: dateStr,
+        amount
+      }]).sort((a, b) => a.date.localeCompare(b.date)).slice(-104)
+    }));
+  };
+  const removePaycheckEntry = id => patch(s => ({
+    paycheckLog: (s.paycheckLog || []).filter(p => p.id !== id)
+  }));
   const onNextPaydayDate = e => patch({
     nextPaydayDate: e.target.value
   });
@@ -2063,63 +2090,19 @@ function App() {
   }, "Cancel")))), /*#__PURE__*/React.createElement("div", {
     style: css('display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:22px;')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border-radius:14px;padding:13px;')
+    onClick: () => setTab('incomeHistory'),
+    style: css('background:#fff;border-radius:14px;padding:13px;cursor:pointer;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;justify-content:space-between;align-items:center;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
   }, s.incomeProfile === 'allowance' ? t('allowanceLabel') : s.incomeProfile === 'freelance' ? t('fixedContractsLabel') : s.payFrequency === 'biweekly' ? t('incomePerPaycheck') : t('monthlyIncome')), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setEditingIncome(v => !v),
-    style: css('background:none;border:none;color:#0071e3;font-size:10.5px;font-weight:700;cursor:pointer;padding:0;')
-  }, editingIncome ? t('done') : t('edit'))), editingIncome ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;gap:6px;margin-top:6px;margin-bottom:6px;')
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setPayFrequency('monthly'),
-    style: {
-      flex: 1,
-      background: s.payFrequency !== 'biweekly' ? '#0071e3' : '#f5f5f7',
-      color: s.payFrequency !== 'biweekly' ? '#fff' : '#1d1d1f',
-      border: 'none',
-      padding: '5px 4px',
-      borderRadius: 7,
-      fontSize: 10.5,
-      fontWeight: 600,
-      cursor: 'pointer'
-    }
-  }, "Monthly"), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setPayFrequency('biweekly'),
-    style: {
-      flex: 1,
-      background: s.payFrequency === 'biweekly' ? '#0071e3' : '#f5f5f7',
-      color: s.payFrequency === 'biweekly' ? '#fff' : '#1d1d1f',
-      border: 'none',
-      padding: '5px 4px',
-      borderRadius: 7,
-      fontSize: 10.5,
-      fontWeight: 600,
-      cursor: 'pointer'
-    }
-  }, "Biweekly")), /*#__PURE__*/React.createElement("input", {
-    type: "number",
-    autoFocus: true,
-    value: s.income || '',
-    onChange: onIncome,
-    onKeyDown: e => {
-      if (e.key === 'Enter') setEditingIncome(false);
+    onClick: e => {
+      e.stopPropagation();
+      setTab('incomeHistory');
     },
-    style: css('width:100%;padding:4px 6px;border:1px solid #e5e5ea;border-radius:8px;font-size:17px;font-weight:700;background:#fbfbfd;')
-  }), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:9.5px;color:#86868b;margin-top:4px;')
-  }, "≈ ", fmt(ctx.monthlyIncome), "/mo (26 paychecks/yr)"), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("div", {
-    style: css('margin-top:8px;')
-  }, /*#__PURE__*/React.createElement("label", {
-    style: css('display:block;font-size:9.5px;color:#86868b;font-weight:600;margin-bottom:3px;')
-  }, "A recent or upcoming payday"), /*#__PURE__*/React.createElement("input", {
-    type: "date",
-    value: s.nextPaydayDate || '',
-    onChange: onNextPaydayDate,
-    style: css('width:100%;padding:5px 6px;border:1px solid #e5e5ea;border-radius:8px;font-size:12px;background:#fbfbfd;')
-  }))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: css('background:none;border:none;color:#0071e3;font-size:10.5px;font-weight:700;cursor:pointer;padding:0;')
+  }, s.language === 'es' ? 'Ver' : 'View')), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
   }, fmt(s.income)), s.payFrequency === 'biweekly' && (ctx.usingActualPaychecks ? /*#__PURE__*/React.createElement("div", {
     style: css('font-size:9.5px;color:#34c759;margin-top:2px;font-weight:600;')
@@ -2128,13 +2111,18 @@ function App() {
   }, "≈ ", fmt(ctx.monthlyIncome), "/mo (estimate, no paycheck logged yet)")), s.payFrequency === 'biweekly' && nextPayday && /*#__PURE__*/React.createElement("div", {
     style: css('font-size:9.5px;color:#0071e3;margin-top:2px;font-weight:600;')
   }, "Next payday: ", nextPaydayLabel, " (", daysUntilPayday === 0 ? 'today' : daysUntilPayday === 1 ? 'tomorrow' : 'in ' + daysUntilPayday + 'd', ")"), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("button", {
-    onClick: markPaidToday,
+    onClick: e => {
+      e.stopPropagation();
+      markPaidToday();
+    },
     style: css('width:100%;margin-top:8px;background:#0071e3;color:#fff;border:none;padding:7px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;')
-  }, "✓ I got paid (", fmt(s.income), ")"))), /*#__PURE__*/React.createElement("div", {
+  }, "✓ I got paid (", fmt(s.income), ")")), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:14px;padding:13px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
-  }, t('availableMonth')), /*#__PURE__*/React.createElement("div", {
+  }, t('availableMonth'), /*#__PURE__*/React.createElement(InfoTip, {
+    text: s.language === 'es' ? 'Tu ingreso menos tus gastos presupuestados de este mes.' : "Your income minus your budgeted expenses this month."
+  })), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
   }, fmt(Math.max(ctx.boostedAvailable, 0)))), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:14px;padding:13px;')
@@ -2176,9 +2164,10 @@ function App() {
       flex: 'none'
     }
   }), /*#__PURE__*/React.createElement("span", null, c.label))))), !s.seenTabIntro.inicio && /*#__PURE__*/React.createElement("div", {
+    className: "tip-banner",
     style: css('display:flex;align-items:center;gap:12px;background:#fff;border-radius:16px;padding:16px 18px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,0.10);')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('flex:1;font-size:13.5px;color:#1d1d1f;font-weight:600;line-height:1.5;')
+    style: css('flex:1;font-size:13px;color:#6e6e73;font-weight:400;line-height:1.5;')
   }, t('tabIntroHome')), /*#__PURE__*/React.createElement("button", {
     onClick: () => dismissTabIntro('inicio'),
     style: css('flex:none;background:#fff;color:#0071e3;border:1.5px solid #d2d2d7;padding:8px 15px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
@@ -2233,7 +2222,173 @@ function App() {
     })), /*#__PURE__*/React.createElement("div", {
       style: css('display:flex;justify-content:space-between;margin-top:10px;font-size:12.5px;color:#86868b;')
     }, /*#__PURE__*/React.createElement("span", null, v.monthlyLabel, "/mo (", v.percentLabel, ")"), /*#__PURE__*/React.createElement("span", null, "Est. target: ", v.estDateLabel)));
-  })), s.tab === 'settings' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  })), s.tab === 'incomeHistory' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;gap:10px;margin-bottom:16px;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setTab('inicio'),
+    style: css('background:#fff;border:none;width:34px;height:34px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;')
+  }, /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 24 24",
+    width: "18",
+    height: "18",
+    fill: "none",
+    stroke: "#1d1d1f",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M15 18l-6-6 6-6"
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;')
+  }, s.language === 'es' ? 'Historial de ingreso' : 'Income history')), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12px;color:#86868b;margin-bottom:16px;line-height:1.4;')
+  }, s.language === 'es' ? 'Edita tu tarifa fija arriba. Abajo, cada pago real que has recibido — puedes registrar uno, editar o borrar.' : "Edit your fixed pay rate above. Below, every real payment you've received — register one, edit, or delete."), /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:16px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;justify-content:space-between;align-items:center;margin-bottom: ' + (editingIncome ? '8' : '2') + 'px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
+  }, s.language === 'es' ? 'Tu pago (fijo)' : 'Your pay (fixed)'), /*#__PURE__*/React.createElement("button", {
+    onClick: () => editingIncome ? finishEditingIncome() : setEditingIncome(true),
+    style: css('background:none;border:none;color:#0071e3;font-size:10.5px;font-weight:700;cursor:pointer;padding:0;')
+  }, editingIncome ? t('done') : t('edit'))), editingIncome ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative',
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: css('position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:15px;color:#86868b;pointer-events:none;')
+  }, "$"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    autoFocus: true,
+    value: s.income || '',
+    onChange: onIncome,
+    style: css('width:100%;padding:9px 9px 9px 22px;border:1px solid #e5e5ea;border-radius:10px;font-size:15px;font-weight:700;background:#fbfbfd;')
+  })), s.incomeProfile !== 'allowance' && /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setPayFrequency('monthly'),
+    style: {
+      flex: 1,
+      padding: 8,
+      borderRadius: 9,
+      border: s.payFrequency !== 'biweekly' ? '2px solid #0071e3' : '1px solid #e5e5ea',
+      background: s.payFrequency !== 'biweekly' ? '#eef6ff' : '#fbfbfd',
+      fontSize: 12,
+      fontWeight: 600,
+      color: '#1d1d1f',
+      cursor: 'pointer'
+    }
+  }, t('monthlyLabel')), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setPayFrequency('biweekly'),
+    style: {
+      flex: 1,
+      padding: 8,
+      borderRadius: 9,
+      border: s.payFrequency === 'biweekly' ? '2px solid #0071e3' : '1px solid #e5e5ea',
+      background: s.payFrequency === 'biweekly' ? '#eef6ff' : '#fbfbfd',
+      fontSize: 12,
+      fontWeight: 600,
+      color: '#1d1d1f',
+      cursor: 'pointer'
+    }
+  }, t('biweeklyLabel')))) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative',
+      width: 140
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:20px;font-weight:700;color:#1d1d1f;')
+  }, fmt(s.income)), s.incomeProfile !== 'allowance' && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11px;color:#86868b;margin-top:1px;')
+  }, s.payFrequency === 'biweekly' ? t('biweeklyLabel') : t('monthlyLabel')))), /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:16px;padding:16px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:4px;')
+  }, s.language === 'es' ? 'Pagos recibidos' : 'Paychecks received'), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11px;color:#86868b;margin-bottom:12px;line-height:1.4;')
+  }, s.language === 'es' ? 'Cada pago real que has recibido, con su fecha.' : 'Every real payment you actually received, with its date.'), (() => {
+    const sorted = (s.paycheckLog || []).slice().sort((a, b) => a.date.localeCompare(b.date));
+    const recent = sorted.slice(-6);
+    if (recent.length === 0) {
+      return /*#__PURE__*/React.createElement("div", {
+        style: css('font-size:12.5px;color:#86868b;margin-bottom:4px;')
+      }, s.language === 'es' ? 'Todavía no has registrado ningún pago.' : "You haven't logged any paychecks yet.");
+    }
+    const maxAmt = Math.max(...recent.map(p => p.amount), 1);
+    const barH = 100;
+    return /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;align-items:flex-end;gap:10px;height:' + (barH + 26) + 'px;margin-bottom:6px;')
+    }, recent.map((p, i) => {
+      const h = Math.max(p.amount / maxAmt * barH, 4);
+      const isLast = i === recent.length - 1;
+      const d = new Date(p.date + 'T00:00:00');
+      return /*#__PURE__*/React.createElement("div", {
+        key: p.id,
+        style: css('flex:1;display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end;min-width:0;')
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          width: '70%',
+          maxWidth: 26,
+          height: h,
+          borderRadius: '5px 5px 0 0',
+          background: isLast ? '#0071e3' : '#a8d8b0'
+        }
+      }), /*#__PURE__*/React.createElement("div", {
+        style: css('font-size:9px;color:#86868b;margin-top:5px;white-space:nowrap;')
+      }, MONTH_NAMES[d.getMonth()], " ", d.getDate()));
+    }));
+  })(), (s.paycheckLog || []).slice().sort((a, b) => b.date.localeCompare(a.date)).map(p => /*#__PURE__*/React.createElement("div", {
+    key: p.id,
+    style: css('display:flex;justify-content:space-between;align-items:center;font-size:12.5px;color:#6e6e73;padding:8px 0;border-top:1px solid #f5f5f7;')
+  }, /*#__PURE__*/React.createElement("span", null, p.date), /*#__PURE__*/React.createElement("span", {
+    style: css('display:flex;align-items:center;gap:8px;')
+  }, fmt(p.amount), /*#__PURE__*/React.createElement("button", {
+    onClick: () => removePaycheckEntry(p.id),
+    style: css('background:none;border:none;color:#ff3b30;cursor:pointer;font-size:14px;')
+  }, "×")))), showAddPaycheck ? /*#__PURE__*/React.createElement("div", {
+    style: css('border-top:1px solid #f5f5f7;margin-top:10px;padding-top:12px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;margin-bottom:8px;')
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: newPaycheckDate,
+    onChange: e => setNewPaycheckDate(e.target.value),
+    style: css('flex:1;padding:8px;border:1px solid #e5e5ea;border-radius:9px;font-size:12.5px;background:#fbfbfd;')
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative',
+      width: 100
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: css('position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:13px;color:#86868b;pointer-events:none;')
+  }, "$"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    placeholder: "0",
+    value: newPaycheckAmount,
+    onChange: e => setNewPaycheckAmount(e.target.value),
+    style: css('width:100%;padding:8px 8px 8px 20px;border:1px solid #e5e5ea;border-radius:9px;font-size:12.5px;background:#fbfbfd;')
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      addManualPaycheck(newPaycheckDate, parseFloat(newPaycheckAmount) || 0);
+      setNewPaycheckDate('');
+      setNewPaycheckAmount('');
+      setShowAddPaycheck(false);
+    },
+    style: css('flex:1;background:#0071e3;color:#fff;border:none;padding:9px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
+  }, s.language === 'es' ? 'Agregar' : 'Add'), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowAddPaycheck(false),
+    style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;padding:9px;border-radius:9px;font-size:12.5px;font-weight:600;cursor:pointer;')
+  }, s.language === 'es' ? 'Cancelar' : 'Cancel'))) : /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setNewPaycheckDate(todayStr);
+      setNewPaycheckAmount(String(s.income || ''));
+      setShowAddPaycheck(true);
+    },
+    style: css('width:100%;margin-top:10px;background:#f5f5f7;color:#0071e3;border:none;padding:9px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
+  }, "+ ", s.language === 'es' ? 'Registrar un pago que ya recibiste' : 'Register a paycheck you already received'))), s.tab === 'settings' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:center;gap:10px;margin-bottom:16px;')
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => settingsView === 'menu' ? setTab('inicio') : setSettingsView('menu'),
@@ -2561,11 +2716,11 @@ function App() {
       return seg;
     });
     return /*#__PURE__*/React.createElement("div", {
-      style: css('background:#fff;border-radius:16px;padding:18px;margin-bottom:16px;display:flex;align-items:center;gap:18px;')
+      style: css('background:#fff;border-radius:16px;padding:18px;margin-bottom:16px;display:flex;align-items:center;gap:16px;')
     }, /*#__PURE__*/React.createElement("svg", {
       viewBox: "0 0 110 110",
-      width: "100",
-      height: "100",
+      width: "110",
+      height: "110",
       style: {
         flex: 'none'
       }
@@ -2587,31 +2742,33 @@ function App() {
       strokeDasharray: (seg.pct / 100 * C).toFixed(1) + ' ' + C,
       strokeDashoffset: seg.dashOffset,
       transform: "rotate(-90 55 55)"
-    }))), /*#__PURE__*/React.createElement("div", {
-      style: css('flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;')
-    }, segs.map((seg, i) => /*#__PURE__*/React.createElement("div", {
-      key: i,
-      style: css('display:flex;align-items:center;gap:7px;min-width:0;')
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        width: 11,
-        height: 11,
-        borderRadius: '50%',
-        background: seg.color,
-        flex: 'none'
-      }
-    }), /*#__PURE__*/React.createElement("div", {
-      style: css('min-width:0;flex:1;display:flex;justify-content:space-between;align-items:baseline;gap:8px;')
-    }, /*#__PURE__*/React.createElement("span", {
-      style: css('font-size:14px;font-weight:700;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
-    }, seg.name), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 13,
-        fontWeight: 700,
-        color: seg.color,
-        flex: 'none'
-      }
-    }, seg.pct.toFixed(0), "%"))))));
+    }))), (() => {
+      const cols = Math.max(1, Math.ceil(Math.sqrt(Math.max(segs.length, 1))));
+      return /*#__PURE__*/React.createElement("div", {
+        style: css('flex:1;min-width:0;display:grid;grid-template-columns:repeat(' + cols + ',1fr);gap:10px 12px;')
+      }, segs.map((seg, i) => /*#__PURE__*/React.createElement("div", {
+        key: i,
+        style: css('display:flex;align-items:center;gap:6px;min-width:0;')
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
+          width: 9,
+          height: 9,
+          borderRadius: '50%',
+          background: seg.color,
+          flex: 'none'
+        }
+      }), /*#__PURE__*/React.createElement("div", {
+        style: css('min-width:0;')
+      }, /*#__PURE__*/React.createElement("div", {
+        style: css('font-size:12px;font-weight:700;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
+      }, seg.name), /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 11.5,
+          fontWeight: 700,
+          color: seg.color
+        }
+      }, seg.pct.toFixed(0), "%")))));
+    })());
   })(), (() => {
     const assignedTotal = s.goals.reduce((a, g) => a + buildGoalView(g, false).monthlyBoosted, 0);
     const unassigned = ctx.boostedAvailable - assignedTotal;
@@ -2684,9 +2841,10 @@ function App() {
   }, "Goal"))), s.goals.length >= 6 && /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12px;color:#86868b;margin:-10px 0 16px;')
   }, "You already have 6 goals — the max. Fewer goals helps you prioritize."), !s.seenTabIntro.metas && /*#__PURE__*/React.createElement("div", {
+    className: "tip-banner",
     style: css('display:flex;align-items:center;gap:12px;background:#fff;border-radius:16px;padding:16px 18px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,0.10);')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('flex:1;font-size:13.5px;color:#1d1d1f;font-weight:600;line-height:1.5;')
+    style: css('flex:1;font-size:13px;color:#6e6e73;font-weight:400;line-height:1.5;')
   }, t('tabIntroGoals')), /*#__PURE__*/React.createElement("button", {
     onClick: () => dismissTabIntro('metas'),
     style: css('flex:none;background:#fff;color:#0071e3;border:1.5px solid #d2d2d7;padding:8px 15px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
@@ -2713,7 +2871,56 @@ function App() {
     value: sgSource.name,
     onChange: e => updateGoal(sgSource.id, 'name', e.target.value),
     style: css('flex:1;min-width:0;font-size:16px;font-weight:600;border:none;background:transparent;padding:6px 0;')
-  })), /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative',
+      flex: 'none'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowReminderPopup(v => !v),
+    style: css('background:#f5f5f7;border:none;padding:6px 12px;border-radius:8px;font-size:11.5px;font-weight:600;color:#1d1d1f;cursor:pointer;white-space:nowrap;')
+  }, sgSource.reminderOn ? s.language === 'es' ? 'Día ' + sgSource.reminderDay : 'Day ' + sgSource.reminderDay : t('setReminder')), showReminderPopup && /*#__PURE__*/React.createElement("div", {
+    style: css('position:absolute;top:34px;right:0;z-index:20;background:#fff;border-radius:12px;padding:12px;box-shadow:0 12px 30px rgba(0,0,0,0.18);width:200px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;gap:6px;font-size:11.5px;color:#86868b;margin-bottom:12px;')
+  }, /*#__PURE__*/React.createElement("span", null, s.language === 'es' ? 'día' : 'day'), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: "1",
+    max: "31",
+    value: sgSource.reminderDay || '',
+    onChange: e => updateGoal(sgSource.id, 'reminderDay', Math.max(1, Math.min(31, parseInt(e.target.value, 10) || 1))),
+    style: css('width:44px;padding:5px 6px;border:1px solid #e5e5ea;border-radius:7px;font-size:12px;background:#fbfbfd;')
+  }), /*#__PURE__*/React.createElement("span", null, s.language === 'es' ? 'de cada mes' : 'of each month')), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;')
+  }, /*#__PURE__*/React.createElement("span", {
+    style: css('font-size:12px;color:#1d1d1f;font-weight:600;')
+  }, sgSource.reminderOn ? t('on') : t('off')), /*#__PURE__*/React.createElement("button", {
+    onClick: () => toggleReminder(sgSource.id),
+    style: {
+      width: 40,
+      height: 23,
+      borderRadius: 12,
+      background: sgSource.reminderOn ? '#0071e3' : '#e5e5ea',
+      border: 'none',
+      cursor: 'pointer',
+      position: 'relative',
+      padding: 0
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      position: 'absolute',
+      top: 2,
+      left: sgSource.reminderOn ? 19 : 2,
+      width: 19,
+      height: 19,
+      borderRadius: '50%',
+      background: '#fff',
+      boxShadow: '0 1px 3px rgba(0,0,0,0.25)'
+    }
+  }))), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowReminderPopup(false),
+    style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:8px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;')
+  }, t('done'))))), /*#__PURE__*/React.createElement("div", {
     style: css('display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:12px;')
@@ -2777,43 +2984,9 @@ function App() {
       minWidth: 120,
       order: 2
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;')
   }, /*#__PURE__*/React.createElement("label", {
-    style: css('font-size:10.5px;color:#86868b;font-weight:600;')
+    style: css('display:block;font-size:10.5px;color:#86868b;font-weight:600;margin-bottom:5px;')
   }, t('logSavings')), /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'relative'
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setShowReminderPopup(v => !v),
-    style: css('display:block;text-align:right;background:none;border:none;color:#0071e3;font-size:10.5px;font-weight:700;cursor:pointer;padding:2px;')
-  }, sgSource.reminderOn ? s.language === 'es' ? 'Recordatorio: día ' + sgSource.reminderDay : 'Reminder: day ' + sgSource.reminderDay : t('setReminder')), showReminderPopup && /*#__PURE__*/React.createElement("div", {
-    style: css('position:absolute;top:22px;right:0;z-index:20;background:#fff;border-radius:12px;padding:12px;box-shadow:0 12px 30px rgba(0,0,0,0.18);width:190px;')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;align-items:center;gap:8px;margin-bottom:8px;')
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => toggleReminder(sgSource.id),
-    style: {
-      background: sgSource.reminderOn ? '#0071e3' : '#f5f5f7',
-      border: 'none',
-      color: sgSource.reminderOn ? '#fff' : '#1d1d1f',
-      padding: '6px 10px',
-      borderRadius: 8,
-      fontSize: 11.5,
-      fontWeight: 600,
-      cursor: 'pointer'
-    }
-  }, sgSource.reminderOn ? t('on') : t('turnOn'))), /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;align-items:center;gap:6px;font-size:11.5px;color:#86868b;')
-  }, /*#__PURE__*/React.createElement("span", null, s.language === 'es' ? 'día' : 'day'), /*#__PURE__*/React.createElement("input", {
-    type: "number",
-    min: "1",
-    max: "31",
-    value: sgSource.reminderDay || '',
-    onChange: e => updateGoal(sgSource.id, 'reminderDay', Math.max(1, Math.min(31, parseInt(e.target.value, 10) || 1))),
-    style: css('width:44px;padding:5px 6px;border:1px solid #e5e5ea;border-radius:7px;font-size:12px;background:#fbfbfd;')
-  }), /*#__PURE__*/React.createElement("span", null, s.language === 'es' ? 'de cada mes' : 'of each month'))))), /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'relative',
       marginBottom: 8
@@ -3035,7 +3208,7 @@ function App() {
     style: css('width:42px;padding:2px 3px;border:none;border-bottom:1.5px solid #0071e3;font-size:14px;font-weight:700;color:#1d1d1f;background:transparent;text-align:center;')
   }), /*#__PURE__*/React.createElement("span", null, "% → ", sg.monthlyLabel, "/mo")) : /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12.5px;color:#1d1d1f;background:#f5f5f7;border-radius:10px;padding:9px 10px;')
-  }, "Auto: ", /*#__PURE__*/React.createElement("b", null, sg.percentLabel), " → ", /*#__PURE__*/React.createElement("b", null, sg.monthlyLabel), "/mo"), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("b", null, sg.percentLabel), " → ", /*#__PURE__*/React.createElement("b", null, sg.monthlyLabel), "/mo"), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:11.5px;color:#6e6e73;margin-top:10px;padding-top:10px;border-top:1px solid #f5f5f7;')
   }, "You'll reach your goal in ", /*#__PURE__*/React.createElement("b", {
     style: css('color:#1d1d1f;')
@@ -3049,7 +3222,7 @@ function App() {
     type: "date",
     value: sgSource.customDate || '',
     onChange: e => updateGoal(sgSource.id, 'customDate', e.target.value),
-    style: css('width:100%;padding:8px 8px;border:1px solid #e5e5ea;border-radius:9px;font-size:12px;background:#fbfbfd;')
+    style: css('width:88%;padding:6px 6px;border:1px solid #e5e5ea;border-radius:8px;font-size:11px;background:#fbfbfd;')
   }), sgSource.customDate && sg.customMsg && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
@@ -3175,30 +3348,43 @@ function App() {
   }), /*#__PURE__*/React.createElement("div", {
     style: css('border-top:1px solid #f0f0f2;margin-top:14px;padding-top:14px;')
   }, /*#__PURE__*/React.createElement("label", {
-    style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:12px;')
+    style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:10px;')
   }, t('savingsProjection')), (() => {
-    const N = 12;
-    const salaryMonthlyTarget = Math.max(ctx.baseAvailable, 0) * (sg.percent / 100);
     const capVal = sgSource.target > 0 ? sgSource.target * 1.05 : 1;
-    const dataBoost = [],
-      dataBase = [];
-    for (let i = 0; i <= N; i++) {
-      dataBoost.push(Math.min(sgSource.current + sg.monthlyBoosted * i, capVal));
-      dataBase.push(Math.min(sgSource.current + Math.max(salaryMonthlyTarget, 0) * i, capVal));
+    const createdY = typeof sgSource.createdYear === 'number' ? sgSource.createdYear : ctx.today.getFullYear();
+    const createdM = typeof sgSource.createdMonth === 'number' ? sgSource.createdMonth : ctx.today.getMonth();
+    const curY = ctx.today.getFullYear(),
+      curM = ctx.today.getMonth();
+    const monthsElapsed = Math.max((curY - createdY) * 12 + (curM - createdM), 0);
+    const N_future = 12;
+    const totalMonths = monthsElapsed + N_future;
+    const actualSeries = [];
+    for (let i = 0; i <= monthsElapsed; i++) {
+      actualSeries.push(monthsElapsed > 0 ? sgSource.current * i / monthsElapsed : sgSource.current);
     }
-    const maxY = Math.max(capVal, 1);
+    const projSeries = [];
+    for (let i = 0; i <= N_future; i++) {
+      projSeries.push(Math.min(sgSource.current + sg.monthlyBoosted * i, capVal));
+    }
+    const maxY = Math.max(capVal, Math.max(...actualSeries, 0), Math.max(...projSeries, 0), 1);
     const W = 300,
       H = 130,
       padL = 4,
       padR = 4,
-      padT = 10,
+      padT = 16,
       padB = 6;
-    const xAt = i => padL + i / N * (W - padL - padR);
+    const xAt = i => padL + (totalMonths > 0 ? i / totalMonths : 0) * (W - padL - padR);
     const yAt = v => padT + (1 - v / maxY) * (H - padT - padB);
-    const boostPoints = dataBoost.map((v, i) => xAt(i).toFixed(1) + ',' + yAt(v).toFixed(1)).join(' ');
-    const basePoints = dataBase.map((v, i) => xAt(i).toFixed(1) + ',' + yAt(v).toFixed(1)).join(' ');
+    const actualPoints = actualSeries.map((v, i) => xAt(i).toFixed(1) + ',' + yAt(v).toFixed(1)).join(' ');
+    const projPoints = projSeries.map((v, i) => xAt(monthsElapsed + i).toFixed(1) + ',' + yAt(v).toFixed(1)).join(' ');
     const targetY = yAt(Math.min(sgSource.target, capVal));
-    return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("svg", {
+    const todayX = xAt(monthsElapsed);
+    const createdLabel = MONTH_NAMES[createdM] + ' ' + createdY;
+    const endDate = addMonths(ctx.today, N_future);
+    const endLabel = MONTH_NAMES[endDate.getMonth()] + ' ' + endDate.getFullYear();
+    return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;justify-content:space-between;font-size:9.5px;color:#86868b;margin-bottom:2px;')
+    }, /*#__PURE__*/React.createElement("span", null, fmt(maxY)), /*#__PURE__*/React.createElement("span", null, s.language === 'es' ? 'dinero ahorrado' : 'money saved')), /*#__PURE__*/React.createElement("svg", {
       viewBox: '0 0 ' + W + ' ' + H,
       width: "100%",
       height: "130",
@@ -3227,50 +3413,43 @@ function App() {
       stroke: "#c7c7cc",
       strokeWidth: "1",
       strokeDasharray: "3,3"
+    }), /*#__PURE__*/React.createElement("line", {
+      x1: todayX,
+      x2: todayX,
+      y1: padT,
+      y2: H - padB,
+      stroke: "#e5e5ea",
+      strokeWidth: "1",
+      strokeDasharray: "2,2"
     }), /*#__PURE__*/React.createElement("polyline", {
-      points: boostPoints,
-      fill: "none",
-      stroke: "#8e8e93",
-      strokeWidth: "2.25",
-      strokeDasharray: "5,3.5",
-      strokeLinecap: "round",
-      strokeLinejoin: "round"
-    }), /*#__PURE__*/React.createElement("polyline", {
-      points: basePoints,
+      points: projPoints,
       fill: "none",
       stroke: sgSource.color,
-      strokeWidth: "2.75",
+      strokeOpacity: "0.22",
+      strokeWidth: "3",
+      strokeLinecap: "round",
+      strokeLinejoin: "round"
+    }), /*#__PURE__*/React.createElement("polyline", {
+      points: actualPoints,
+      fill: "none",
+      stroke: sgSource.color,
+      strokeWidth: "3",
       strokeLinecap: "round",
       strokeLinejoin: "round"
     }), /*#__PURE__*/React.createElement("circle", {
-      cx: xAt(N),
-      cy: yAt(dataBase[N]),
+      cx: todayX,
+      cy: yAt(sgSource.current),
       r: "3.5",
       fill: sgSource.color
-    }), /*#__PURE__*/React.createElement("circle", {
-      cx: xAt(N),
-      cy: yAt(dataBoost[N]),
-      r: "3.5",
-      fill: "#8e8e93"
     })), /*#__PURE__*/React.createElement("div", {
-      style: css('display:flex;justify-content:space-between;font-size:10px;color:#86868b;margin-top:2px;')
-    }, /*#__PURE__*/React.createElement("span", null, s.language === 'es' ? 'Hoy' : 'Today'), /*#__PURE__*/React.createElement("span", null, s.language === 'es' ? 'En 12 meses' : 'In 12 months')), /*#__PURE__*/React.createElement("div", {
-      style: css('display:flex;justify-content:flex-end;gap:14px;margin-top:6px;')
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 12,
-        fontWeight: 700,
-        color: sgSource.color
-      }
-    }, fmt(dataBase[N])), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 12,
-        fontWeight: 700,
-        color: '#8e8e93'
-      }
-    }, fmt(dataBoost[N]))));
+      style: css('display:flex;justify-content:space-between;font-size:9.5px;color:#86868b;margin-top:2px;')
+    }, /*#__PURE__*/React.createElement("span", null, fmt(0))), /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;justify-content:space-between;font-size:10px;color:#86868b;margin-top:6px;')
+    }, /*#__PURE__*/React.createElement("span", null, createdLabel), /*#__PURE__*/React.createElement("span", {
+      style: css('font-weight:700;color:' + sgSource.color + ';')
+    }, s.language === 'es' ? 'hoy' : 'today'), /*#__PURE__*/React.createElement("span", null, endLabel)));
   })(), /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;gap:16px;font-size:12px;color:#6e6e73;margin-top:10px;')
+    style: css('display:flex;gap:16px;font-size:11.5px;color:#6e6e73;margin-top:10px;')
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     style: {
       display: 'inline-block',
@@ -3280,9 +3459,17 @@ function App() {
       background: sgSource.color,
       marginRight: 5
     }
-  }), "Salary only"), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-    style: css('display:inline-block;width:10px;height:10px;border-radius:2px;background:#8e8e93;margin-right:5px;')
-  }), "With side hustles"))))), s.tab === 'gastos' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }), s.language === 'es' ? 'Ya ahorrado' : 'Already saved'), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      display: 'inline-block',
+      width: 10,
+      height: 10,
+      borderRadius: 2,
+      background: sgSource.color,
+      opacity: 0.3,
+      marginRight: 5
+    }
+  }), s.language === 'es' ? 'Proyección' : 'Projected'))))), s.tab === 'gastos' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:16px;')
   }, "Expenses", /*#__PURE__*/React.createElement(InfoTip, {
     text: "Tap a day to view or log expenses. Tap the month to see the full summary."
@@ -3354,9 +3541,10 @@ function App() {
       }
     }))));
   })))), !s.seenTabIntro.gastos && /*#__PURE__*/React.createElement("div", {
+    className: "tip-banner",
     style: css('display:flex;align-items:center;gap:12px;background:#fff;border-radius:16px;padding:16px 18px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,0.10);')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('flex:1;font-size:13.5px;color:#1d1d1f;font-weight:600;line-height:1.5;')
+    style: css('flex:1;font-size:13px;color:#6e6e73;font-weight:400;line-height:1.5;')
   }, t('tabIntroExpenses')), /*#__PURE__*/React.createElement("button", {
     onClick: () => dismissTabIntro('gastos'),
     style: css('flex:none;background:#fff;color:#0071e3;border:1.5px solid #d2d2d7;padding:8px 15px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
@@ -3828,9 +4016,10 @@ function App() {
     },
     style: css('width:100%;padding:13px;background:#34c759;color:#fff;border:none;border-radius:14px;font-size:14.5px;font-weight:600;cursor:pointer;')
   }, t('addSideHustle')), !s.seenTabIntro.extra && /*#__PURE__*/React.createElement("div", {
+    className: "tip-banner",
     style: css('display:flex;align-items:center;gap:12px;background:#fff;border-radius:16px;padding:16px 18px;margin-top:16px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,0.10);')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('flex:1;font-size:13.5px;color:#1d1d1f;font-weight:600;line-height:1.5;')
+    style: css('flex:1;font-size:13px;color:#6e6e73;font-weight:400;line-height:1.5;')
   }, t('tabIntroExtra')), /*#__PURE__*/React.createElement("button", {
     onClick: () => dismissTabIntro('extra'),
     style: css('flex:none;background:#fff;color:#0071e3;border:1.5px solid #d2d2d7;padding:8px 15px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
@@ -3908,9 +4097,10 @@ function App() {
     },
     style: css('width:100%;padding:13px;background:#0071e3;color:#fff;border:none;border-radius:14px;font-size:14.5px;font-weight:600;cursor:pointer;')
   }, t('addInvestment')), !s.seenTabIntro.invest && /*#__PURE__*/React.createElement("div", {
+    className: "tip-banner",
     style: css('display:flex;align-items:center;gap:12px;background:#fff;border-radius:16px;padding:16px 18px;margin-top:16px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,0.10);')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('flex:1;font-size:13.5px;color:#1d1d1f;font-weight:600;line-height:1.5;')
+    style: css('flex:1;font-size:13px;color:#6e6e73;font-weight:400;line-height:1.5;')
   }, t('tabIntroInvest')), /*#__PURE__*/React.createElement("button", {
     onClick: () => dismissTabIntro('invest'),
     style: css('flex:none;background:#fff;color:#0071e3;border:1.5px solid #d2d2d7;padding:8px 15px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
