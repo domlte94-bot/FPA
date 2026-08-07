@@ -438,6 +438,7 @@ const STRINGS = {
     noLabel: 'No, it varies',
     continueLabel: 'Continue',
     gotIt: 'Got it',
+    completed: 'Completed',
     profileMenu: 'Profile',
     reportsMenu: 'Reports',
     moreMenu: 'Backup, feedback & reset',
@@ -528,6 +529,7 @@ const STRINGS = {
     noLabel: 'No, varía',
     continueLabel: 'Continuar',
     gotIt: 'Entendido',
+    completed: 'Completada',
     profileMenu: 'Perfil',
     reportsMenu: 'Reportes',
     moreMenu: 'Respaldo, comentarios y reinicio',
@@ -1462,13 +1464,15 @@ function App() {
     const estDate = isFinite(monthsToGoal) ? addMonths(ctx.today, monthsToGoal) : null;
     const estDateLabel = estDate ? MONTH_NAMES[estDate.getMonth()] + ' ' + estDate.getFullYear() : 'No savings assigned';
     const progressPct = goal.target > 0 ? Math.min(100, goal.current / goal.target * 100) : 0;
+    const isCompleted = goal.target > 0 && goal.current >= goal.target;
     const view = {
       goal,
       percent,
       monthlyBoosted,
       progressPct,
       monthsToGoal,
-      progressLabel: progressPct.toFixed(0) + '%',
+      isCompleted,
+      progressLabel: isCompleted ? t('completed') : progressPct.toFixed(0) + '%',
       progressWidth: progressPct.toFixed(1) + '%',
       monthlyLabel: fmt(monthlyBoosted),
       percentLabel: Math.round(percent) + '%',
@@ -2557,7 +2561,7 @@ function App() {
       return seg;
     });
     return /*#__PURE__*/React.createElement("div", {
-      style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:16px;display:flex;align-items:center;gap:18px;')
+      style: css('background:#fff;border-radius:16px;padding:18px;margin-bottom:16px;display:flex;align-items:center;gap:18px;')
     }, /*#__PURE__*/React.createElement("svg", {
       viewBox: "0 0 110 110",
       width: "100",
@@ -2584,23 +2588,30 @@ function App() {
       strokeDashoffset: seg.dashOffset,
       transform: "rotate(-90 55 55)"
     }))), /*#__PURE__*/React.createElement("div", {
-      style: css('flex:1;min-width:0;display:flex;flex-direction:column;gap:7px;')
+      style: css('flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;')
     }, segs.map((seg, i) => /*#__PURE__*/React.createElement("div", {
       key: i,
-      style: css('display:flex;align-items:center;gap:7px;font-size:12px;')
+      style: css('display:flex;align-items:center;gap:7px;min-width:0;')
     }, /*#__PURE__*/React.createElement("span", {
       style: {
-        width: 9,
-        height: 9,
+        width: 11,
+        height: 11,
         borderRadius: '50%',
         background: seg.color,
         flex: 'none'
       }
-    }), /*#__PURE__*/React.createElement("span", {
-      style: css('flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#1d1d1f;font-weight:600;')
+    }), /*#__PURE__*/React.createElement("div", {
+      style: css('min-width:0;flex:1;display:flex;justify-content:space-between;align-items:baseline;gap:8px;')
+    }, /*#__PURE__*/React.createElement("span", {
+      style: css('font-size:14px;font-weight:700;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
     }, seg.name), /*#__PURE__*/React.createElement("span", {
-      style: css('color:#86868b;flex:none;')
-    }, seg.pct.toFixed(0), "%")))));
+      style: {
+        fontSize: 13,
+        fontWeight: 700,
+        color: seg.color,
+        flex: 'none'
+      }
+    }, seg.pct.toFixed(0), "%"))))));
   })(), (() => {
     const assignedTotal = s.goals.reduce((a, g) => a + buildGoalView(g, false).monthlyBoosted, 0);
     const unassigned = ctx.boostedAvailable - assignedTotal;
@@ -2615,63 +2626,62 @@ function App() {
     }, "Not covered by any goal's % — raise a goal's share below to put it to work.")) : null;
   })(), overAllocatedWarning && /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff2ef;border-radius:12px;padding:12px 14px;font-size:13px;color:#ff3b30;margin-bottom:14px;')
-  }, overAllocatedWarning), (() => {
-    const totalTiles = s.goals.length + (s.goals.length < 6 ? 1 : 0);
-    const cols = Math.max(1, Math.ceil(Math.sqrt(Math.max(totalTiles, 1))));
+  }, overAllocatedWarning), /*#__PURE__*/React.createElement("div", {
+    style: css('display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:10px;margin-bottom:20px;')
+  }, s.goals.map(g => {
+    const v = buildGoalView(g, false);
+    const selected = g.id === s.selectedGoalId;
     return /*#__PURE__*/React.createElement("div", {
-      style: css('display:grid;grid-template-columns:repeat(' + cols + ',1fr);gap:10px;margin-bottom:20px;')
-    }, s.goals.map(g => {
-      const v = buildGoalView(g, false);
-      const selected = g.id === s.selectedGoalId;
-      return /*#__PURE__*/React.createElement("button", {
-        key: g.id,
-        onClick: () => selectGoal(g.id),
-        style: {
-          background: selected ? '#eef6ff' : '#fff',
-          border: 'none',
-          borderRadius: 18,
-          padding: '18px 8px 14px',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: 9,
-          cursor: 'pointer',
-          boxShadow: selected ? '0 0 0 2px ' + g.color : 'none'
-        }
-      }, /*#__PURE__*/React.createElement("div", {
-        style: {
-          width: 52,
-          height: 52,
-          borderRadius: 15,
-          background: g.color,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center'
-        }
-      }, /*#__PURE__*/React.createElement(GoalIconGlyph, {
-        icon: g.icon,
-        size: 26
-      })), /*#__PURE__*/React.createElement("div", {
-        style: css('font-size:13.5px;font-weight:700;text-align:center;line-height:1.25;color:#1d1d1f;')
-      }, g.name), /*#__PURE__*/React.createElement("div", {
-        style: {
-          fontSize: 12.5,
-          fontWeight: 700,
-          color: g.color
-        }
-      }, v.progressLabel));
-    }), s.goals.length < 6 && /*#__PURE__*/React.createElement("button", {
-      onClick: () => {
-        addGoal();
-        dismissTabIntro('metas');
+      key: g.id,
+      onClick: () => selectGoal(g.id),
+      style: {
+        position: 'relative',
+        background: selected ? '#eef6ff' : '#fff',
+        border: 'none',
+        borderRadius: 16,
+        padding: '14px 8px 10px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 6,
+        cursor: 'pointer',
+        boxShadow: selected ? '0 0 0 2px ' + g.color : 'none'
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: e => {
+        e.stopPropagation();
+        removeGoal(g.id);
       },
-      style: css('background:#fff;border:1.5px dashed #d2d2d7;border-radius:18px;padding:18px 8px 14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;cursor:pointer;min-height:112px;')
-    }, /*#__PURE__*/React.createElement("span", {
-      style: css('font-size:26px;color:#0071e3;line-height:1;')
-    }, "+"), /*#__PURE__*/React.createElement("span", {
-      style: css('font-size:12.5px;color:#0071e3;font-weight:700;')
-    }, "Goal")));
-  })(), s.goals.length >= 6 && /*#__PURE__*/React.createElement("div", {
+      style: css('position:absolute;top:-7px;right:-7px;background:#fff;border:1px solid #f0f0f2;color:#ff3b30;width:20px;height:20px;border-radius:50%;cursor:pointer;font-size:12px;line-height:1;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.12);z-index:2;')
+    }, "×"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: 40,
+        height: 40,
+        borderRadius: 11,
+        background: g.color,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }
+    }, /*#__PURE__*/React.createElement(GoalIconGlyph, {
+      icon: g.icon,
+      size: 20
+    })), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:11.5px;font-weight:600;text-align:center;line-height:1.2;')
+    }, g.name), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:10.5px;color:#86868b;')
+    }, v.progressLabel));
+  }), s.goals.length < 6 && /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      addGoal();
+      dismissTabIntro('metas');
+    },
+    style: css('background:#fff;border:1.5px dashed #d2d2d7;border-radius:16px;padding:14px 8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:pointer;min-height:88px;')
+  }, /*#__PURE__*/React.createElement("span", {
+    style: css('font-size:22px;color:#0071e3;line-height:1;')
+  }, "+"), /*#__PURE__*/React.createElement("span", {
+    style: css('font-size:11px;color:#0071e3;font-weight:600;')
+  }, "Goal"))), s.goals.length >= 6 && /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12px;color:#86868b;margin:-10px 0 16px;')
   }, "You already have 6 goals — the max. Fewer goals helps you prioritize."), !s.seenTabIntro.metas && /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:center;gap:12px;background:#fff;border-radius:16px;padding:16px 18px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,0.10);')
@@ -2703,10 +2713,7 @@ function App() {
     value: sgSource.name,
     onChange: e => updateGoal(sgSource.id, 'name', e.target.value),
     style: css('flex:1;min-width:0;font-size:16px;font-weight:600;border:none;background:transparent;padding:6px 0;')
-  }), /*#__PURE__*/React.createElement("button", {
-    onClick: () => removeGoal(sgSource.id),
-    style: css('background:#f5f5f7;border:none;color:#ff3b30;width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:15px;')
-  }, "×")), /*#__PURE__*/React.createElement("div", {
+  })), /*#__PURE__*/React.createElement("div", {
     style: css('display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:12px;')
@@ -2780,21 +2787,8 @@ function App() {
     }
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowReminderPopup(v => !v),
-    style: css('display:flex;align-items:center;gap:4px;background:none;border:none;color:#0071e3;font-size:10.5px;font-weight:700;cursor:pointer;padding:2px;')
-  }, /*#__PURE__*/React.createElement("svg", {
-    viewBox: "0 0 24 24",
-    width: "12",
-    height: "12",
-    fill: "none",
-    stroke: "#0071e3",
-    strokeWidth: "2",
-    strokeLinecap: "round",
-    strokeLinejoin: "round"
-  }, /*#__PURE__*/React.createElement("path", {
-    d: "M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"
-  }), /*#__PURE__*/React.createElement("path", {
-    d: "M13.73 21a2 2 0 0 1-3.46 0"
-  })), sgSource.reminderOn ? s.language === 'es' ? 'Recordatorio: día ' + sgSource.reminderDay : 'Reminder: day ' + sgSource.reminderDay : t('setReminder')), showReminderPopup && /*#__PURE__*/React.createElement("div", {
+    style: css('display:block;text-align:right;background:none;border:none;color:#0071e3;font-size:10.5px;font-weight:700;cursor:pointer;padding:2px;')
+  }, sgSource.reminderOn ? s.language === 'es' ? 'Recordatorio: día ' + sgSource.reminderDay : 'Reminder: day ' + sgSource.reminderDay : t('setReminder')), showReminderPopup && /*#__PURE__*/React.createElement("div", {
     style: css('position:absolute;top:22px;right:0;z-index:20;background:#fff;border-radius:12px;padding:12px;box-shadow:0 12px 30px rgba(0,0,0,0.18);width:190px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:center;gap:8px;margin-bottom:8px;')
