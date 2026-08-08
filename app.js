@@ -620,6 +620,42 @@ function App() {
   }, [state && state.selectedGoalId, state && state.tab]);
   const donutCanvasRef = useRef(null);
   const saveTimer = useRef(null);
+  const budgetRowRefs = useRef({});
+  const dragInfo = useRef({
+    startY: 0,
+    timer: null
+  });
+  const [dragIndex, setDragIndex] = useState(null);
+  const startBudgetRowPress = (i, clientY) => {
+    dragInfo.current.startY = clientY;
+    dragInfo.current.timer = setTimeout(() => setDragIndex(i), 420);
+  };
+  const moveBudgetRowPress = clientY => {
+    if (dragInfo.current.timer && Math.abs(clientY - dragInfo.current.startY) > 8) {
+      clearTimeout(dragInfo.current.timer);
+      dragInfo.current.timer = null;
+    }
+    if (dragIndex === null) return;
+    const entries = Object.entries(budgetRowRefs.current);
+    for (const [idxStr, el] of entries) {
+      if (!el) continue;
+      const idx = parseInt(idxStr, 10);
+      if (idx === dragIndex) continue;
+      const rect = el.getBoundingClientRect();
+      if (clientY >= rect.top && clientY <= rect.bottom) {
+        reorderExpenseRow(dragIndex, idx);
+        setDragIndex(idx);
+        break;
+      }
+    }
+  };
+  const endBudgetRowPress = () => {
+    if (dragInfo.current.timer) {
+      clearTimeout(dragInfo.current.timer);
+      dragInfo.current.timer = null;
+    }
+    setDragIndex(null);
+  };
   const hasLoaded = useRef(false);
   const importInputRef = useRef(null);
   const [importMessage, setImportMessage] = useState('');
@@ -868,6 +904,17 @@ function App() {
     askConfirm("Delete this budget category? This won't remove past logged expenses.", () => patch(s => ({
       expenseCategories: s.expenseCategories.filter((_, idx) => idx !== i)
     })));
+  };
+  const reorderExpenseRow = (from, to) => {
+    if (from === to) return;
+    patch(s => {
+      const arr = s.expenseCategories.slice();
+      const [moved] = arr.splice(from, 1);
+      arr.splice(to, 0, moved);
+      return {
+        expenseCategories: arr
+      };
+    });
   };
   const toggleExpenseFixed = i => patch(s => {
     const rows = s.expenseCategories.slice();
@@ -1119,7 +1166,10 @@ function App() {
   const updateInvestment = (id, field, val) => patch(s => ({
     investments: s.investments.map(i => i.id === id ? {
       ...i,
-      [field]: field === 'amount' || field === 'currentValue' ? parseFloat(val) || 0 : val
+      [field]: field === 'amount' || field === 'currentValue' ? parseFloat(val) || 0 : val,
+      ...(field === 'currentValue' ? {
+        lastUpdated: todayStr
+      } : {})
     } : i)
   }));
   const markInvestmentUpdated = id => patch(s => ({
@@ -1932,89 +1982,40 @@ function App() {
   }), /*#__PURE__*/React.createElement("path", {
     d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
   })))), /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;flex-direction:column;align-items:center;padding:8px 0 20px;')
+    style: css('background:linear-gradient(135deg,' + (homeSpentPct >= 100 ? '#ff3b30,#ff9500' : '#0071e3,#5ac8fa') + ');border-radius:20px;padding:20px;margin-bottom:16px;color:#fff;box-shadow:0 14px 34px rgba(0,113,227,0.22);')
   }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12px;font-weight:600;opacity:0.85;text-transform:uppercase;letter-spacing:0.03em;')
+  }, t('spentSoFar')), /*#__PURE__*/React.createElement("div", {
     style: {
-      position: 'relative',
-      width: 200,
-      height: 200
-    }
-  }, /*#__PURE__*/React.createElement("svg", {
-    viewBox: "0 0 200 200",
-    width: "200",
-    height: "200"
-  }, /*#__PURE__*/React.createElement("defs", null, /*#__PURE__*/React.createElement("linearGradient", {
-    id: "ringGradBlue",
-    x1: "0%",
-    y1: "0%",
-    x2: "100%",
-    y2: "100%"
-  }, /*#__PURE__*/React.createElement("stop", {
-    offset: "0%",
-    stopColor: "#0071e3"
-  }), /*#__PURE__*/React.createElement("stop", {
-    offset: "100%",
-    stopColor: "#5ac8fa"
-  })), /*#__PURE__*/React.createElement("linearGradient", {
-    id: "ringGradRed",
-    x1: "0%",
-    y1: "0%",
-    x2: "100%",
-    y2: "100%"
-  }, /*#__PURE__*/React.createElement("stop", {
-    offset: "0%",
-    stopColor: "#ff3b30"
-  }), /*#__PURE__*/React.createElement("stop", {
-    offset: "100%",
-    stopColor: "#ff9500"
-  }))), /*#__PURE__*/React.createElement("circle", {
-    cx: "100",
-    cy: "100",
-    r: "86",
-    fill: "none",
-    stroke: "#f0f0f2",
-    strokeWidth: "16"
-  }), /*#__PURE__*/React.createElement("circle", {
-    cx: "100",
-    cy: "100",
-    r: "86",
-    fill: "none",
-    stroke: 'url(#' + (homeSpentPct >= 100 ? 'ringGradRed' : 'ringGradBlue') + ')',
-    strokeWidth: "16",
-    strokeLinecap: "round",
-    strokeDasharray: 2 * Math.PI * 86,
-    strokeDashoffset: 2 * Math.PI * 86 * (1 - Math.min(homeSpentPct, 100) / 100),
-    transform: "rotate(90 100 100) translate(200 0) scale(-1 1)"
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'absolute',
-      inset: 0,
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 30,
+      fontSize: 32,
       fontWeight: 800,
       letterSpacing: '-0.02em',
-      color: homeSpentColor,
-      textAlign: 'center',
-      lineHeight: 1.1
+      marginTop: 4
     }
   }, fmt(homeSpentTotal)), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:11.5px;color:#86868b;margin-top:3px;text-align:center;')
-  }, t('spentSoFar')), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:10.5px;color:#86868b;margin-top:6px;text-align:center;')
-  }, "of ", fmt(ctx.totalExpenses), " budget"))), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;gap:10px;margin-top:14px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('flex:1;height:8px;background:rgba(255,255,255,0.3);border-radius:4px;overflow:hidden;')
+  }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 15,
+      width: Math.min(homeSpentPct, 100).toFixed(1) + '%',
+      height: '100%',
+      background: '#fff',
+      borderRadius: 4
+    }
+  })), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 13,
+      fontWeight: 700,
+      flex: 'none'
+    }
+  }, Math.round(Math.min(homeSpentPct, 999)), "%")), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;opacity:0.85;margin-top:6px;')
+  }, "of ", fmt(ctx.totalExpenses), " budget"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 14,
       fontWeight: 600,
-      color: homeSpentColor,
-      marginTop: 16,
-      textAlign: 'center',
-      maxWidth: 320
+      marginTop: 12
     }
   }, homeSpendHeadline)), s.pendingLeftover && /*#__PURE__*/React.createElement("div", {
     style: css('background:linear-gradient(135deg,#0071e3,#34c759);border-radius:18px;padding:18px;color:#fff;margin-bottom:16px;box-shadow:0 12px 30px rgba(0,113,227,0.25);')
@@ -2104,13 +2105,7 @@ function App() {
     style: css('background:none;border:none;color:#0071e3;font-size:10.5px;font-weight:700;cursor:pointer;padding:0;')
   }, s.language === 'es' ? 'Ver' : 'View')), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
-  }, fmt(s.income)), s.payFrequency === 'biweekly' && (ctx.usingActualPaychecks ? /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:9.5px;color:#34c759;margin-top:2px;font-weight:600;')
-  }, "✓ ", fmt(receivedThisMonth(s, ctx.today)), " received this month") : /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:9.5px;color:#86868b;margin-top:2px;')
-  }, "≈ ", fmt(ctx.monthlyIncome), "/mo (estimate, no paycheck logged yet)")), s.payFrequency === 'biweekly' && nextPayday && /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:9.5px;color:#0071e3;margin-top:2px;font-weight:600;')
-  }, "Next payday: ", nextPaydayLabel, " (", daysUntilPayday === 0 ? 'today' : daysUntilPayday === 1 ? 'tomorrow' : 'in ' + daysUntilPayday + 'd', ")"), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("button", {
+  }, fmt(s.income)), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("button", {
     onClick: e => {
       e.stopPropagation();
       markPaidToday();
@@ -2167,7 +2162,7 @@ function App() {
     className: "tip-banner",
     style: css('display:flex;align-items:center;gap:12px;background:#fff;border-radius:16px;padding:16px 18px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,0.10);')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('flex:1;font-size:13px;color:#6e6e73;font-weight:400;line-height:1.5;')
+    style: css('flex:1;font-size:13px;color:#6e6e73;font-weight:400;line-height:1.3;')
   }, t('tabIntroHome')), /*#__PURE__*/React.createElement("button", {
     onClick: () => dismissTabIntro('inicio'),
     style: css('flex:none;background:#fff;color:#0071e3;border:1.5px solid #d2d2d7;padding:8px 15px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
@@ -2241,8 +2236,6 @@ function App() {
   }))), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;')
   }, s.language === 'es' ? 'Historial de ingreso' : 'Income history')), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:12px;color:#86868b;margin-bottom:16px;line-height:1.4;')
-  }, s.language === 'es' ? 'Edita tu tarifa fija arriba. Abajo, cada pago real que has recibido — puedes registrar uno, editar o borrar.' : "Edit your fixed pay rate above. Below, every real payment you've received — register one, edit, or delete."), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:16px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;justify-content:space-between;align-items:center;margin-bottom: ' + (editingIncome ? '8' : '2') + 'px;')
@@ -2292,7 +2285,23 @@ function App() {
       color: '#1d1d1f',
       cursor: 'pointer'
     }
-  }, t('biweeklyLabel')))) : /*#__PURE__*/React.createElement("div", {
+  }, t('biweeklyLabel'))), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("div", {
+    style: css('margin-top:10px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;')
+  }, /*#__PURE__*/React.createElement("label", {
+    style: css('font-size:11px;color:#86868b;font-weight:600;')
+  }, s.language === 'es' ? 'Fecha de un próximo pago' : 'A next payday date'), s.nextPaydayDate && /*#__PURE__*/React.createElement("button", {
+    onClick: () => patch({
+      nextPaydayDate: ''
+    }),
+    style: css('background:none;border:none;color:#ff3b30;font-size:11px;font-weight:600;cursor:pointer;padding:0;')
+  }, s.language === 'es' ? 'Borrar' : 'Clear')), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: s.nextPaydayDate || '',
+    onChange: onNextPaydayDate,
+    style: css('width:100%;padding:8px;border:1px solid #e5e5ea;border-radius:9px;font-size:12.5px;background:#fbfbfd;')
+  }))) : /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'relative',
       width: 140
@@ -2705,12 +2714,14 @@ function App() {
     const segs = s.goals.map(g => {
       const v = buildGoalView(g, false).monthlyBoosted;
       const frac = total > 0 ? v / total : 0;
+      const isCompleted = g.target > 0 && g.current >= g.target;
       const seg = {
         color: g.color,
         name: g.name,
         value: v,
         pct: frac * 100,
-        dashOffset: -acc
+        dashOffset: -acc,
+        isCompleted
       };
       acc += frac * C;
       return seg;
@@ -2742,7 +2753,29 @@ function App() {
       strokeDasharray: (seg.pct / 100 * C).toFixed(1) + ' ' + C,
       strokeDashoffset: seg.dashOffset,
       transform: "rotate(-90 55 55)"
-    }))), (() => {
+    }))), segs.length > 4 ? /*#__PURE__*/React.createElement("div", {
+      style: css('flex:1;min-width:0;')
+    }, segs.map((seg, i) => /*#__PURE__*/React.createElement("div", {
+      key: i,
+      style: css('display:flex;align-items:center;gap:7px;min-width:0;padding:6px 0;' + (i > 0 ? 'border-top:1px solid #f0f0f2;' : ''))
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: 9,
+        height: 9,
+        borderRadius: '50%',
+        background: seg.color,
+        flex: 'none'
+      }
+    }), /*#__PURE__*/React.createElement("span", {
+      style: css('font-size:12.5px;font-weight:600;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;')
+    }, seg.name), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 12.5,
+        fontWeight: 700,
+        color: seg.color,
+        flex: 'none'
+      }
+    }, seg.isCompleted ? t('completed') : seg.pct.toFixed(0) + '%')))) : (() => {
       const cols = Math.max(1, Math.ceil(Math.sqrt(Math.max(segs.length, 1))));
       return /*#__PURE__*/React.createElement("div", {
         style: css('flex:1;min-width:0;display:grid;grid-template-columns:repeat(' + cols + ',1fr);gap:10px 12px;')
@@ -2767,7 +2800,7 @@ function App() {
           fontWeight: 700,
           color: seg.color
         }
-      }, seg.pct.toFixed(0), "%")))));
+      }, seg.isCompleted ? t('completed') : seg.pct.toFixed(0) + '%')))));
     })());
   })(), (() => {
     const assignedTotal = s.goals.reduce((a, g) => a + buildGoalView(g, false).monthlyBoosted, 0);
@@ -2844,7 +2877,7 @@ function App() {
     className: "tip-banner",
     style: css('display:flex;align-items:center;gap:12px;background:#fff;border-radius:16px;padding:16px 18px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,0.10);')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('flex:1;font-size:13px;color:#6e6e73;font-weight:400;line-height:1.5;')
+    style: css('flex:1;font-size:13px;color:#6e6e73;font-weight:400;line-height:1.3;')
   }, t('tabIntroGoals')), /*#__PURE__*/React.createElement("button", {
     onClick: () => dismissTabIntro('metas'),
     style: css('flex:none;background:#fff;color:#0071e3;border:1.5px solid #d2d2d7;padding:8px 15px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
@@ -3190,15 +3223,10 @@ function App() {
     style: css('display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px;margin-bottom:16px;align-items:stretch;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;')
   }, /*#__PURE__*/React.createElement("label", {
-    style: css('font-size:11.5px;color:#86868b;font-weight:600;')
-  }, "% of monthly savings"), /*#__PURE__*/React.createElement("button", {
-    onClick: () => toggleGoalMode(sgSource.id),
-    style: css('margin-left:auto;background:#f5f5f7;border:none;padding:5px 10px;border-radius:8px;font-size:11.5px;font-weight:600;color:#1d1d1f;cursor:pointer;')
-  }, sgSource.mode === 'manual' ? 'Manual' : 'Auto')), sgSource.mode === 'manual' ? /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;align-items:baseline;gap:5px;font-size:13px;color:#86868b;')
+    style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:8px;')
+  }, "% of monthly savings"), sgSource.mode === 'manual' ? /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:baseline;gap:5px;font-size:13px;color:#86868b;margin-bottom:8px;')
   }, /*#__PURE__*/React.createElement("input", {
     type: "number",
     min: "0",
@@ -3207,8 +3235,11 @@ function App() {
     onChange: e => updateGoal(sgSource.id, 'percent', Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))),
     style: css('width:42px;padding:2px 3px;border:none;border-bottom:1.5px solid #0071e3;font-size:14px;font-weight:700;color:#1d1d1f;background:transparent;text-align:center;')
   }), /*#__PURE__*/React.createElement("span", null, "% → ", sg.monthlyLabel, "/mo")) : /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:12.5px;color:#1d1d1f;background:#f5f5f7;border-radius:10px;padding:9px 10px;')
-  }, /*#__PURE__*/React.createElement("b", null, sg.percentLabel), " → ", /*#__PURE__*/React.createElement("b", null, sg.monthlyLabel), "/mo"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12.5px;color:#1d1d1f;background:#f5f5f7;border-radius:10px;padding:9px 10px;margin-bottom:8px;')
+  }, /*#__PURE__*/React.createElement("b", null, sg.percentLabel), " → ", /*#__PURE__*/React.createElement("b", null, sg.monthlyLabel), "/mo"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => toggleGoalMode(sgSource.id),
+    style: css('display:block;margin-left:auto;background:#f5f5f7;border:none;padding:5px 10px;border-radius:8px;font-size:11.5px;font-weight:600;color:#1d1d1f;cursor:pointer;')
+  }, sgSource.mode === 'manual' ? 'Manual' : 'Auto'), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:11.5px;color:#6e6e73;margin-top:10px;padding-top:10px;border-top:1px solid #f5f5f7;')
   }, "You'll reach your goal in ", /*#__PURE__*/React.createElement("b", {
     style: css('color:#1d1d1f;')
@@ -3544,7 +3575,7 @@ function App() {
     className: "tip-banner",
     style: css('display:flex;align-items:center;gap:12px;background:#fff;border-radius:16px;padding:16px 18px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,0.10);')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('flex:1;font-size:13px;color:#6e6e73;font-weight:400;line-height:1.5;')
+    style: css('flex:1;font-size:13px;color:#6e6e73;font-weight:400;line-height:1.3;')
   }, t('tabIntroExpenses')), /*#__PURE__*/React.createElement("button", {
     onClick: () => dismissTabIntro('gastos'),
     style: css('flex:none;background:#fff;color:#0071e3;border:1.5px solid #d2d2d7;padding:8px 15px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
@@ -3789,8 +3820,33 @@ function App() {
     text: "Mark \"Fixed\" for costs that are always the same (rent, insurance) — those auto-fill when you log them. Leave unmarked for things that vary (groceries, gas)."
   })), s.expenseCategories.map((row, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
-    style: css('display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #f0f0f2;')
+    ref: el => {
+      budgetRowRefs.current[i] = el;
+    },
+    onMouseDown: e => startBudgetRowPress(i, e.clientY),
+    onMouseMove: e => moveBudgetRowPress(e.clientY),
+    onMouseUp: endBudgetRowPress,
+    onMouseLeave: () => {
+      if (dragIndex !== i) endBudgetRowPress();
+    },
+    onTouchStart: e => startBudgetRowPress(i, e.touches[0].clientY),
+    onTouchMove: e => moveBudgetRowPress(e.touches[0].clientY),
+    onTouchEnd: endBudgetRowPress,
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center',
+      padding: '6px 0',
+      borderBottom: '1px solid #f0f0f2',
+      background: dragIndex === i ? '#eef6ff' : 'transparent',
+      borderRadius: dragIndex === i ? 10 : 0,
+      boxShadow: dragIndex === i ? '0 6px 16px rgba(0,0,0,0.12)' : 'none',
+      touchAction: dragIndex === i ? 'none' : 'auto',
+      userSelect: 'none'
+    }
   }, /*#__PURE__*/React.createElement("span", {
+    style: css('color:#c7c7cc;font-size:13px;cursor:grab;flex:none;line-height:1;')
+  }, "⠿"), /*#__PURE__*/React.createElement("span", {
     style: {
       width: 10,
       height: 10,
@@ -4019,7 +4075,7 @@ function App() {
     className: "tip-banner",
     style: css('display:flex;align-items:center;gap:12px;background:#fff;border-radius:16px;padding:16px 18px;margin-top:16px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,0.10);')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('flex:1;font-size:13px;color:#6e6e73;font-weight:400;line-height:1.5;')
+    style: css('flex:1;font-size:13px;color:#6e6e73;font-weight:400;line-height:1.3;')
   }, t('tabIntroExtra')), /*#__PURE__*/React.createElement("button", {
     onClick: () => dismissTabIntro('extra'),
     style: css('flex:none;background:#fff;color:#0071e3;border:1.5px solid #d2d2d7;padding:8px 15px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
@@ -4100,7 +4156,7 @@ function App() {
     className: "tip-banner",
     style: css('display:flex;align-items:center;gap:12px;background:#fff;border-radius:16px;padding:16px 18px;margin-top:16px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,0.10);')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('flex:1;font-size:13px;color:#6e6e73;font-weight:400;line-height:1.5;')
+    style: css('flex:1;font-size:13px;color:#6e6e73;font-weight:400;line-height:1.3;')
   }, t('tabIntroInvest')), /*#__PURE__*/React.createElement("button", {
     onClick: () => dismissTabIntro('invest'),
     style: css('flex:none;background:#fff;color:#0071e3;border:1.5px solid #d2d2d7;padding:8px 15px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
