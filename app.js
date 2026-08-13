@@ -648,7 +648,10 @@ function App() {
     }
     setAuthError('');
     sbClient.auth.signInWithOAuth({
-      provider: 'google'
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin + window.location.pathname
+      }
     }).then(({
       error
     }) => {
