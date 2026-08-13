@@ -847,9 +847,51 @@ function App() {
     saveTimer.current = setTimeout(() => {
       const toSave = buildPersistPayload(state);
       storageAdapter.set(STORAGE_KEY, JSON.stringify(toSave)).catch(() => setStorageWarning('Could not save. Your changes might not persist.'));
+      if (sbClient && authUser && cloudSyncDone.current) {
+        sbClient.from('user_state').upsert({
+          user_id: authUser.id,
+          data: toSave,
+          updated_at: new Date().toISOString()
+        }).then(({
+          error
+        }) => {
+          if (error) setCloudSyncError(error.message);
+        });
+      }
     }, 500);
     return () => clearTimeout(saveTimer.current);
-  }, [state]);
+  }, [state, authUser]);
+
+  /* cloud sync on sign-in: first time -> push local up; returning device -> pull cloud down */
+  const cloudSyncDone = useRef(false);
+  const [cloudSyncError, setCloudSyncError] = useState('');
+  useEffect(() => {
+    if (!sbClient || !authUser || !hasLoaded.current || !state) return;
+    cloudSyncDone.current = false;
+    sbClient.from('user_state').select('data').eq('user_id', authUser.id).maybeSingle().then(({
+      data,
+      error
+    }) => {
+      if (error) {
+        setCloudSyncError(error.message);
+        cloudSyncDone.current = true;
+        return;
+      }
+      const cloudData = data && data.data;
+      const cloudHasContent = cloudData && Object.keys(cloudData).length > 0;
+      if (cloudHasContent) {
+        setState(Object.assign(defaultState(), cloudData));
+      } else {
+        const toSave = buildPersistPayload(state);
+        sbClient.from('user_state').upsert({
+          user_id: authUser.id,
+          data: toSave,
+          updated_at: new Date().toISOString()
+        });
+      }
+      cloudSyncDone.current = true;
+    });
+  }, [authUser]);
   const patch = fn => setState(s => ({
     ...s,
     ...(typeof fn === 'function' ? fn(s) : fn)
@@ -2532,8 +2574,12 @@ function App() {
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:6px;')
   }, s.language === 'es' ? 'Sesión iniciada como' : 'Signed in as'), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:15px;font-weight:600;color:#1d1d1f;margin-bottom:16px;')
-  }, authUser.email), /*#__PURE__*/React.createElement("button", {
+    style: css('font-size:15px;font-weight:600;color:#1d1d1f;margin-bottom:10px;')
+  }, authUser.email), cloudSyncError ? /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;color:#ff3b30;margin-bottom:16px;')
+  }, "⚠ ", s.language === 'es' ? 'No se pudo sincronizar: ' : "Couldn't sync: ", cloudSyncError) : /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;color:#34c759;font-weight:600;margin-bottom:16px;')
+  }, "☁ ", s.language === 'es' ? 'Sincronizado con tu cuenta' : 'Synced to your account'), /*#__PURE__*/React.createElement("button", {
     onClick: signOutUser,
     style: css('width:100%;background:#f5f5f7;color:#1d1d1f;border:none;padding:11px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;')
   }, s.language === 'es' ? 'Cerrar sesión' : 'Sign out'), /*#__PURE__*/React.createElement("div", {
