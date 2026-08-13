@@ -4,6 +4,11 @@ const {
   useRef
 } = React;
 
+/* ---------- Supabase ---------- */
+const SUPABASE_URL = 'https://gygsgjiatmpshsbrzhok.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd5Z3NnamlhdG1wc2hzYnJ6aG9rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYwMjAwMzYsImV4cCI6MjEwMTU5NjAzNn0.RYjEeSZxI5vknAPzrAP2Zw9o4TaMptm9FrwskSBuu_o';
+const sbClient = typeof window !== 'undefined' && window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
 /* ---------- constants ---------- */
 const PALETTE = ['#0071e3', '#34c759', '#ff9500', '#ff3b30', '#af52de', '#5ac8fa'];
 const NONRECURRING_COLOR = '#8e8e93';
@@ -608,7 +613,64 @@ function App() {
   });
   const [leftoverSplits, setLeftoverSplits] = useState({});
   const [reportQuarter, setReportQuarter] = useState(Math.floor(new Date().getMonth() / 3) + 1);
+  const [authUser, setAuthUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
+  useEffect(() => {
+    if (!sbClient) {
+      setAuthLoading(false);
+      return;
+    }
+    let cancelled = false;
+    sbClient.auth.getSession().then(({
+      data,
+      error
+    }) => {
+      if (cancelled) return;
+      if (error) setAuthError(error.message);
+      setAuthUser(data && data.session ? data.session.user : null);
+      setAuthLoading(false);
+    });
+    const {
+      data: listener
+    } = sbClient.auth.onAuthStateChange((event, session) => {
+      setAuthUser(session ? session.user : null);
+    });
+    return () => {
+      cancelled = true;
+      listener && listener.subscription && listener.subscription.unsubscribe();
+    };
+  }, []);
+  const signInWithGoogle = () => {
+    if (!sbClient) {
+      setAuthError('Supabase not loaded');
+      return;
+    }
+    setAuthError('');
+    sbClient.auth.signInWithOAuth({
+      provider: 'google'
+    }).then(({
+      error
+    }) => {
+      if (error) setAuthError(error.message);
+    });
+  };
+  const signOutUser = () => {
+    if (!sbClient) return;
+    sbClient.auth.signOut();
+  };
   const lineCanvasRef = useRef(null);
+  const shortcutFocusDone = useRef(false);
+  useEffect(() => {
+    if (shortcutFocusDone.current) return;
+    if (!state || state.tab !== 'gastos') return;
+    if (typeof window === 'undefined' || !window.location.search.includes('action=logExpense')) return;
+    shortcutFocusDone.current = true;
+    setTimeout(() => {
+      const input = document.querySelector('input[placeholder="Amount spent"]');
+      if (input) input.focus();
+    }, 350);
+  }, [state && state.tab]);
   const monthStripRef = useRef(null);
   useEffect(() => {
     if (!monthStripRef.current) return;
@@ -752,9 +814,17 @@ function App() {
             loaded.lastProcessedMonth = curMonth;
             loaded.lastProcessedYear = curYear;
           }
-          setState(Object.assign(defaultState(), loaded));
+          const merged = Object.assign(defaultState(), loaded);
+          if (typeof window !== 'undefined' && window.location && window.location.search.includes('action=logExpense')) {
+            merged.tab = 'gastos';
+          }
+          setState(merged);
         } else {
-          setState(defaultState());
+          const fresh = defaultState();
+          if (typeof window !== 'undefined' && window.location && window.location.search.includes('action=logExpense')) {
+            fresh.tab = 'gastos';
+          }
+          setState(fresh);
         }
       } catch (e) {
         if (!cancelled) setState(defaultState());
@@ -2415,7 +2485,7 @@ function App() {
     d: "M15 18l-6-6 6-6"
   }))), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;')
-  }, settingsView === 'menu' ? t('settings') : settingsView === 'profile' ? t('profileMenu') : settingsView === 'reports' ? t('reportsMenu') : t('moreMenu'))), settingsView === 'menu' && /*#__PURE__*/React.createElement("div", {
+  }, settingsView === 'menu' ? t('settings') : settingsView === 'profile' ? t('profileMenu') : settingsView === 'reports' ? t('reportsMenu') : settingsView === 'account' ? s.language === 'es' ? 'Cuenta' : 'Account' : t('moreMenu'))), settingsView === 'menu' && /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;flex-direction:column;gap:10px;')
   }, [{
     key: 'profile',
@@ -2425,6 +2495,10 @@ function App() {
     key: 'reports',
     label: t('reportsMenu'),
     desc: t('reportsMenuDesc')
+  }, {
+    key: 'account',
+    label: s.language === 'es' ? 'Cuenta' : 'Account',
+    desc: authUser ? authUser.email : s.language === 'es' ? 'Inicia sesión para metas compartidas' : 'Sign in for shared goals'
   }, {
     key: 'more',
     label: t('moreMenu'),
@@ -2448,7 +2522,31 @@ function App() {
     strokeLinejoin: "round"
   }, /*#__PURE__*/React.createElement("path", {
     d: "M9 18l6-6-6-6"
-  }))))), settingsView === 'profile' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }))))), settingsView === 'account' && /*#__PURE__*/React.createElement("div", null, authLoading ? /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;color:#86868b;')
+  }, s.language === 'es' ? 'Cargando…' : 'Loading…') : authUser ? /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:16px;padding:16px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:6px;')
+  }, s.language === 'es' ? 'Sesión iniciada como' : 'Signed in as'), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:15px;font-weight:600;color:#1d1d1f;margin-bottom:16px;')
+  }, authUser.email), /*#__PURE__*/React.createElement("button", {
+    onClick: signOutUser,
+    style: css('width:100%;background:#f5f5f7;color:#1d1d1f;border:none;padding:11px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;')
+  }, s.language === 'es' ? 'Cerrar sesión' : 'Sign out'), /*#__PURE__*/React.createElement("div", {
+    style: css('border-top:1px solid #f5f5f7;margin-top:16px;padding-top:16px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;color:#86868b;line-height:1.4;')
+  }, s.language === 'es' ? 'Próximamente: borrar cuenta permanentemente. Esto necesita una pieza extra de seguridad en el servidor que estamos armando.' : 'Coming soon: permanently delete account. This needs an extra server-side security piece we\'re building next.'))) : /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:16px;padding:16px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;color:#6e6e73;margin-bottom:14px;line-height:1.4;')
+  }, s.language === 'es' ? 'Inicia sesión con Google para poder compartir una meta con alguien más.' : 'Sign in with Google to be able to share a goal with someone else.'), /*#__PURE__*/React.createElement("button", {
+    onClick: signInWithGoogle,
+    style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:11px;border-radius:10px;font-size:13.5px;font-weight:700;cursor:pointer;')
+  }, s.language === 'es' ? 'Iniciar sesión con Google' : 'Sign in with Google'), authError && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;color:#ff3b30;margin-top:10px;')
+  }, authError))), settingsView === 'profile' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
   }, t('languageLabel')), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:8px;margin-bottom:20px;')
