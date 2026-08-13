@@ -840,58 +840,83 @@ function App() {
     };
   }, []);
 
-  /* persist (debounced) */
+  /* persist (debounced) — LOCAL ONLY. Cloud sync is manual/explicit now, never automatic. */
   useEffect(() => {
     if (!state || !hasLoaded.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       const toSave = buildPersistPayload(state);
       storageAdapter.set(STORAGE_KEY, JSON.stringify(toSave)).catch(() => setStorageWarning('Could not save. Your changes might not persist.'));
-      if (sbClient && authUser && cloudSyncDone.current) {
-        sbClient.from('user_state').upsert({
-          user_id: authUser.id,
-          data: toSave,
-          updated_at: new Date().toISOString()
-        }).then(({
-          error
-        }) => {
-          if (error) setCloudSyncError(error.message);
-        });
-      }
     }, 500);
     return () => clearTimeout(saveTimer.current);
-  }, [state, authUser]);
+  }, [state]);
 
-  /* cloud sync on sign-in: first time -> push local up; returning device -> pull cloud down */
-  const cloudSyncDone = useRef(false);
+  /* cloud backup info: on sign-in, just LOOK at whether a backup exists — never touch local/state automatically */
   const [cloudSyncError, setCloudSyncError] = useState('');
+  const [cloudBackupInfo, setCloudBackupInfo] = useState(null); // {updatedAt} | null | 'none'
+  const [cloudBusy, setCloudBusy] = useState(false);
   useEffect(() => {
-    if (!sbClient || !authUser || !hasLoaded.current || !state) return;
-    cloudSyncDone.current = false;
-    sbClient.from('user_state').select('data').eq('user_id', authUser.id).maybeSingle().then(({
+    if (!sbClient || !authUser) {
+      setCloudBackupInfo(null);
+      return;
+    }
+    setCloudSyncError('');
+    sbClient.from('user_state').select('data, updated_at').eq('user_id', authUser.id).maybeSingle().then(({
       data,
       error
     }) => {
       if (error) {
         setCloudSyncError(error.message);
-        cloudSyncDone.current = true;
         return;
       }
-      const cloudData = data && data.data;
-      const cloudHasContent = cloudData && Object.keys(cloudData).length > 0;
-      if (cloudHasContent) {
-        setState(Object.assign(defaultState(), cloudData));
-      } else {
-        const toSave = buildPersistPayload(state);
-        sbClient.from('user_state').upsert({
-          user_id: authUser.id,
-          data: toSave,
-          updated_at: new Date().toISOString()
+      if (data && data.data && Object.keys(data.data).length > 0) {
+        setCloudBackupInfo({
+          updatedAt: data.updated_at
         });
+      } else {
+        setCloudBackupInfo('none');
       }
-      cloudSyncDone.current = true;
     });
   }, [authUser]);
+  const backupToCloud = () => {
+    if (!sbClient || !authUser || !state) return;
+    setCloudBusy(true);
+    const toSave = buildPersistPayload(state);
+    sbClient.from('user_state').upsert({
+      user_id: authUser.id,
+      data: toSave,
+      updated_at: new Date().toISOString()
+    }).then(({
+      error
+    }) => {
+      setCloudBusy(false);
+      if (error) {
+        setCloudSyncError(error.message);
+        return;
+      }
+      setCloudSyncError('');
+      setCloudBackupInfo({
+        updatedAt: new Date().toISOString()
+      });
+    });
+  };
+  const restoreFromCloud = () => {
+    if (!sbClient || !authUser) return;
+    setCloudBusy(true);
+    sbClient.from('user_state').select('data').eq('user_id', authUser.id).maybeSingle().then(({
+      data,
+      error
+    }) => {
+      setCloudBusy(false);
+      if (error) {
+        setCloudSyncError(error.message);
+        return;
+      }
+      if (data && data.data && Object.keys(data.data).length > 0) {
+        setState(Object.assign(defaultState(), data.data));
+      }
+    });
+  };
   const patch = fn => setState(s => ({
     ...s,
     ...(typeof fn === 'function' ? fn(s) : fn)
@@ -2574,15 +2599,29 @@ function App() {
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:6px;')
   }, s.language === 'es' ? 'Sesión iniciada como' : 'Signed in as'), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:15px;font-weight:600;color:#1d1d1f;margin-bottom:10px;')
-  }, authUser.email), cloudSyncError ? /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:11.5px;color:#ff3b30;margin-bottom:16px;')
-  }, "⚠ ", s.language === 'es' ? 'No se pudo sincronizar: ' : "Couldn't sync: ", cloudSyncError) : /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:11.5px;color:#34c759;font-weight:600;margin-bottom:16px;')
-  }, "☁ ", s.language === 'es' ? 'Sincronizado con tu cuenta' : 'Synced to your account'), /*#__PURE__*/React.createElement("button", {
+    style: css('font-size:15px;font-weight:600;color:#1d1d1f;margin-bottom:16px;')
+  }, authUser.email), /*#__PURE__*/React.createElement("button", {
     onClick: signOutUser,
     style: css('width:100%;background:#f5f5f7;color:#1d1d1f;border:none;padding:11px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;')
   }, s.language === 'es' ? 'Cerrar sesión' : 'Sign out'), /*#__PURE__*/React.createElement("div", {
+    style: css('border-top:1px solid #f5f5f7;margin-top:16px;padding-top:16px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:8px;')
+  }, s.language === 'es' ? 'Respaldo en la nube' : 'Cloud backup'), cloudSyncError && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;color:#ff3b30;margin-bottom:10px;')
+  }, "⚠ ", cloudSyncError), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12px;color:#6e6e73;margin-bottom:12px;line-height:1.4;')
+  }, cloudBackupInfo === null ? s.language === 'es' ? 'Revisando…' : 'Checking…' : cloudBackupInfo === 'none' ? s.language === 'es' ? 'Todavía no hay respaldo en tu cuenta.' : "There's no backup on your account yet." : (s.language === 'es' ? 'Último respaldo: ' : 'Last backup: ') + new Date(cloudBackupInfo.updatedAt).toLocaleString()), /*#__PURE__*/React.createElement("button", {
+    disabled: cloudBusy,
+    onClick: () => askConfirm(s.language === 'es' ? 'Esto va a reemplazar el respaldo de tu cuenta con lo que tienes AHORA MISMO en este dispositivo. ¿Seguro?' : "This will replace your account's backup with what's on THIS device right now. Are you sure?", backupToCloud),
+    style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:11px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:8px;')
+  }, cloudBusy ? '…' : s.language === 'es' ? '⬆ Respaldar este dispositivo a mi cuenta' : '⬆ Back up this device to my account'), /*#__PURE__*/React.createElement("button", {
+    disabled: cloudBusy || cloudBackupInfo === 'none' || cloudBackupInfo === null,
+    onClick: () => askConfirm(s.language === 'es' ? 'Esto va a reemplazar TODO lo que tienes en este dispositivo con el respaldo de tu cuenta. ¿Seguro?' : "This will replace EVERYTHING on this device with your account's backup. Are you sure?", restoreFromCloud),
+    style: css('width:100%;background:#f5f5f7;color: ' + (cloudBackupInfo === 'none' || cloudBackupInfo === null ? '#c7c7cc' : '#1d1d1f') + ';border:none;padding:11px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;')
+  }, cloudBusy ? '…' : s.language === 'es' ? '⬇ Traer el respaldo de mi cuenta a este dispositivo' : '⬇ Restore my account\'s backup to this device'), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11px;color:#86868b;margin-top:10px;line-height:1.4;')
+  }, s.language === 'es' ? 'Nada se sube o se baja solo — solo cuando tú tocas uno de estos botones.' : "Nothing uploads or downloads on its own — only when you tap one of these buttons.")), /*#__PURE__*/React.createElement("div", {
     style: css('border-top:1px solid #f5f5f7;margin-top:16px;padding-top:16px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:11.5px;color:#86868b;line-height:1.4;')
