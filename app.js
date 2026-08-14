@@ -139,7 +139,8 @@ function buildPersistPayload(state) {
     hustles: state.hustles,
     goals: state.goals,
     investments: state.investments,
-    selectedGoalId: state.selectedGoalId
+    selectedGoalId: state.selectedGoalId,
+    _updatedAt: Date.now()
   };
 }
 function toDateStr(year, month, day) {
@@ -723,6 +724,7 @@ function App() {
   };
   const hasLoaded = useRef(false);
   const [localLoaded, setLocalLoaded] = useState(false);
+  const localUpdatedAtRef = useRef(0);
   const importInputRef = useRef(null);
   const [importMessage, setImportMessage] = useState('');
   const [feedbackText, setFeedbackText] = useState('');
@@ -822,6 +824,7 @@ function App() {
           if (typeof window !== 'undefined' && window.location && window.location.search.includes('action=logExpense')) {
             merged.tab = 'gastos';
           }
+          localUpdatedAtRef.current = loaded._updatedAt || 0;
           setState(merged);
         } else {
           const fresh = defaultState();
@@ -856,6 +859,7 @@ function App() {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       const toSave = buildPersistPayload(state);
+      localUpdatedAtRef.current = toSave._updatedAt;
       storageAdapter.set(STORAGE_KEY, JSON.stringify(toSave)).catch(() => setStorageWarning('Could not save. Your changes might not persist.'));
       if (sbClient && authUser && syncGuard.current.pulled && !syncGuard.current.pulling) {
         setCloudSyncStatus('syncing');
@@ -882,8 +886,10 @@ function App() {
     return () => clearTimeout(saveTimer.current);
   }, [state, authUser, localLoaded]);
 
-  /* on sign-in: pull the account's backup down automatically and instantly.
-     Runs exactly once per sign-in (guarded), and blocks any push until it's done. */
+  /* on sign-in: pull the account's backup down automatically and instantly —
+     but ONLY if the cloud copy is actually newer than what's already on this
+     device. Otherwise a slow/incomplete previous push could clobber a fresh
+     local edit the moment you reopen the app. */
   const [cloudSyncError, setCloudSyncError] = useState('');
   const [cloudSyncStatus, setCloudSyncStatus] = useState('idle'); // idle | syncing | synced | error
   const [cloudBackupInfo, setCloudBackupInfo] = useState(null); // {updatedAt} | 'none' | null
@@ -917,9 +923,13 @@ function App() {
         return;
       }
       if (data && data.data && Object.keys(data.data).length > 0) {
-        setState(Object.assign(defaultState(), data.data, {
-          hasSeenWelcome: true
-        }));
+        const cloudUpdatedAtMs = data.data._updatedAt || new Date(data.updated_at).getTime();
+        if (cloudUpdatedAtMs > localUpdatedAtRef.current) {
+          setState(Object.assign(defaultState(), data.data, {
+            hasSeenWelcome: true
+          }));
+          localUpdatedAtRef.current = cloudUpdatedAtMs;
+        }
         setCloudBackupInfo({
           updatedAt: data.updated_at
         });
