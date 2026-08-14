@@ -840,21 +840,49 @@ function App() {
     };
   }, []);
 
-  /* persist (debounced) — LOCAL ONLY. Cloud sync is manual/explicit now, never automatic. */
+  /* persist (debounced) — local always; cloud push too, but ONLY after the initial
+     pull for this sign-in has finished, so we never push stale/empty data over a
+     real backup (this ordering is what caused the earlier data-loss bug). */
+  const syncGuard = useRef({
+    pulled: false,
+    pulling: false
+  });
   useEffect(() => {
     if (!state || !hasLoaded.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       const toSave = buildPersistPayload(state);
       storageAdapter.set(STORAGE_KEY, JSON.stringify(toSave)).catch(() => setStorageWarning('Could not save. Your changes might not persist.'));
+      if (sbClient && authUser && syncGuard.current.pulled && !syncGuard.current.pulling) {
+        setCloudSyncStatus('syncing');
+        sbClient.from('user_state').upsert({
+          user_id: authUser.id,
+          data: toSave,
+          updated_at: new Date().toISOString()
+        }).then(({
+          error
+        }) => {
+          if (error) {
+            setCloudSyncError(error.message);
+            setCloudSyncStatus('error');
+          } else {
+            setCloudSyncError('');
+            setCloudSyncStatus('synced');
+            setCloudBackupInfo({
+              updatedAt: new Date().toISOString()
+            });
+          }
+        });
+      }
     }, 500);
     return () => clearTimeout(saveTimer.current);
-  }, [state]);
+  }, [state, authUser]);
 
-  /* cloud backup info: on sign-in, just LOOK at whether a backup exists — never touch local/state automatically */
+  /* on sign-in: pull the account's backup down automatically and instantly.
+     Runs exactly once per sign-in (guarded), and blocks any push until it's done. */
   const [cloudSyncError, setCloudSyncError] = useState('');
-  const [cloudBackupInfo, setCloudBackupInfo] = useState(null); // {updatedAt} | null | 'none'
-  const [cloudBusy, setCloudBusy] = useState(false);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState('idle'); // idle | syncing | synced | error
+  const [cloudBackupInfo, setCloudBackupInfo] = useState(null); // {updatedAt} | 'none' | null
   const [isDesktop, setIsDesktop] = useState(typeof window !== 'undefined' && window.innerWidth >= 880);
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -863,10 +891,12 @@ function App() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
   useEffect(() => {
-    if (!sbClient || !authUser) {
-      setCloudBackupInfo(null);
-      return;
-    }
+    if (!sbClient || !authUser || !hasLoaded.current) return;
+    syncGuard.current = {
+      pulled: false,
+      pulling: true
+    };
+    setCloudSyncStatus('syncing');
     setCloudSyncError('');
     sbClient.from('user_state').select('data, updated_at').eq('user_id', authUser.id).maybeSingle().then(({
       data,
@@ -874,58 +904,31 @@ function App() {
     }) => {
       if (error) {
         setCloudSyncError(error.message);
-        return;
-      }
-      if (data && data.data && Object.keys(data.data).length > 0) {
-        setCloudBackupInfo({
-          updatedAt: data.updated_at
-        });
-      } else {
-        setCloudBackupInfo('none');
-      }
-    });
-  }, [authUser]);
-  const backupToCloud = () => {
-    if (!sbClient || !authUser || !state) return;
-    setCloudBusy(true);
-    const toSave = buildPersistPayload(state);
-    sbClient.from('user_state').upsert({
-      user_id: authUser.id,
-      data: toSave,
-      updated_at: new Date().toISOString()
-    }).then(({
-      error
-    }) => {
-      setCloudBusy(false);
-      if (error) {
-        setCloudSyncError(error.message);
-        return;
-      }
-      setCloudSyncError('');
-      setCloudBackupInfo({
-        updatedAt: new Date().toISOString()
-      });
-    });
-  };
-  const restoreFromCloud = () => {
-    if (!sbClient || !authUser) return;
-    setCloudBusy(true);
-    sbClient.from('user_state').select('data').eq('user_id', authUser.id).maybeSingle().then(({
-      data,
-      error
-    }) => {
-      setCloudBusy(false);
-      if (error) {
-        setCloudSyncError(error.message);
+        setCloudSyncStatus('error');
+        syncGuard.current = {
+          pulled: true,
+          pulling: false
+        };
         return;
       }
       if (data && data.data && Object.keys(data.data).length > 0) {
         setState(Object.assign(defaultState(), data.data, {
           hasSeenWelcome: true
         }));
+        setCloudBackupInfo({
+          updatedAt: data.updated_at
+        });
+        setCloudSyncStatus('synced');
+      } else {
+        setCloudBackupInfo('none');
+        setCloudSyncStatus('idle');
       }
+      syncGuard.current = {
+        pulled: true,
+        pulling: false
+      };
     });
-  };
+  }, [authUser, hasLoaded.current]);
   const patch = fn => setState(s => ({
     ...s,
     ...(typeof fn === 'function' ? fn(s) : fn)
@@ -2776,20 +2779,44 @@ function App() {
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:8px;')
   }, s.language === 'es' ? 'Respaldo en la nube' : 'Cloud backup'), cloudSyncError && /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:11.5px;color:#ff3b30;margin-bottom:10px;')
+    style: css('font-size:11.5px;color:#ff3b30;margin-bottom:6px;')
   }, "⚠ ", cloudSyncError), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:12px;color:#6e6e73;margin-bottom:12px;line-height:1.4;')
-  }, cloudBackupInfo === null ? s.language === 'es' ? 'Revisando…' : 'Checking…' : cloudBackupInfo === 'none' ? s.language === 'es' ? 'Todavía no hay respaldo en tu cuenta.' : "There's no backup on your account yet." : (s.language === 'es' ? 'Último respaldo: ' : 'Last backup: ') + new Date(cloudBackupInfo.updatedAt).toLocaleString()), /*#__PURE__*/React.createElement("button", {
-    disabled: cloudBusy,
-    onClick: () => askConfirm(s.language === 'es' ? 'Esto va a reemplazar el respaldo de tu cuenta con lo que tienes AHORA MISMO en este dispositivo. ¿Seguro?' : "This will replace your account's backup with what's on THIS device right now. Are you sure?", backupToCloud),
-    style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:11px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:8px;')
-  }, cloudBusy ? '…' : s.language === 'es' ? '⬆ Respaldar este dispositivo a mi cuenta' : '⬆ Back up this device to my account'), /*#__PURE__*/React.createElement("button", {
-    disabled: cloudBusy || cloudBackupInfo === 'none' || cloudBackupInfo === null,
-    onClick: () => askConfirm(s.language === 'es' ? 'Esto va a reemplazar TODO lo que tienes en este dispositivo con el respaldo de tu cuenta. ¿Seguro?' : "This will replace EVERYTHING on this device with your account's backup. Are you sure?", restoreFromCloud),
-    style: css('width:100%;background:#f5f5f7;color: ' + (cloudBackupInfo === 'none' || cloudBackupInfo === null ? '#c7c7cc' : '#1d1d1f') + ';border:none;padding:11px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;')
-  }, cloudBusy ? '…' : s.language === 'es' ? '⬇ Traer el respaldo de mi cuenta a este dispositivo' : '⬇ Restore my account\'s backup to this device'), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:11px;color:#86868b;margin-top:10px;line-height:1.4;')
-  }, s.language === 'es' ? 'Nada se sube o se baja solo — solo cuando tú tocas uno de estos botones.' : "Nothing uploads or downloads on its own — only when you tap one of these buttons.")), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;gap:7px;font-size:12.5px;color:#6e6e73;line-height:1.4;')
+  }, cloudSyncStatus === 'syncing' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: 8,
+      height: 8,
+      borderRadius: '50%',
+      background: '#ff9500',
+      flex: 'none'
+    }
+  }), s.language === 'es' ? 'Sincronizando…' : 'Syncing…'), cloudSyncStatus === 'synced' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: 8,
+      height: 8,
+      borderRadius: '50%',
+      background: '#34c759',
+      flex: 'none'
+    }
+  }), (s.language === 'es' ? 'Sincronizado — ' : 'Synced — ') + (cloudBackupInfo && cloudBackupInfo !== 'none' ? new Date(cloudBackupInfo.updatedAt).toLocaleString() : '')), cloudSyncStatus === 'error' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: 8,
+      height: 8,
+      borderRadius: '50%',
+      background: '#ff3b30',
+      flex: 'none'
+    }
+  }), s.language === 'es' ? 'No se pudo sincronizar' : "Couldn't sync"), cloudSyncStatus === 'idle' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: 8,
+      height: 8,
+      borderRadius: '50%',
+      background: '#c7c7cc',
+      flex: 'none'
+    }
+  }), s.language === 'es' ? 'Aún nada que sincronizar' : 'Nothing to sync yet')), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11px;color:#86868b;margin-top:8px;line-height:1.4;')
+  }, s.language === 'es' ? 'Automático: al iniciar sesión, tus datos de la cuenta se traen solos. Cada cambio que hagas se guarda solo, en segundos.' : "Automatic: signing in pulls your account's data in by itself. Every change you make saves itself, within seconds.")), /*#__PURE__*/React.createElement("div", {
     style: css('border-top:1px solid #f5f5f7;margin-top:16px;padding-top:16px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:11.5px;color:#86868b;line-height:1.4;')
@@ -2797,7 +2824,7 @@ function App() {
     style: css('background:#fff;border-radius:16px;padding:16px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;color:#6e6e73;margin-bottom:14px;line-height:1.4;')
-  }, s.language === 'es' ? 'Inicia sesión con Google para poder compartir una meta con alguien más.' : 'Sign in with Google to be able to share a goal with someone else.'), /*#__PURE__*/React.createElement("button", {
+  }, s.language === 'es' ? 'Inicia sesión con Google — tus datos se van a guardar y traer automáticamente entre dispositivos.' : "Sign in with Google — your data will automatically save and pull in across your devices."), /*#__PURE__*/React.createElement("button", {
     onClick: signInWithGoogle,
     style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:11px;border-radius:10px;font-size:13.5px;font-weight:700;cursor:pointer;')
   }, s.language === 'es' ? 'Iniciar sesión con Google' : 'Sign in with Google'), authError && /*#__PURE__*/React.createElement("div", {
