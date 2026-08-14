@@ -884,6 +884,7 @@ function App() {
   const [cloudSyncStatus, setCloudSyncStatus] = useState('idle'); // idle | syncing | synced | error
   const [cloudBackupInfo, setCloudBackupInfo] = useState(null); // {updatedAt} | 'none' | null
   const [isDesktop, setIsDesktop] = useState(typeof window !== 'undefined' && window.innerWidth >= 880);
+  const [bypassAuthGate, setBypassAuthGate] = useState(false);
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const onResize = () => setIsDesktop(window.innerWidth >= 880);
@@ -1683,6 +1684,103 @@ function App() {
   }
   const s = state;
   const t = key => STRINGS[s.language] && STRINGS[s.language][key] || STRINGS.en[key] || key;
+  if (sbClient && s.hasSeenWelcome && !authUser && !authLoading && !bypassAuthGate) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        minHeight: '100vh',
+        background: '#f5f5f7',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 24,
+        fontFamily: '-apple-system,BlinkMacSystemFont,"SF Pro Display",Inter,system-ui,sans-serif'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: '#fff',
+        borderRadius: 20,
+        padding: '28px 24px',
+        maxWidth: 360,
+        width: '100%',
+        boxShadow: '0 30px 70px rgba(0,0,0,0.2)',
+        textAlign: 'center'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: 52,
+        height: 52,
+        borderRadius: 16,
+        background: 'linear-gradient(135deg,#0071e3,#5ac8fa)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        margin: '0 auto 18px'
+      }
+    }, /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 24 24",
+      width: "26",
+      height: "26",
+      fill: "none",
+      stroke: "#fff",
+      strokeWidth: "2",
+      strokeLinecap: "round",
+      strokeLinejoin: "round"
+    }, /*#__PURE__*/React.createElement("path", {
+      d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"
+    }), /*#__PURE__*/React.createElement("circle", {
+      cx: "9",
+      cy: "7",
+      r: "4"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M22 21v-2a4 4 0 0 0-3-3.87"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M16 3.13a4 4 0 0 1 0 7.75"
+    }))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 19,
+        fontWeight: 700,
+        marginBottom: 8,
+        color: '#1d1d1f'
+      }
+    }, s.language === 'es' ? 'Inicia sesión para continuar' : 'Sign in to continue'), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 13,
+        color: '#6e6e73',
+        lineHeight: 1.5,
+        marginBottom: 22
+      }
+    }, s.language === 'es' ? 'Necesitas iniciar sesión para ver tu información.' : 'You need to sign in to see your information.'), /*#__PURE__*/React.createElement("button", {
+      onClick: signInWithGoogle,
+      style: {
+        width: '100%',
+        background: '#0071e3',
+        color: '#fff',
+        border: 'none',
+        padding: 13,
+        borderRadius: 12,
+        fontSize: 14.5,
+        fontWeight: 700,
+        cursor: 'pointer',
+        marginBottom: 14
+      }
+    }, s.language === 'es' ? 'Iniciar sesión con Google' : 'Sign in with Google'), authError && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: '#ff3b30',
+        marginBottom: 14
+      }
+    }, authError), /*#__PURE__*/React.createElement("button", {
+      onClick: () => setBypassAuthGate(true),
+      style: {
+        background: 'none',
+        border: 'none',
+        color: '#86868b',
+        fontSize: 12,
+        fontWeight: 600,
+        cursor: 'pointer'
+      }
+    }, s.language === 'es' ? 'Continuar sin cuenta' : 'Continue without an account')));
+  }
   const hideInvestTab = s.incomeProfile === 'allowance' && s.studentAge && s.studentAge < 18 && s.investsWithParents === false;
   const ctx = computeCtx(s);
   function buildGoalView(goal, isDetail) {
@@ -1971,7 +2069,10 @@ function App() {
     }
   }, "Español")), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:20px;font-weight:700;letter-spacing:-0.01em;margin-bottom:6px;')
-  }, t('welcome')), /*#__PURE__*/React.createElement("div", {
+  }, t('welcome')), sbClient && /*#__PURE__*/React.createElement("button", {
+    onClick: signInWithGoogle,
+    style: css('display:block;background:none;border:none;color:#0071e3;font-size:12.5px;font-weight:700;cursor:pointer;padding:0;margin-bottom:14px;')
+  }, s.language === 'es' ? '¿Ya tienes cuenta? Iniciar sesión con Google →' : 'Already have an account? Sign in with Google →'), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13.5px;color:#6e6e73;line-height:1.5;margin-bottom:14px;')
   }, t('profileQTitle')), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;flex-direction:column;gap:8px;margin-bottom:18px;')
