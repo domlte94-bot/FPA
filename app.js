@@ -228,7 +228,7 @@ function defaultState() {
   const today = new Date();
   return {
     tab: 'inicio',
-    income: 3173,
+    income: 0,
     payFrequency: 'monthly',
     nextPaydayDate: '',
     paycheckLog: [],
@@ -855,6 +855,13 @@ function App() {
   const [cloudSyncError, setCloudSyncError] = useState('');
   const [cloudBackupInfo, setCloudBackupInfo] = useState(null); // {updatedAt} | null | 'none'
   const [cloudBusy, setCloudBusy] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(typeof window !== 'undefined' && window.innerWidth >= 880);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onResize = () => setIsDesktop(window.innerWidth >= 880);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   useEffect(() => {
     if (!sbClient || !authUser) {
       setCloudBackupInfo(null);
@@ -913,7 +920,9 @@ function App() {
         return;
       }
       if (data && data.data && Object.keys(data.data).length > 0) {
-        setState(Object.assign(defaultState(), data.data));
+        setState(Object.assign(defaultState(), data.data, {
+          hasSeenWelcome: true
+        }));
       }
     });
   };
@@ -1847,6 +1856,47 @@ function App() {
       style: css('font-size:10px;font-weight:600;')
     }, label));
   };
+  const SidebarButton = ({
+    name,
+    label,
+    icon
+  }) => {
+    const active = s.tab === name;
+    const color = active ? '#0071e3' : '#6e6e73';
+    return /*#__PURE__*/React.createElement("button", {
+      onClick: () => setTab(name),
+      style: {
+        width: '100%',
+        background: active ? '#eef6ff' : 'none',
+        border: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '10px 14px',
+        borderRadius: 10,
+        cursor: 'pointer',
+        color,
+        textAlign: 'left'
+      }
+    }, /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 24 24",
+      width: "19",
+      height: "19",
+      fill: "none",
+      stroke: color,
+      strokeWidth: "2",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      style: {
+        flex: 'none'
+      }
+    }, icon(color)), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 14,
+        fontWeight: active ? 700 : 600
+      }
+    }, label));
+  };
   return /*#__PURE__*/React.createElement("div", {
     style: css('min-height:100vh;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",Inter,system-ui,sans-serif;color:#1d1d1f;')
   }, confirmDialog && /*#__PURE__*/React.createElement("div", {
@@ -2092,16 +2142,114 @@ function App() {
     onClick: dismissWelcome,
     style: css('width:100%;padding:12px;background:#0071e3;color:#fff;border:none;border-radius:12px;font-size:14.5px;font-weight:600;cursor:pointer;')
   }, t('getStarted'))))), /*#__PURE__*/React.createElement("div", {
-    style: css('padding-bottom:96px;')
+    style: css('padding-bottom:' + (isDesktop ? '20' : '96') + 'px;display:flex;')
+  }, isDesktop && /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 'none',
+      width: 220,
+      minHeight: '100vh',
+      padding: 'calc(20px + env(safe-area-inset-top)) 10px 20px 16px',
+      borderRight: '1px solid rgba(0,0,0,0.06)',
+      position: 'sticky',
+      top: 0,
+      alignSelf: 'flex-start',
+      display: 'flex',
+      flexDirection: 'column'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:16px;font-weight:800;letter-spacing:-0.01em;color:#1d1d1f;padding:6px 14px 20px;')
+  }, s.language === 'es' ? 'Mis Metas' : 'My Goals'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 2
+    }
+  }, /*#__PURE__*/React.createElement(SidebarButton, {
+    name: "inicio",
+    label: t('tabHome'),
+    icon: () => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
+      d: "M3 11.5L12 4l9 7.5"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M5.5 10v9a1 1 0 0 0 1 1h4v-6h3v6h4a1 1 0 0 0 1-1v-9"
+    }))
+  }), /*#__PURE__*/React.createElement(SidebarButton, {
+    name: "metas",
+    label: t('tabGoals'),
+    icon: color => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("circle", {
+      cx: "12",
+      cy: "12",
+      r: "9"
+    }), /*#__PURE__*/React.createElement("circle", {
+      cx: "12",
+      cy: "12",
+      r: "4.5"
+    }), /*#__PURE__*/React.createElement("circle", {
+      cx: "12",
+      cy: "12",
+      r: "0.6",
+      fill: color
+    }))
+  }), /*#__PURE__*/React.createElement(SidebarButton, {
+    name: "gastos",
+    label: t('tabExpenses'),
+    icon: () => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("rect", {
+      x: "3",
+      y: "6",
+      width: "18",
+      height: "13",
+      rx: "2"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M3 10h18"
+    }))
+  }), /*#__PURE__*/React.createElement(SidebarButton, {
+    name: "extra",
+    label: t('tabExtra'),
+    icon: () => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
+      d: "M3 17l6-6 4 4 8-8"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M15 7h6v6"
+    }))
+  }), !hideInvestTab && /*#__PURE__*/React.createElement(SidebarButton, {
+    name: "invest",
+    label: t('tabInvest'),
+    icon: () => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
+      d: "M3 3v18h18"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M7 15l4-5 3 3 5-7"
+    }))
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      borderTop: '1px solid rgba(0,0,0,0.06)',
+      paddingTop: 8
+    }
+  }, /*#__PURE__*/React.createElement(SidebarButton, {
+    name: "settings",
+    label: t('settings'),
+    icon: color => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("circle", {
+      cx: "12",
+      cy: "12",
+      r: "3"
+    }), /*#__PURE__*/React.createElement("path", {
+      d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+    }))
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
   }, storageWarning && /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff2ef;color:#ff3b30;font-size:12.5px;padding:8px 20px;')
   }, storageWarning), /*#__PURE__*/React.createElement("div", {
     style: {
       maxWidth: 720,
       margin: '0 auto',
-      padding: 'calc(20px + env(safe-area-inset-top)) 20px 0'
+      padding: isDesktop ? '20px 24px 0' : 'calc(20px + env(safe-area-inset-top)) 20px 0'
     }
-  }, s.tab === 'inicio' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, s.tab === 'inicio' && /*#__PURE__*/React.createElement(React.Fragment, null, !isDesktop && /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;justify-content:flex-end;margin-bottom:4px;')
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => setTab('settings'),
@@ -2245,7 +2393,7 @@ function App() {
     style: css('background:none;border:none;color:#0071e3;font-size:10.5px;font-weight:700;cursor:pointer;padding:0;')
   }, s.language === 'es' ? 'Ver' : 'View')), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
-  }, fmt(s.income)), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("button", {
+  }, !s.hasSeenWelcome ? '—' : fmt(s.income)), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("button", {
     onClick: e => {
       e.stopPropagation();
       markPaidToday();
@@ -2259,23 +2407,23 @@ function App() {
     text: s.language === 'es' ? 'Tu ingreso menos tus gastos presupuestados de este mes.' : "Your income minus your budgeted expenses this month."
   })), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
-  }, fmt(Math.max(ctx.boostedAvailable, 0)))), /*#__PURE__*/React.createElement("div", {
+  }, !s.hasSeenWelcome ? '—' : fmt(Math.max(ctx.boostedAvailable, 0)))), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:14px;padding:13px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
   }, t('totalSaved')), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
-  }, fmt(totalCurrent)), /*#__PURE__*/React.createElement("div", {
+  }, !s.hasSeenWelcome ? '—' : fmt(totalCurrent)), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:9.5px;color:#86868b;margin-top:2px;')
-  }, overallPct.toFixed(0), "% of goal")), /*#__PURE__*/React.createElement("div", {
+  }, !s.hasSeenWelcome ? '' : overallPct.toFixed(0) + '% of goal')), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:14px;padding:13px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
   }, t('totalInvested')), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
-  }, fmt(investmentTotal)), /*#__PURE__*/React.createElement("div", {
+  }, !s.hasSeenWelcome ? '—' : fmt(investmentTotal)), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:9.5px;color:#86868b;margin-top:2px;')
-  }, s.investments.length, " ", s.investments.length === 1 ? 'investment' : 'investments'))), donutLegend.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, !s.hasSeenWelcome ? '' : s.investments.length + ' ' + (s.investments.length === 1 ? 'investment' : 'investments')))), donutLegend.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:22px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;')
   }, /*#__PURE__*/React.createElement("canvas", {
     ref: donutCanvasRef,
@@ -2595,12 +2743,32 @@ function App() {
   }))))), settingsView === 'account' && /*#__PURE__*/React.createElement("div", null, authLoading ? /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;color:#86868b;')
   }, s.language === 'es' ? 'Cargando…' : 'Loading…') : authUser ? /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border-radius:16px;padding:16px;')
+    style: css('background:#fff;border-radius:16px;padding:20px;')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:6px;')
-  }, s.language === 'es' ? 'Sesión iniciada como' : 'Signed in as'), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:15px;font-weight:600;color:#1d1d1f;margin-bottom:16px;')
-  }, authUser.email), /*#__PURE__*/React.createElement("button", {
+    style: css('display:flex;align-items:center;gap:14px;margin-bottom:18px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: 52,
+      height: 52,
+      borderRadius: '50%',
+      background: 'linear-gradient(135deg,#0071e3,#5ac8fa)',
+      color: '#fff',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      fontSize: 20,
+      fontWeight: 700,
+      flex: 'none'
+    }
+  }, (authUser.email || '?').charAt(0).toUpperCase()), /*#__PURE__*/React.createElement("div", {
+    style: {
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:15px;font-weight:700;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
+  }, authUser.email), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;color:#86868b;margin-top:1px;')
+  }, s.language === 'es' ? 'Sesión iniciada con Google' : 'Signed in with Google'))), /*#__PURE__*/React.createElement("button", {
     onClick: signOutUser,
     style: css('width:100%;background:#f5f5f7;color:#1d1d1f;border:none;padding:11px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;')
   }, s.language === 'es' ? 'Cerrar sesión' : 'Sign out'), /*#__PURE__*/React.createElement("div", {
@@ -4346,7 +4514,7 @@ function App() {
   }, t('tabIntroInvest')), /*#__PURE__*/React.createElement("button", {
     onClick: () => dismissTabIntro('invest'),
     style: css('flex:none;background:#fff;color:#0071e3;border:1.5px solid #d2d2d7;padding:8px 15px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
-  }, t('gotIt')))))), /*#__PURE__*/React.createElement("div", {
+  }, t('gotIt'))))))), !isDesktop && /*#__PURE__*/React.createElement("div", {
     style: css('position:fixed;bottom:0;left:0;right:0;z-index:30;background:rgba(255,255,255,0.94);backdrop-filter:blur(14px);border-top:1px solid rgba(0,0,0,0.08);display:flex;padding:8px 4px calc(8px + env(safe-area-inset-bottom));')
   }, /*#__PURE__*/React.createElement(TabButton, {
     name: "inicio",
