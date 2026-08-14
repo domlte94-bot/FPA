@@ -722,6 +722,7 @@ function App() {
     setDragIndex(null);
   };
   const hasLoaded = useRef(false);
+  const [localLoaded, setLocalLoaded] = useState(false);
   const importInputRef = useRef(null);
   const [importMessage, setImportMessage] = useState('');
   const [feedbackText, setFeedbackText] = useState('');
@@ -832,7 +833,10 @@ function App() {
       } catch (e) {
         if (!cancelled) setState(defaultState());
       } finally {
-        if (!cancelled) hasLoaded.current = true;
+        if (!cancelled) {
+          hasLoaded.current = true;
+          setLocalLoaded(true);
+        }
       }
     })();
     return () => {
@@ -848,7 +852,7 @@ function App() {
     pulling: false
   });
   useEffect(() => {
-    if (!state || !hasLoaded.current) return;
+    if (!state || !localLoaded) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       const toSave = buildPersistPayload(state);
@@ -876,7 +880,7 @@ function App() {
       }
     }, 500);
     return () => clearTimeout(saveTimer.current);
-  }, [state, authUser]);
+  }, [state, authUser, localLoaded]);
 
   /* on sign-in: pull the account's backup down automatically and instantly.
      Runs exactly once per sign-in (guarded), and blocks any push until it's done. */
@@ -892,7 +896,7 @@ function App() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
   useEffect(() => {
-    if (!sbClient || !authUser || !hasLoaded.current) return;
+    if (!sbClient || !authUser || !localLoaded) return;
     syncGuard.current = {
       pulled: false,
       pulling: true
@@ -929,7 +933,7 @@ function App() {
         pulling: false
       };
     });
-  }, [authUser, hasLoaded.current]);
+  }, [authUser, localLoaded]);
   const patch = fn => setState(s => ({
     ...s,
     ...(typeof fn === 'function' ? fn(s) : fn)
@@ -2069,10 +2073,7 @@ function App() {
     }
   }, "Español")), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:20px;font-weight:700;letter-spacing:-0.01em;margin-bottom:6px;')
-  }, t('welcome')), sbClient && /*#__PURE__*/React.createElement("button", {
-    onClick: signInWithGoogle,
-    style: css('display:block;background:none;border:none;color:#0071e3;font-size:12.5px;font-weight:700;cursor:pointer;padding:0;margin-bottom:14px;')
-  }, s.language === 'es' ? '¿Ya tienes cuenta? Iniciar sesión con Google →' : 'Already have an account? Sign in with Google →'), /*#__PURE__*/React.createElement("div", {
+  }, t('welcome')), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13.5px;color:#6e6e73;line-height:1.5;margin-bottom:14px;')
   }, t('profileQTitle')), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;flex-direction:column;gap:8px;margin-bottom:18px;')
@@ -2093,7 +2094,10 @@ function App() {
   }, p === 'allowance' ? t('profileAllowance') : p === 'salary' ? t('profileSalary') : t('profileFreelance')))), /*#__PURE__*/React.createElement("button", {
     onClick: () => setWelcomeStep(1),
     style: css('width:100%;padding:12px;background:#0071e3;color:#fff;border:none;border-radius:12px;font-size:14.5px;font-weight:600;cursor:pointer;')
-  }, t('continueLabel'))) : welcomeStep === 1 ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, t('continueLabel')), sbClient && /*#__PURE__*/React.createElement("button", {
+    onClick: signInWithGoogle,
+    style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#0071e3;font-size:12.5px;font-weight:700;cursor:pointer;padding:0;margin-top:14px;')
+  }, s.language === 'es' ? '¿Ya tienes cuenta? Iniciar sesión con Google →' : 'Already have an account? Sign in with Google →')) : welcomeStep === 1 ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:20px;font-weight:700;letter-spacing:-0.01em;margin-bottom:16px;')
   }, t('welcome')), s.incomeProfile === 'allowance' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13.5px;color:#6e6e73;margin-bottom:10px;')
@@ -3138,7 +3142,7 @@ function App() {
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:12px;')
   }, t('backupTransfer'), /*#__PURE__*/React.createElement(InfoTip, {
-    text: "Your data lives only on this device/browser. Export it here, then import that file on another device to bring your data along."
+    text: authUser ? s.language === 'es' ? 'Tu información ya se guarda en tu cuenta automáticamente. Esto es solo por si quieres un archivo extra.' : "Your data already saves to your account automatically. This is just in case you want an extra file." : s.language === 'es' ? 'Tu información vive solo en este dispositivo/navegador. Expórtala aquí, y luego impórtala en otro dispositivo para llevarla contigo.' : "Your data lives only on this device/browser. Export it here, then import that file on another device to bring your data along."
   })), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:8px;')
   }, /*#__PURE__*/React.createElement("button", {
