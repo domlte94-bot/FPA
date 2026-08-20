@@ -1113,6 +1113,10 @@ function App() {
     if (!state || !localLoaded) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
+      // If signed in, don't save anything (local or cloud) until the cloud
+      // backup has finished downloading. Otherwise the initial empty/default
+      // state could stamp a fresh timestamp and clobber the real cloud backup.
+      if (sbClient && authUser && !syncGuard.current.pulled) return;
       const toSave = buildPersistPayload(state);
       localUpdatedAtRef.current = toSave._updatedAt;
       storageAdapter.set(STORAGE_KEY, JSON.stringify(toSave)).catch(() => setStorageWarning('Could not save. Your changes might not persist.'));
