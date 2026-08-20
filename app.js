@@ -265,6 +265,11 @@ async function bioVerify(credId) {
     userVerification: 'required', timeout: 60000 } });
   return true;
 }
+function isBlankState(st) {
+  // A brand-new / not-yet-set-up device: no onboarding done and no real data.
+  // We must never let this state overwrite or out-timestamp a real cloud backup.
+  return !!st && !st.hasSeenWelcome && (!st.goals || st.goals.length === 0) && (!st.expenseCategories || st.expenseCategories.length === 0) && (!st.expenseLog || st.expenseLog.length === 0);
+}
 function defaultState() {
   const today = new Date();
   return {
@@ -1113,9 +1118,13 @@ function App() {
     if (!state || !localLoaded) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
+      // Never persist or timestamp a blank/not-set-up state. On a new device you
+      // are not logged in yet, so without this the empty default would stamp a
+      // fresh "now" and make your real cloud backup look older (and get clobbered
+      // + leave you stuck on the welcome screen).
+      if (isBlankState(state)) return;
       // If signed in, don't save anything (local or cloud) until the cloud
-      // backup has finished downloading. Otherwise the initial empty/default
-      // state could stamp a fresh timestamp and clobber the real cloud backup.
+      // backup has finished downloading.
       if (sbClient && authUser && !syncGuard.current.pulled) return;
       const toSave = buildPersistPayload(state);
       localUpdatedAtRef.current = toSave._updatedAt;
