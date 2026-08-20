@@ -2777,7 +2777,7 @@ function App() {
       padding: isDesktop ? '20px 24px 0' : 'calc(20px + env(safe-area-inset-top)) 20px 0'
     }
   }, s.tab === 'inicio' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: css('position:relative;background:linear-gradient(135deg,' + (homeSpentPct >= 100 ? '#ff3b30,#ff9500' : '#0071e3,#5ac8fa') + ');color:#fff;' + (isDesktop ? 'border-radius:20px;padding:20px;margin-bottom:16px;box-shadow:0 14px 34px rgba(0,113,227,0.22);' : 'margin:calc(-20px - env(safe-area-inset-top)) -20px 0 -20px;padding:calc(env(safe-area-inset-top) + 22px) 20px 26px;border-radius:0 0 28px 28px;box-shadow:0 10px 28px rgba(0,113,227,0.18);'))
+    style: css('position:relative;background:linear-gradient(135deg,' + (homeSpentPct >= 100 ? '#ff3b30,#ff9500' : '#0071e3,#5ac8fa') + ');color:#fff;' + (isDesktop ? 'border-radius:20px;padding:20px;margin-bottom:16px;box-shadow:0 14px 34px rgba(0,113,227,0.22);' : 'margin:calc(-20px - env(safe-area-inset-top)) -20px 0 -20px;padding:calc(env(safe-area-inset-top) + 58px) 20px 48px;border-radius:0 0 28px 28px;box-shadow:0 10px 28px rgba(0,113,227,0.18);'))
   }, !isDesktop && /*#__PURE__*/React.createElement("button", {
     onClick: () => setTab('settings'),
     style: css('position:absolute;top:calc(env(safe-area-inset-top) + 14px);right:16px;background:rgba(255,255,255,0.2);border:none;width:34px;height:34px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2;')
