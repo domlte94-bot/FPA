@@ -774,6 +774,25 @@ function App() {
       return !!(c && c.pinHash) && sessionStorage.getItem('pf_unlocked') !== '1';
     } catch (e) { return false; }
   });
+  useEffect(function () {
+    if (typeof document === 'undefined') return;
+    const LOCK_AFTER_MS = 90000;
+    let hiddenAt = 0;
+    function onVis() {
+      if (document.visibilityState === 'hidden') {
+        hiddenAt = Date.now();
+      } else if (document.visibilityState === 'visible') {
+        const c = readLock();
+        if (c && c.pinHash && hiddenAt && Date.now() - hiddenAt > LOCK_AFTER_MS) {
+          try { sessionStorage.removeItem('pf_unlocked'); } catch (e) {}
+          setLocked(true);
+        }
+        hiddenAt = 0;
+      }
+    }
+    document.addEventListener('visibilitychange', onVis);
+    return function () { document.removeEventListener('visibilitychange', onVis); };
+  }, []);
   const [selectedPresets, setSelectedPresets] = useState([]);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const askConfirm = (message, onYes) => setConfirmDialog({
