@@ -225,6 +225,46 @@ function iconPathFor(key) {
   const f = ICONS.concat(MORE_ICONS).find(i => i.key === key);
   return f ? f.path : ICONS[0].path;
 }
+async function sha256Hex(str) {
+  const enc = new TextEncoder().encode(str);
+  const buf = await crypto.subtle.digest('SHA-256', enc);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+function readLock() {
+  try { const raw = localStorage.getItem('pf_lock_v1'); return raw ? JSON.parse(raw) : null; } catch (e) { return null; }
+}
+function writeLock(v) {
+  try { if (v) localStorage.setItem('pf_lock_v1', JSON.stringify(v)); else localStorage.removeItem('pf_lock_v1'); } catch (e) {}
+}
+function b64FromBuf(buf) {
+  let str = ''; const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
+  return btoa(str);
+}
+function bufFromB64(b64) {
+  const bin = atob(b64); const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
+async function bioSupported() {
+  try { return !!(window.PublicKeyCredential && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()); } catch (e) { return false; }
+}
+async function bioRegister(userId) {
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const cred = await navigator.credentials.create({ publicKey: {
+    challenge: challenge, rp: { name: 'Financial Planner' },
+    user: { id: new TextEncoder().encode(userId || 'user'), name: userId || 'user', displayName: userId || 'user' },
+    pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+    authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required' }, timeout: 60000 } });
+  return b64FromBuf(cred.rawId);
+}
+async function bioVerify(credId) {
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  await navigator.credentials.get({ publicKey: {
+    challenge: challenge, allowCredentials: [{ type: 'public-key', id: bufFromB64(credId) }],
+    userVerification: 'required', timeout: 60000 } });
+  return true;
+}
 function defaultState() {
   const today = new Date();
   return {
@@ -580,6 +620,120 @@ function GoalIconGlyph({
     }
   }, icon || '⭐');
 }
+function LockScreen(props) {
+  const lang = props.lang;
+  const cfg = props.config;
+  const [pin, setPin] = useState('');
+  const [err, setErr] = useState(false);
+  const [bioAvail, setBioAvail] = useState(false);
+  useEffect(function () {
+    let ok = true;
+    bioSupported().then(function (v) { if (ok) setBioAvail(v && !!(cfg && cfg.bio && cfg.credId)); });
+    return function () { ok = false; };
+  }, []);
+  function submit(next) {
+    sha256Hex(next + (cfg.salt || '')).then(function (h) {
+      if (h === cfg.pinHash) { props.onUnlock(); }
+      else { setErr(true); setPin(''); setTimeout(function () { setErr(false); }, 700); }
+    });
+  }
+  function press(d) { if (pin.length >= 4) return; const next = pin + d; setPin(next); if (next.length === 4) submit(next); }
+  function back() { setPin(pin.slice(0, -1)); }
+  function doBio() { bioVerify(cfg.credId).then(function () { props.onUnlock(); }).catch(function () { setErr(true); setTimeout(function () { setErr(false); }, 700); }); }
+  const keyStyle = { width: 70, height: 70, borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,0.18)', color: '#fff', fontSize: 26, fontWeight: 600, cursor: 'pointer' };
+  function keyBtn(d) { return React.createElement('button', { key: d, onClick: function () { press(d); }, style: keyStyle }, d); }
+  return React.createElement('div', { style: css('position:fixed;inset:0;z-index:200;background:linear-gradient(135deg,#0071e3,#5ac8fa);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;color:#fff;text-align:center;') },
+    React.createElement('div', { style: css('font-size:34px;margin-bottom:8px;') }, '\uD83D\uDD12'),
+    React.createElement('div', { style: css('font-size:19px;font-weight:700;margin-bottom:4px;') }, lang === 'es' ? 'Ingresa tu PIN' : 'Enter your PIN'),
+    React.createElement('div', { style: css('font-size:13px;opacity:0.85;margin-bottom:24px;') }, lang === 'es' ? 'Para proteger tu informaci\u00F3n' : 'To protect your information'),
+    React.createElement('div', { style: { display: 'flex', gap: 14, marginBottom: 26 } },
+      [0, 1, 2, 3].map(function (i) { return React.createElement('div', { key: i, style: { width: 14, height: 14, borderRadius: '50%', background: i < pin.length ? '#fff' : 'rgba(255,255,255,0.35)' } }); })
+    ),
+    React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 70px)', gap: 16, justifyContent: 'center' } },
+      ['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(function (d) { return keyBtn(d); }).concat([
+        bioAvail ? React.createElement('button', { key: 'bio', onClick: doBio, style: keyStyle }, '\uD83D\uDE42') : React.createElement('div', { key: 'sp' }),
+        keyBtn('0'),
+        React.createElement('button', { key: 'bk', onClick: back, style: keyStyle }, '\u232B')
+      ])
+    ),
+    err && React.createElement('div', { style: css('font-size:14px;margin-top:18px;font-weight:600;') }, lang === 'es' ? 'PIN incorrecto' : 'Wrong PIN'),
+    React.createElement('button', { onClick: props.onSignOut, style: css('margin-top:26px;background:none;border:none;color:#fff;opacity:0.85;font-size:13px;text-decoration:underline;cursor:pointer;') }, lang === 'es' ? 'Cerrar sesi\u00F3n' : 'Sign out')
+  );
+}
+function SecuritySettings(props) {
+  const lang = props.lang;
+  const cfg = props.config;
+  const hasPin = !!(cfg && cfg.pinHash);
+  const [mode, setMode] = useState('idle');
+  const [entry, setEntry] = useState('');
+  const [firstPin, setFirstPin] = useState('');
+  const [bioAvail, setBioAvail] = useState(false);
+  const [msg, setMsg] = useState('');
+  useEffect(function () { let ok = true; bioSupported().then(function (v) { if (ok) setBioAvail(v); }); return function () { ok = false; }; }, []);
+  function resetEntry() { setMode('idle'); setEntry(''); setFirstPin(''); }
+  function press(d) {
+    if (entry.length >= 4) return;
+    const next = entry + d; setEntry(next);
+    if (next.length < 4) return;
+    if (mode === 'new') { setFirstPin(next); setEntry(''); setMode('confirm'); }
+    else if (mode === 'confirm') {
+      if (next === firstPin) {
+        const salt = String(Date.now()) + String(Math.floor(1000 + (Date.now() % 9000)));
+        sha256Hex(next + salt).then(function (h) {
+          const nc = { pinHash: h, salt: salt, bio: false, credId: null };
+          writeLock(nc); props.setConfig(nc);
+          try { sessionStorage.setItem('pf_unlocked', '1'); } catch (e) {}
+          setMsg(lang === 'es' ? 'PIN activado' : 'PIN enabled'); resetEntry();
+        });
+      } else { setMsg(lang === 'es' ? 'No coincidi\u00F3, intenta de nuevo' : 'Did not match, try again'); setFirstPin(''); setEntry(''); setMode('new'); }
+    }
+  }
+  function back() { setEntry(entry.slice(0, -1)); }
+  function removePin() { writeLock(null); props.setConfig(null); setMsg(lang === 'es' ? 'PIN eliminado' : 'PIN removed'); resetEntry(); }
+  function toggleBio() {
+    if (!cfg) return;
+    if (cfg.bio) { const c = Object.assign({}, cfg, { bio: false, credId: null }); writeLock(c); props.setConfig(c); setMsg(lang === 'es' ? 'Desactivado' : 'Disabled'); }
+    else { bioRegister(props.userId).then(function (id) { const c = Object.assign({}, cfg, { bio: true, credId: id }); writeLock(c); props.setConfig(c); setMsg(lang === 'es' ? 'Face ID / huella activado' : 'Face ID / fingerprint enabled'); }).catch(function () { setMsg(lang === 'es' ? 'No se pudo activar' : 'Could not enable'); }); }
+  }
+  const keyStyle = { width: 64, height: 64, borderRadius: '50%', border: 'none', background: '#f5f5f7', color: '#1d1d1f', fontSize: 24, fontWeight: 600, cursor: 'pointer' };
+  function keyBtn(d) { return React.createElement('button', { key: d, onClick: function () { press(d); }, style: keyStyle }, d); }
+  if (mode === 'new' || mode === 'confirm') {
+    return React.createElement('div', { style: css('background:#fff;border-radius:16px;padding:22px;text-align:center;') },
+      React.createElement('div', { style: css('font-size:15px;font-weight:700;margin-bottom:6px;') }, mode === 'new' ? (lang === 'es' ? 'Crea un PIN de 4 d\u00EDgitos' : 'Create a 4-digit PIN') : (lang === 'es' ? 'Confirma tu PIN' : 'Confirm your PIN')),
+      React.createElement('div', { style: { display: 'flex', gap: 12, justifyContent: 'center', margin: '18px 0 22px' } },
+        [0, 1, 2, 3].map(function (i) { return React.createElement('div', { key: i, style: { width: 13, height: 13, borderRadius: '50%', background: i < entry.length ? '#0071e3' : '#e5e5ea' } }); })
+      ),
+      React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 64px)', gap: 12, justifyContent: 'center' } },
+        ['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(function (d) { return keyBtn(d); }).concat([
+          React.createElement('div', { key: 'sp' }), keyBtn('0'),
+          React.createElement('button', { key: 'bk', onClick: back, style: keyStyle }, '\u232B')
+        ])
+      ),
+      React.createElement('button', { onClick: resetEntry, style: css('margin-top:18px;background:none;border:none;color:#86868b;font-size:13px;cursor:pointer;') }, lang === 'es' ? 'Cancelar' : 'Cancel')
+    );
+  }
+  return React.createElement('div', null,
+    React.createElement('div', { style: css('background:#fff;border-radius:16px;padding:18px;margin-bottom:12px;') },
+      React.createElement('div', { style: css('font-size:14px;font-weight:700;color:#1d1d1f;margin-bottom:4px;') }, hasPin ? (lang === 'es' ? 'Bloqueo con PIN activado' : 'PIN lock is on') : (lang === 'es' ? 'Bloqueo con PIN' : 'PIN lock')),
+      React.createElement('div', { style: css('font-size:12.5px;color:#86868b;line-height:1.4;margin-bottom:14px;') }, lang === 'es' ? 'Pide un PIN de 4 d\u00EDgitos cada vez que abres la app.' : 'Ask for a 4-digit PIN every time you open the app.'),
+      !hasPin ? React.createElement('button', { onClick: function () { setMsg(''); setMode('new'); setEntry(''); setFirstPin(''); }, style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:11px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;') }, lang === 'es' ? 'Crear PIN' : 'Set up PIN')
+      : React.createElement('div', { style: { display: 'flex', gap: 10 } },
+          React.createElement('button', { onClick: function () { setMsg(''); setMode('new'); setEntry(''); setFirstPin(''); }, style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;padding:11px;border-radius:10px;font-size:13.5px;font-weight:600;cursor:pointer;') }, lang === 'es' ? 'Cambiar PIN' : 'Change PIN'),
+          React.createElement('button', { onClick: removePin, style: css('flex:1;background:#fff;color:#ff3b30;border:1px solid #ffd4d1;padding:11px;border-radius:10px;font-size:13.5px;font-weight:600;cursor:pointer;') }, lang === 'es' ? 'Quitar PIN' : 'Remove PIN')
+        )
+    ),
+    hasPin && bioAvail && React.createElement('div', { style: css('background:#fff;border-radius:16px;padding:18px;display:flex;align-items:center;justify-content:space-between;gap:12px;') },
+      React.createElement('div', null,
+        React.createElement('div', { style: css('font-size:14px;font-weight:700;color:#1d1d1f;') }, lang === 'es' ? 'Face ID / Huella' : 'Face ID / Fingerprint'),
+        React.createElement('div', { style: css('font-size:12.5px;color:#86868b;margin-top:2px;') }, lang === 'es' ? 'Desbloquea sin escribir el PIN' : 'Unlock without typing the PIN')
+      ),
+      React.createElement('button', { onClick: toggleBio, style: { width: 46, height: 27, borderRadius: 14, background: cfg && cfg.bio ? '#0071e3' : '#e5e5ea', border: 'none', cursor: 'pointer', position: 'relative', padding: 0, flex: 'none' } },
+        React.createElement('span', { style: { position: 'absolute', top: 2, left: cfg && cfg.bio ? 21 : 2, width: 23, height: 23, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,0.25)' } })
+      )
+    ),
+    msg && React.createElement('div', { style: css('font-size:12.5px;color:#0071e3;font-weight:600;margin-top:12px;text-align:center;') }, msg)
+  );
+}
 function App() {
   const [state, setState] = useState(null);
   const [storageWarning, setStorageWarning] = useState('');
@@ -613,6 +767,13 @@ function App() {
   const [allocatingLeftover, setAllocatingLeftover] = useState(false);
   const [welcomeStep, setWelcomeStep] = useState(0);
   const [settingsView, setSettingsView] = useState('menu');
+  const [lockCfg, setLockCfg] = useState(function () { return readLock(); });
+  const [locked, setLocked] = useState(function () {
+    try {
+      const c = readLock();
+      return !!(c && c.pinHash) && sessionStorage.getItem('pf_unlocked') !== '1';
+    } catch (e) { return false; }
+  });
   const [selectedPresets, setSelectedPresets] = useState([]);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const askConfirm = (message, onYes) => setConfirmDialog({
@@ -896,6 +1057,8 @@ function App() {
           const merged = Object.assign(defaultState(), loaded);
           if (typeof window !== 'undefined' && window.location && window.location.search.includes('action=logExpense')) {
             merged.tab = 'gastos';
+          } else {
+            merged.tab = 'inicio';
           }
           localUpdatedAtRef.current = loaded._updatedAt || 0;
           setState(merged);
@@ -1000,7 +1163,8 @@ function App() {
         const cloudUpdatedAtMs = data.data._updatedAt || new Date(data.updated_at).getTime();
         if (cloudUpdatedAtMs > localUpdatedAtRef.current) {
           setState(Object.assign(defaultState(), data.data, {
-            hasSeenWelcome: true
+            hasSeenWelcome: true,
+            tab: typeof window !== 'undefined' && window.location && window.location.search.includes('action=logExpense') ? 'gastos' : 'inicio'
           }));
           localUpdatedAtRef.current = cloudUpdatedAtMs;
         }
@@ -2211,6 +2375,20 @@ function App() {
       }
     }, label));
   };
+  if (locked && lockCfg && lockCfg.pinHash) {
+    return /*#__PURE__*/React.createElement(LockScreen, {
+      lang: s.language,
+      config: lockCfg,
+      onUnlock: function () {
+        try { sessionStorage.setItem('pf_unlocked', '1'); } catch (e) {}
+        setLocked(false);
+      },
+      onSignOut: function () {
+        try { sessionStorage.removeItem('pf_unlocked'); } catch (e) {}
+        signOutUser();
+      }
+    });
+  }
   return /*#__PURE__*/React.createElement("div", {
     style: css('min-height:100vh;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",Inter,system-ui,sans-serif;color:#1d1d1f;')
   }, confirmDialog && /*#__PURE__*/React.createElement("div", {
@@ -3134,7 +3312,7 @@ function App() {
     d: "M15 18l-6-6 6-6"
   }))), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;')
-  }, settingsView === 'menu' ? t('settings') : settingsView === 'profile' ? t('profileMenu') : settingsView === 'reports' ? t('reportsMenu') : settingsView === 'account' ? s.language === 'es' ? 'Cuenta' : 'Account' : t('moreMenu'))), settingsView === 'menu' && /*#__PURE__*/React.createElement("div", {
+  }, settingsView === 'menu' ? t('settings') : settingsView === 'profile' ? t('profileMenu') : settingsView === 'reports' ? t('reportsMenu') : settingsView === 'security' ? s.language === 'es' ? 'Seguridad' : 'Security' : settingsView === 'account' ? s.language === 'es' ? 'Cuenta' : 'Account' : t('moreMenu'))), settingsView === 'menu' && /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;flex-direction:column;gap:10px;')
   }, [{
     key: 'profile',
@@ -3148,6 +3326,10 @@ function App() {
     key: 'account',
     label: s.language === 'es' ? 'Cuenta' : 'Account',
     desc: authUser ? authUser.email : s.language === 'es' ? 'Inicia sesión para metas compartidas' : 'Sign in for shared goals'
+  }, {
+    key: 'security',
+    label: s.language === 'es' ? 'Seguridad' : 'Security',
+    desc: lockCfg && lockCfg.pinHash ? s.language === 'es' ? 'Bloqueo con PIN activado' : 'PIN lock is on' : s.language === 'es' ? 'Protege la app con un PIN' : 'Protect the app with a PIN'
   }, {
     key: 'more',
     label: t('moreMenu'),
@@ -3171,7 +3353,12 @@ function App() {
     strokeLinejoin: "round"
   }, /*#__PURE__*/React.createElement("path", {
     d: "M9 18l6-6-6-6"
-  }))))), settingsView === 'account' && /*#__PURE__*/React.createElement("div", null, authLoading ? /*#__PURE__*/React.createElement("div", {
+  }))))), settingsView === 'security' && /*#__PURE__*/React.createElement(SecuritySettings, {
+    lang: s.language,
+    config: lockCfg,
+    setConfig: setLockCfg,
+    userId: authUser ? authUser.email : 'local'
+  }), settingsView === 'account' && /*#__PURE__*/React.createElement("div", null, authLoading ? /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;color:#86868b;')
   }, s.language === 'es' ? 'Cargando…' : 'Loading…') : authUser ? /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:16px;padding:20px;')
