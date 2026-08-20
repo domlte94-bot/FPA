@@ -2777,13 +2777,15 @@ function App() {
       padding: isDesktop ? '20px 24px 0' : 'calc(20px + env(safe-area-inset-top)) 20px 0'
     }
   }, s.tab === 'inicio' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: css('position:relative;background:linear-gradient(135deg,' + (homeSpentPct >= 100 ? '#ff3b30,#ff9500' : '#0071e3,#5ac8fa') + ');color:#fff;' + (isDesktop ? 'border-radius:20px;padding:20px;margin-bottom:16px;box-shadow:0 14px 34px rgba(0,113,227,0.22);' : 'margin:calc(-20px - env(safe-area-inset-top)) -20px 16px -20px;padding:calc(env(safe-area-inset-top) + 22px) 20px 26px;border-radius:0 0 28px 28px;box-shadow:0 10px 28px rgba(0,113,227,0.18);'))
+    style: css('position:relative;background:linear-gradient(135deg,' + (homeSpentPct >= 100 ? '#ff3b30,#ff9500' : '#0071e3,#5ac8fa') + ');color:#fff;' + (isDesktop ? 'border-radius:20px;padding:20px;margin-bottom:16px;box-shadow:0 14px 34px rgba(0,113,227,0.22);' : 'margin:calc(-20px - env(safe-area-inset-top)) -20px 0 -20px;padding:calc(env(safe-area-inset-top) + 22px) 20px 26px;border-radius:0 0 28px 28px;box-shadow:0 10px 28px rgba(0,113,227,0.18);'))
   }, !isDesktop && /*#__PURE__*/React.createElement("button", {
     onClick: () => setTab('settings'),
     style: css('position:absolute;top:calc(env(safe-area-inset-top) + 14px);right:16px;background:rgba(255,255,255,0.2);border:none;width:34px;height:34px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2;')
   }, /*#__PURE__*/React.createElement("svg", {
     viewBox: "0 0 24 24", width: "18", height: "18", fill: "none", stroke: "#fff", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round"
   }, /*#__PURE__*/React.createElement("circle", { cx: "12", cy: "12", r: "3" }), /*#__PURE__*/React.createElement("path", { d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" }))), /*#__PURE__*/React.createElement("div", {
+    style: css('background:rgba(255,255,255,0.14);border-radius:20px;padding:18px 18px 20px;')
+  }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12px;font-weight:600;opacity:0.85;text-transform:uppercase;letter-spacing:0.03em;')
   }, t('spentSoFar')), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -2817,7 +2819,9 @@ function App() {
       fontWeight: 600,
       marginTop: 12
     }
-  }, homeSpendHeadline)), s.pendingLeftover && /*#__PURE__*/React.createElement("div", {
+  }, homeSpendHeadline))), /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;margin:-26px -20px 0 -20px;padding:28px 20px calc(env(safe-area-inset-bottom) + 90px);border-radius:28px 28px 0 0;position:relative;z-index:1;min-height:74vh;')
+  }, s.pendingLeftover && /*#__PURE__*/React.createElement("div", {
     style: css('background:linear-gradient(135deg,#0071e3,#34c759);border-radius:18px;padding:18px;color:#fff;margin-bottom:16px;box-shadow:0 12px 30px rgba(0,113,227,0.25);')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;opacity:0.9;')
@@ -2892,7 +2896,7 @@ function App() {
     style: css('display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:22px;')
   }, /*#__PURE__*/React.createElement("div", {
     onClick: () => setTab('incomeHistory'),
-    style: css('background:#fff;border-radius:14px;padding:13px;cursor:pointer;')
+    style: css('background:transparent;border-radius:14px;padding:14px 2px;cursor:pointer;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;justify-content:space-between;align-items:center;')
   }, /*#__PURE__*/React.createElement("div", {
@@ -2912,7 +2916,7 @@ function App() {
     },
     style: css('width:100%;margin-top:8px;background:#0071e3;color:#fff;border:none;padding:7px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;')
   }, "✓ I got paid (", fmt(s.income), ")")), /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border-radius:14px;padding:13px;')
+    style: css('background:transparent;border-radius:14px;padding:14px 2px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
   }, t('availableMonth'), /*#__PURE__*/React.createElement(InfoTip, {
@@ -2920,7 +2924,7 @@ function App() {
   })), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
   }, fmt(Math.max(ctx.boostedAvailable, 0)))), /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border-radius:14px;padding:13px;')
+    style: css('background:transparent;border-radius:14px;padding:14px 2px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
   }, t('totalSaved')), /*#__PURE__*/React.createElement("div", {
@@ -2928,7 +2932,7 @@ function App() {
   }, fmt(totalCurrent)), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:9.5px;color:#86868b;margin-top:2px;')
   }, overallPct.toFixed(0), "% of goal")), /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border-radius:14px;padding:13px;')
+    style: css('background:transparent;border-radius:14px;padding:14px 2px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
   }, t('totalInvested')), /*#__PURE__*/React.createElement("div", {
@@ -2936,7 +2940,7 @@ function App() {
   }, fmt(investmentTotal)), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:9.5px;color:#86868b;margin-top:2px;')
   }, s.investments.length, " ", s.investments.length === 1 ? 'investment' : 'investments'))), donutLegend.length > 0 && /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:22px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;')
+    style: css('background:#fff;border:1px solid #eef0f2;border-radius:16px;padding:16px;margin-bottom:22px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;')
   }, /*#__PURE__*/React.createElement("canvas", {
     ref: donutCanvasRef,
     width: "140",
@@ -2981,7 +2985,7 @@ function App() {
         selectGoal(g.id);
         setTab('metas');
       },
-      style: css('background:#fff;border-radius:18px;padding:18px 18px 16px;margin-bottom:12px;cursor:pointer;')
+      style: css('background:#fff;border:1px solid #eef0f2;border-radius:18px;padding:18px 18px 16px;margin-bottom:12px;cursor:pointer;')
     }, /*#__PURE__*/React.createElement("div", {
       style: css('display:flex;align-items:center;gap:12px;margin-bottom:12px;')
     }, /*#__PURE__*/React.createElement("div", {
@@ -3022,7 +3026,7 @@ function App() {
     })), !v.isCompleted && totalPart > 0 && /*#__PURE__*/React.createElement("div", {
       style: css('display:flex;justify-content:space-between;margin-top:10px;font-size:12.5px;color:#86868b;')
     }, /*#__PURE__*/React.createElement("span", null, fmt(salaryPart), "/mo (", salaryPct.toFixed(0), "%)"), /*#__PURE__*/React.createElement("span", null, fmt(extraPart), "/mo (", extraPct.toFixed(0), "%)")));
-  })), s.tab === 'incomeHistory' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }))), s.tab === 'incomeHistory' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:center;gap:10px;margin-bottom:16px;')
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => setTab('inicio'),
