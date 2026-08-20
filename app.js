@@ -2776,29 +2776,14 @@ function App() {
       margin: '0 auto',
       padding: isDesktop ? '20px 24px 0' : 'calc(20px + env(safe-area-inset-top)) 20px 0'
     }
-  }, s.tab === 'inicio' && /*#__PURE__*/React.createElement(React.Fragment, null, !isDesktop && /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;justify-content:flex-end;margin-bottom:4px;')
-  }, /*#__PURE__*/React.createElement("button", {
+  }, s.tab === 'inicio' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: css('position:relative;background:linear-gradient(135deg,' + (homeSpentPct >= 100 ? '#ff3b30,#ff9500' : '#0071e3,#5ac8fa') + ');color:#fff;' + (isDesktop ? 'border-radius:20px;padding:20px;margin-bottom:16px;box-shadow:0 14px 34px rgba(0,113,227,0.22);' : 'margin:calc(-20px - env(safe-area-inset-top)) -20px 16px -20px;padding:calc(env(safe-area-inset-top) + 22px) 20px 26px;border-radius:0 0 28px 28px;box-shadow:0 10px 28px rgba(0,113,227,0.18);'))
+  }, !isDesktop && /*#__PURE__*/React.createElement("button", {
     onClick: () => setTab('settings'),
-    style: css('background:#fff;border:none;width:34px;height:34px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;')
+    style: css('position:absolute;top:calc(env(safe-area-inset-top) + 14px);right:16px;background:rgba(255,255,255,0.2);border:none;width:34px;height:34px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2;')
   }, /*#__PURE__*/React.createElement("svg", {
-    viewBox: "0 0 24 24",
-    width: "18",
-    height: "18",
-    fill: "none",
-    stroke: "#6e6e73",
-    strokeWidth: "2",
-    strokeLinecap: "round",
-    strokeLinejoin: "round"
-  }, /*#__PURE__*/React.createElement("circle", {
-    cx: "12",
-    cy: "12",
-    r: "3"
-  }), /*#__PURE__*/React.createElement("path", {
-    d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
-  })))), /*#__PURE__*/React.createElement("div", {
-    style: css('background:linear-gradient(135deg,' + (homeSpentPct >= 100 ? '#ff3b30,#ff9500' : '#0071e3,#5ac8fa') + ');border-radius:20px;padding:20px;margin-bottom:16px;color:#fff;box-shadow:0 14px 34px rgba(0,113,227,0.22);')
-  }, /*#__PURE__*/React.createElement("div", {
+    viewBox: "0 0 24 24", width: "18", height: "18", fill: "none", stroke: "#fff", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round"
+  }, /*#__PURE__*/React.createElement("circle", { cx: "12", cy: "12", r: "3" }), /*#__PURE__*/React.createElement("path", { d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" }))), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12px;font-weight:600;opacity:0.85;text-transform:uppercase;letter-spacing:0.03em;')
   }, t('spentSoFar')), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -3731,42 +3716,8 @@ function App() {
     onClick: resetApp,
     style: css('width:100%;background:#fff2ef;color:#ff3b30;border:none;padding:10px;border-radius:10px;font-size:12.5px;font-weight:600;cursor:pointer;')
   }, t('resetApp'))))), s.tab === 'metas' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: css('background:linear-gradient(135deg,#0071e3,#5ac8fa);border-radius:20px;padding:20px;margin-bottom:16px;color:#fff;box-shadow:0 14px 34px rgba(0,113,227,0.22);')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:12px;font-weight:600;opacity:0.85;text-transform:uppercase;letter-spacing:0.03em;')
-  }, s.language === 'es' ? 'ahorrado en total' : 'total saved'), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 32,
-      fontWeight: 800,
-      letterSpacing: '-0.02em',
-      marginTop: 4
-    }
-  }, fmt(totalCurrent)), /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;align-items:center;gap:10px;margin-top:14px;')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('flex:1;height:8px;background:rgba(255,255,255,0.3);border-radius:4px;overflow:hidden;')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: Math.min(overallPct, 100).toFixed(1) + '%',
-      height: '100%',
-      background: '#fff',
-      borderRadius: 4
-    }
-  })), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 13,
-      fontWeight: 700,
-      flex: 'none'
-    }
-  }, Math.round(Math.min(overallPct, 999)), "%")), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:11.5px;opacity:0.85;margin-top:6px;')
-  }, (s.language === 'es' ? 'de ' : 'of ') + fmt(totalTarget) + (s.language === 'es' ? ' meta' : ' target')), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 14,
-      fontWeight: 600,
-      marginTop: 12
-    }
-  }, s.language === 'es' ? 'Repartido entre tus metas.' : 'Split across your goals.')), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px;')
+  }, t('goals')), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;color:#86868b;margin-bottom:16px;')
   }, "Set savings targets and see how your money is split between them."), s.goals.length > 0 && (() => {
     const total = s.goals.reduce((a, g) => a + buildGoalView(g, false).monthlyBoosted, 0);
