@@ -229,7 +229,7 @@ function defaultState() {
   const today = new Date();
   return {
     tab: 'inicio',
-    income: 0,
+    income: 3173,
     payFrequency: 'monthly',
     nextPaydayDate: '',
     paycheckLog: [],
@@ -599,7 +599,14 @@ function App() {
   const [showColorPopup, setShowColorPopup] = useState(false);
   const [showIconPopup, setShowIconPopup] = useState(false);
   const [showReminderPopup, setShowReminderPopup] = useState(false);
+  const [editingGoalMeta, setEditingGoalMeta] = useState(false);
   const [showAddPaycheck, setShowAddPaycheck] = useState(false);
+  const [showAddSavingsEntry, setShowAddSavingsEntry] = useState(false);
+  const [newSavingsMonth, setNewSavingsMonth] = useState(new Date().getMonth());
+  const [newSavingsYear, setNewSavingsYear] = useState(new Date().getFullYear());
+  const [newSavingsAmount, setNewSavingsAmount] = useState('');
+  const [editingSavingsEntryId, setEditingSavingsEntryId] = useState(null);
+  const [editingSavingsAmount, setEditingSavingsAmount] = useState('');
   const [newPaycheckDate, setNewPaycheckDate] = useState('');
   const [newPaycheckAmount, setNewPaycheckAmount] = useState('');
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
@@ -649,10 +656,7 @@ function App() {
     }
     setAuthError('');
     sbClient.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: window.location.origin + window.location.pathname
-      }
+      provider: 'google'
     }).then(({
       error
     }) => {
@@ -662,6 +666,72 @@ function App() {
   const signOutUser = () => {
     if (!sbClient) return;
     sbClient.auth.signOut();
+  };
+  const [authMode, setAuthMode] = useState('login'); // 'login' | 'signup'
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authInfo, setAuthInfo] = useState('');
+  const signInWithEmail = () => {
+    if (!sbClient) {
+      setAuthError('Supabase not loaded');
+      return;
+    }
+    if (!authEmail || !authPassword) {
+      setAuthError('Enter your email and password.');
+      return;
+    }
+    setAuthError('');
+    setAuthInfo('');
+    setAuthBusy(true);
+    sbClient.auth.signInWithPassword({
+      email: authEmail,
+      password: authPassword
+    }).then(({
+      error
+    }) => {
+      setAuthBusy(false);
+      if (error) setAuthError(error.message);
+    });
+  };
+  const signUpWithEmail = () => {
+    if (!sbClient) {
+      setAuthError('Supabase not loaded');
+      return;
+    }
+    if (!authEmail || !authPassword) {
+      setAuthError('Enter an email and password.');
+      return;
+    }
+    if (authPassword.length < 6) {
+      setAuthError('Password must be at least 6 characters.');
+      return;
+    }
+    setAuthError('');
+    setAuthInfo('');
+    setAuthBusy(true);
+    sbClient.auth.signUp({
+      email: authEmail,
+      password: authPassword,
+      options: {
+        emailRedirectTo: window.location.origin + window.location.pathname
+      }
+    }).then(({
+      data,
+      error
+    }) => {
+      setAuthBusy(false);
+      if (error) {
+        setAuthError(error.message);
+        return;
+      }
+      if (data && data.session) {
+        // email confirmations disabled on this project -> signed in immediately
+        return;
+      }
+      setAuthInfo('Check your email to confirm your account, then log in.');
+      setAuthMode('login');
+    });
   };
   const lineCanvasRef = useRef(null);
   const shortcutFocusDone = useRef(false);
@@ -895,6 +965,7 @@ function App() {
   const [cloudBackupInfo, setCloudBackupInfo] = useState(null); // {updatedAt} | 'none' | null
   const [isDesktop, setIsDesktop] = useState(typeof window !== 'undefined' && window.innerWidth >= 880);
   const [bypassAuthGate, setBypassAuthGate] = useState(false);
+  const [showLoginFromWelcome, setShowLoginFromWelcome] = useState(false);
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const onResize = () => setIsDesktop(window.innerWidth >= 880);
@@ -1243,7 +1314,7 @@ function App() {
           id: Date.now(),
           label,
           amount: amt
-        }].concat(g.savingsLog || []).slice(0, 12)
+        }].concat(g.savingsLog || []).slice(0, 60)
       } : g)
     }));
     setDepositAmount('');
@@ -1260,6 +1331,36 @@ function App() {
       };
     })
   }));
+  const updateSavingsLogEntryAmount = (goalId, entryId, newAmount) => patch(s => ({
+    goals: s.goals.map(g => {
+      if (g.id !== goalId) return g;
+      const entry = (g.savingsLog || []).find(e => e.id === entryId);
+      if (!entry) return g;
+      const delta = newAmount - entry.amount;
+      return {
+        ...g,
+        current: Math.max((g.current || 0) + delta, 0),
+        savingsLog: g.savingsLog.map(e => e.id === entryId ? {
+          ...e,
+          amount: newAmount
+        } : e)
+      };
+    })
+  }));
+  const addBackdatedSavingsEntry = (goalId, label, amount) => {
+    if (!label || !amount) return;
+    patch(s => ({
+      goals: s.goals.map(g => g.id === goalId ? {
+        ...g,
+        current: (g.current || 0) + amount,
+        savingsLog: [{
+          id: Date.now(),
+          label,
+          amount
+        }].concat(g.savingsLog || []).slice(0, 60)
+      } : g)
+    }));
+  };
   const addHustle = () => patch(s => ({
     hustles: s.hustles.concat([{
       id: Date.now(),
@@ -1698,7 +1799,8 @@ function App() {
   }
   const s = state;
   const t = key => STRINGS[s.language] && STRINGS[s.language][key] || STRINGS.en[key] || key;
-  if (sbClient && s.hasSeenWelcome && !authUser && !authLoading && !bypassAuthGate) {
+  if (sbClient && (s.hasSeenWelcome || showLoginFromWelcome) && !authUser && !authLoading && !bypassAuthGate) {
+    const isSignup = authMode === 'signup';
     return /*#__PURE__*/React.createElement("div", {
       style: {
         minHeight: '100vh',
@@ -1716,58 +1818,63 @@ function App() {
         padding: '28px 24px',
         maxWidth: 360,
         width: '100%',
-        boxShadow: '0 30px 70px rgba(0,0,0,0.2)',
-        textAlign: 'center'
+        boxShadow: '0 30px 70px rgba(0,0,0,0.2)'
       }
     }, /*#__PURE__*/React.createElement("div", {
       style: {
-        width: 52,
-        height: 52,
-        borderRadius: 16,
-        background: 'linear-gradient(135deg,#0071e3,#5ac8fa)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        margin: '0 auto 18px'
+        fontSize: 26,
+        fontWeight: 800,
+        marginBottom: 6,
+        color: '#1d1d1f',
+        letterSpacing: '-0.02em'
       }
-    }, /*#__PURE__*/React.createElement("svg", {
-      viewBox: "0 0 24 24",
-      width: "26",
-      height: "26",
-      fill: "none",
-      stroke: "#fff",
-      strokeWidth: "2",
-      strokeLinecap: "round",
-      strokeLinejoin: "round"
-    }, /*#__PURE__*/React.createElement("path", {
-      d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"
-    }), /*#__PURE__*/React.createElement("circle", {
-      cx: "9",
-      cy: "7",
-      r: "4"
-    }), /*#__PURE__*/React.createElement("path", {
-      d: "M22 21v-2a4 4 0 0 0-3-3.87"
-    }), /*#__PURE__*/React.createElement("path", {
-      d: "M16 3.13a4 4 0 0 1 0 7.75"
-    }))), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 19,
-        fontWeight: 700,
-        marginBottom: 8,
-        color: '#1d1d1f'
-      }
-    }, s.language === 'es' ? 'Inicia sesión para continuar' : 'Sign in to continue'), /*#__PURE__*/React.createElement("div", {
+    }, isSignup ? s.language === 'es' ? 'Crear cuenta' : 'Sign up' : s.language === 'es' ? 'Iniciar sesión' : 'Log in'), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 13,
         color: '#6e6e73',
-        lineHeight: 1.5,
         marginBottom: 22
       }
-    }, s.language === 'es' ? 'Necesitas iniciar sesión para ver tu información.' : 'You need to sign in to see your information.'), /*#__PURE__*/React.createElement("button", {
-      onClick: signInWithGoogle,
+    }, isSignup ? s.language === 'es' ? 'Crea una cuenta para guardar tus metas.' : 'Create an account to save your goals.' : s.language === 'es' ? 'Inicia sesión para ver tu información.' : 'Log in to see your information.'), /*#__PURE__*/React.createElement("input", {
+      type: "email",
+      placeholder: s.language === 'es' ? 'Correo' : 'Email',
+      value: authEmail,
+      onChange: e => setAuthEmail(e.target.value),
+      autoCapitalize: "off",
+      autoCorrect: "off",
       style: {
         width: '100%',
-        background: '#0071e3',
+        padding: '13px 14px',
+        border: '1px solid #e5e5ea',
+        borderRadius: 12,
+        fontSize: 14,
+        background: '#fbfbfd',
+        marginBottom: 10,
+        boxSizing: 'border-box'
+      }
+    }), /*#__PURE__*/React.createElement("input", {
+      type: "password",
+      placeholder: s.language === 'es' ? 'Contraseña' : 'Password',
+      value: authPassword,
+      onChange: e => setAuthPassword(e.target.value),
+      onKeyDown: e => {
+        if (e.key === 'Enter') isSignup ? signUpWithEmail() : signInWithEmail();
+      },
+      style: {
+        width: '100%',
+        padding: '13px 14px',
+        border: '1px solid #e5e5ea',
+        borderRadius: 12,
+        fontSize: 14,
+        background: '#fbfbfd',
+        marginBottom: 16,
+        boxSizing: 'border-box'
+      }
+    }), /*#__PURE__*/React.createElement("button", {
+      disabled: authBusy,
+      onClick: isSignup ? signUpWithEmail : signInWithEmail,
+      style: {
+        width: '100%',
+        background: authBusy ? '#a1c9f4' : '#0071e3',
         color: '#fff',
         border: 'none',
         padding: 13,
@@ -1775,17 +1882,106 @@ function App() {
         fontSize: 14.5,
         fontWeight: 700,
         cursor: 'pointer',
-        marginBottom: 14
+        marginBottom: 16
       }
-    }, s.language === 'es' ? 'Iniciar sesión con Google' : 'Sign in with Google'), authError && /*#__PURE__*/React.createElement("div", {
+    }, authBusy ? '…' : isSignup ? s.language === 'es' ? 'Crear cuenta' : 'Sign up' : s.language === 'es' ? 'Iniciar sesión' : 'Log in'), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        marginBottom: 16
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        height: 1,
+        background: '#e5e5ea'
+      }
+    }), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 12,
+        color: '#86868b'
+      }
+    }, s.language === 'es' ? 'O' : 'Or'), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        height: 1,
+        background: '#e5e5ea'
+      }
+    })), /*#__PURE__*/React.createElement("button", {
+      onClick: signInWithGoogle,
+      style: {
+        width: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        background: '#fff',
+        color: '#1d1d1f',
+        border: '1px solid #e5e5ea',
+        padding: 12,
+        borderRadius: 12,
+        fontSize: 14,
+        fontWeight: 600,
+        cursor: 'pointer',
+        marginBottom: 18
+      }
+    }, /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 24 24",
+      width: "18",
+      height: "18"
+    }, /*#__PURE__*/React.createElement("path", {
+      fill: "#4285F4",
+      d: "M23.5 12.27c0-.85-.08-1.67-.22-2.45H12v4.64h6.46c-.28 1.5-1.13 2.78-2.4 3.63v3.02h3.88c2.27-2.09 3.56-5.17 3.56-8.84z"
+    }), /*#__PURE__*/React.createElement("path", {
+      fill: "#34A853",
+      d: "M12 24c3.24 0 5.95-1.07 7.94-2.9l-3.88-3.02c-1.08.72-2.45 1.15-4.06 1.15-3.13 0-5.78-2.11-6.73-4.96H1.27v3.12A12 12 0 0 0 12 24z"
+    }), /*#__PURE__*/React.createElement("path", {
+      fill: "#FBBC05",
+      d: "M5.27 14.27a7.2 7.2 0 0 1 0-4.54V6.61H1.27a12 12 0 0 0 0 10.78l4-3.12z"
+    }), /*#__PURE__*/React.createElement("path", {
+      fill: "#EA4335",
+      d: "M12 4.77c1.77 0 3.35.61 4.6 1.8l3.44-3.44C17.94 1.19 15.24 0 12 0A12 12 0 0 0 1.27 6.61l4 3.12C6.22 6.88 8.87 4.77 12 4.77z"
+    })), s.language === 'es' ? 'Iniciar sesión con Google' : 'Sign in with Google'), authError && /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 12,
         color: '#ff3b30',
+        marginBottom: 12,
+        lineHeight: 1.4
+      }
+    }, "⚠ ", authError), authInfo && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: '#0071e3',
+        marginBottom: 12,
+        lineHeight: 1.4
+      }
+    }, authInfo), /*#__PURE__*/React.createElement("button", {
+      onClick: () => {
+        setAuthMode(isSignup ? 'login' : 'signup');
+        setAuthError('');
+        setAuthInfo('');
+      },
+      style: {
+        display: 'block',
+        width: '100%',
+        textAlign: 'center',
+        background: 'none',
+        border: 'none',
+        color: '#1d1d1f',
+        fontSize: 13,
+        cursor: 'pointer',
         marginBottom: 14
       }
-    }, authError), /*#__PURE__*/React.createElement("button", {
-      onClick: () => setBypassAuthGate(true),
+    }, isSignup ? s.language === 'es' ? 'Ya tengo cuenta. Iniciar sesión' : 'Already have an account? Log in' : s.language === 'es' ? 'No tengo cuenta. Crear una' : "I don't have an account. Create one"), /*#__PURE__*/React.createElement("button", {
+      onClick: () => {
+        setBypassAuthGate(true);
+        setShowLoginFromWelcome(false);
+      },
       style: {
+        display: 'block',
+        width: '100%',
+        textAlign: 'center',
         background: 'none',
         border: 'none',
         color: '#86868b',
@@ -2105,11 +2301,11 @@ function App() {
     onClick: () => setWelcomeStep(1),
     style: css('width:100%;padding:12px;background:#0071e3;color:#fff;border:none;border-radius:12px;font-size:14.5px;font-weight:600;cursor:pointer;')
   }, t('continueLabel')), sbClient && /*#__PURE__*/React.createElement("button", {
-    onClick: signInWithGoogle,
+    onClick: () => setShowLoginFromWelcome(true),
     style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#0071e3;font-size:12.5px;font-weight:700;cursor:pointer;padding:0;margin-top:14px;')
-  }, s.language === 'es' ? '¿Ya tienes cuenta? Iniciar sesión con Google →' : 'Already have an account? Sign in with Google →')) : welcomeStep === 1 ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, s.language === 'es' ? '¿Ya tienes cuenta? Iniciar sesión →' : 'Already have an account? Log in →')) : welcomeStep === 1 ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:20px;font-weight:700;letter-spacing:-0.01em;margin-bottom:16px;')
-  }, t('welcome')), s.incomeProfile === 'allowance' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, t('welcome')), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13.5px;color:#6e6e73;margin-bottom:10px;')
   }, t('howOldQ')), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -2153,7 +2349,7 @@ function App() {
       color: '#1d1d1f',
       cursor: 'pointer'
     }
-  }, t('investNo'))))), s.incomeProfile === 'salary' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, t('investNo')))), s.incomeProfile === 'salary' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13.5px;color:#6e6e73;margin-bottom:10px;')
   }, t('employmentQ')), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:8px;margin-bottom:18px;')
@@ -2511,7 +2707,7 @@ function App() {
     style: css('background:none;border:none;color:#0071e3;font-size:10.5px;font-weight:700;cursor:pointer;padding:0;')
   }, s.language === 'es' ? 'Ver' : 'View')), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
-  }, !s.hasSeenWelcome ? '—' : fmt(s.income)), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("button", {
+  }, fmt(s.income)), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("button", {
     onClick: e => {
       e.stopPropagation();
       markPaidToday();
@@ -2525,23 +2721,23 @@ function App() {
     text: s.language === 'es' ? 'Tu ingreso menos tus gastos presupuestados de este mes.' : "Your income minus your budgeted expenses this month."
   })), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
-  }, !s.hasSeenWelcome ? '—' : fmt(Math.max(ctx.boostedAvailable, 0)))), /*#__PURE__*/React.createElement("div", {
+  }, fmt(Math.max(ctx.boostedAvailable, 0)))), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:14px;padding:13px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
   }, t('totalSaved')), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
-  }, !s.hasSeenWelcome ? '—' : fmt(totalCurrent)), /*#__PURE__*/React.createElement("div", {
+  }, fmt(totalCurrent)), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:9.5px;color:#86868b;margin-top:2px;')
-  }, !s.hasSeenWelcome ? '' : overallPct.toFixed(0) + '% of goal')), /*#__PURE__*/React.createElement("div", {
+  }, overallPct.toFixed(0), "% of goal")), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:14px;padding:13px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
   }, t('totalInvested')), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-top:3px;')
-  }, !s.hasSeenWelcome ? '—' : fmt(investmentTotal)), /*#__PURE__*/React.createElement("div", {
+  }, fmt(investmentTotal)), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:9.5px;color:#86868b;margin-top:2px;')
-  }, !s.hasSeenWelcome ? '' : s.investments.length + ' ' + (s.investments.length === 1 ? 'investment' : 'investments')))), donutLegend.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, s.investments.length, " ", s.investments.length === 1 ? 'investment' : 'investments'))), donutLegend.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:22px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;')
   }, /*#__PURE__*/React.createElement("canvas", {
     ref: donutCanvasRef,
@@ -2576,6 +2772,11 @@ function App() {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:10px;')
   }, "Your goals"), s.goals.map(g => {
     const v = buildGoalView(g, false);
+    const salaryPart = ctx.boostedAvailable * ((g.mode === 'manual' ? g.percent || 0 : ctx.autoPercentEach) / 100);
+    const extraPart = ctx.assignedByGoal[g.id] || 0;
+    const totalPart = salaryPart + extraPart;
+    const salaryPct = totalPart > 0 ? salaryPart / totalPart * 100 : 0;
+    const extraPct = totalPart > 0 ? extraPart / totalPart * 100 : 0;
     return /*#__PURE__*/React.createElement("div", {
       key: g.id,
       onClick: () => {
@@ -2609,7 +2810,7 @@ function App() {
       style: {
         fontSize: 19,
         fontWeight: 700,
-        color: g.color
+        color: v.isCompleted ? '#34c759' : g.color
       }
     }, v.progressLabel)), /*#__PURE__*/React.createElement("div", {
       style: css('height:8px;border-radius:4px;background:#f0f0f2;overflow:hidden;')
@@ -2617,12 +2818,12 @@ function App() {
       style: {
         height: '100%',
         borderRadius: 4,
-        background: g.color,
-        width: v.progressWidth
+        background: v.isCompleted ? '#34c759' : g.color,
+        width: v.isCompleted ? '100%' : v.progressWidth
       }
-    })), /*#__PURE__*/React.createElement("div", {
+    })), !v.isCompleted && totalPart > 0 && /*#__PURE__*/React.createElement("div", {
       style: css('display:flex;justify-content:space-between;margin-top:10px;font-size:12.5px;color:#86868b;')
-    }, /*#__PURE__*/React.createElement("span", null, v.monthlyLabel, "/mo (", v.percentLabel, ")"), /*#__PURE__*/React.createElement("span", null, "Est. target: ", v.estDateLabel)));
+    }, /*#__PURE__*/React.createElement("span", null, fmt(salaryPart), "/mo (", salaryPct.toFixed(0), "%)"), /*#__PURE__*/React.createElement("span", null, fmt(extraPart), "/mo (", extraPct.toFixed(0), "%)")));
   })), s.tab === 'incomeHistory' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:center;gap:10px;margin-bottom:16px;')
   }, /*#__PURE__*/React.createElement("button", {
@@ -2803,7 +3004,116 @@ function App() {
       setShowAddPaycheck(true);
     },
     style: css('width:100%;margin-top:10px;background:#f5f5f7;color:#0071e3;border:none;padding:9px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
-  }, "+ ", s.language === 'es' ? 'Registrar un pago que ya recibiste' : 'Register a paycheck you already received'))), s.tab === 'settings' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, "+ ", s.language === 'es' ? 'Registrar un pago que ya recibiste' : 'Register a paycheck you already received'))), s.tab === 'savingsLog' && sgSource && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;gap:10px;margin-bottom:16px;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setTab('metas'),
+    style: css('background:#fff;border:none;width:34px;height:34px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;')
+  }, /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 24 24",
+    width: "18",
+    height: "18",
+    fill: "none",
+    stroke: "#1d1d1f",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M15 18l-6-6 6-6"
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;')
+  }, t('savingsLogged'))), /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:16px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:4px;')
+  }, s.language === 'es' ? 'Total registrado' : 'Total logged'), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:22px;font-weight:800;color:#1d1d1f;')
+  }, fmt((sgSource.savingsLog || []).reduce((a, e) => a + e.amount, 0))), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;color:#86868b;margin-top:2px;')
+  }, (sgSource.savingsLog || []).length, " ", (sgSource.savingsLog || []).length === 1 ? s.language === 'es' ? 'mes' : 'month' : s.language === 'es' ? 'meses' : 'months')), /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:16px;padding:16px;')
+  }, (sgSource.savingsLog || []).length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12.5px;color:#86868b;')
+  }, s.language === 'es' ? 'Todavía no hay nada registrado.' : 'Nothing logged yet.') : sgSource.savingsLog.map(entry => /*#__PURE__*/React.createElement("div", {
+    key: entry.id,
+    style: css('display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#1d1d1f;padding:10px 0;border-bottom:1px solid #f5f5f7;')
+  }, /*#__PURE__*/React.createElement("span", null, entry.label), editingSavingsEntryId === entry.id ? /*#__PURE__*/React.createElement("span", {
+    style: css('display:flex;align-items:center;gap:6px;')
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    autoFocus: true,
+    value: editingSavingsAmount,
+    onChange: e => setEditingSavingsAmount(e.target.value),
+    onKeyDown: e => {
+      if (e.key === 'Enter') {
+        updateSavingsLogEntryAmount(sgSource.id, entry.id, parseFloat(editingSavingsAmount) || 0);
+        setEditingSavingsEntryId(null);
+      }
+    },
+    style: css('width:80px;padding:5px 7px;border:1px solid #0071e3;border-radius:8px;font-size:12.5px;background:#fbfbfd;')
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      updateSavingsLogEntryAmount(sgSource.id, entry.id, parseFloat(editingSavingsAmount) || 0);
+      setEditingSavingsEntryId(null);
+    },
+    style: css('background:#0071e3;color:#fff;border:none;padding:5px 10px;border-radius:8px;font-size:11.5px;font-weight:700;cursor:pointer;')
+  }, s.language === 'es' ? 'Listo' : 'Done')) : /*#__PURE__*/React.createElement("span", {
+    style: css('display:flex;align-items:center;gap:10px;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setEditingSavingsEntryId(entry.id);
+      setEditingSavingsAmount(String(entry.amount));
+    },
+    style: css('background:none;border:none;color:#0071e3;font-weight:700;font-size:13px;cursor:pointer;padding:0;')
+  }, fmt(entry.amount)), /*#__PURE__*/React.createElement("button", {
+    onClick: () => removeSavingsLogEntry(sgSource.id, entry.id),
+    style: css('background:none;border:none;color:#ff3b30;cursor:pointer;font-size:15px;')
+  }, "×")))), showAddSavingsEntry ? /*#__PURE__*/React.createElement("div", {
+    style: css('border-top:1px solid #f5f5f7;margin-top:10px;padding-top:12px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;margin-bottom:8px;')
+  }, /*#__PURE__*/React.createElement("select", {
+    value: newSavingsMonth,
+    onChange: e => setNewSavingsMonth(parseInt(e.target.value, 10)),
+    style: css('flex:1;padding:9px;border:1px solid #e5e5ea;border-radius:9px;font-size:12.5px;background:#fbfbfd;')
+  }, MONTH_NAMES.map((m, i) => /*#__PURE__*/React.createElement("option", {
+    key: i,
+    value: i
+  }, m))), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    value: newSavingsYear,
+    onChange: e => setNewSavingsYear(parseInt(e.target.value, 10) || new Date().getFullYear()),
+    style: css('width:80px;padding:9px;border:1px solid #e5e5ea;border-radius:9px;font-size:12.5px;background:#fbfbfd;')
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative',
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: css('position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:13px;color:#86868b;pointer-events:none;')
+  }, "$"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    placeholder: "0",
+    value: newSavingsAmount,
+    onChange: e => setNewSavingsAmount(e.target.value),
+    style: css('width:100%;padding:9px 9px 9px 20px;border:1px solid #e5e5ea;border-radius:9px;font-size:12.5px;background:#fbfbfd;box-sizing:border-box;')
+  })), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      const label = MONTH_NAMES[newSavingsMonth] + ' ' + newSavingsYear;
+      addBackdatedSavingsEntry(sgSource.id, label, parseFloat(newSavingsAmount) || 0);
+      setNewSavingsAmount('');
+      setShowAddSavingsEntry(false);
+    },
+    style: css('flex:1;background:#0071e3;color:#fff;border:none;padding:9px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
+  }, s.language === 'es' ? 'Agregar' : 'Add'), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowAddSavingsEntry(false),
+    style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;padding:9px;border-radius:9px;font-size:12.5px;font-weight:600;cursor:pointer;')
+  }, s.language === 'es' ? 'Cancelar' : 'Cancel'))) : /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowAddSavingsEntry(true),
+    style: css('width:100%;margin-top:10px;background:#f5f5f7;color:#0071e3;border:none;padding:9px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
+  }, "+ ", s.language === 'es' ? 'Agregar un mes atrasado' : 'Add a past month'))), s.tab === 'settings' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:center;gap:10px;margin-bottom:16px;')
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => settingsView === 'menu' ? setTab('inicio') : setSettingsView('menu'),
@@ -2886,7 +3196,7 @@ function App() {
     style: css('font-size:15px;font-weight:700;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
   }, authUser.email), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:11.5px;color:#86868b;margin-top:1px;')
-  }, s.language === 'es' ? 'Sesión iniciada con Google' : 'Signed in with Google'))), /*#__PURE__*/React.createElement("button", {
+  }, s.language === 'es' ? 'Sesión iniciada' : 'Signed in'))), /*#__PURE__*/React.createElement("button", {
     onClick: signOutUser,
     style: css('width:100%;background:#f5f5f7;color:#1d1d1f;border:none;padding:11px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;')
   }, s.language === 'es' ? 'Cerrar sesión' : 'Sign out'), /*#__PURE__*/React.createElement("div", {
@@ -2939,10 +3249,10 @@ function App() {
     style: css('background:#fff;border-radius:16px;padding:16px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;color:#6e6e73;margin-bottom:14px;line-height:1.4;')
-  }, s.language === 'es' ? 'Inicia sesión con Google — tus datos se van a guardar y traer automáticamente entre dispositivos.' : "Sign in with Google — your data will automatically save and pull in across your devices."), /*#__PURE__*/React.createElement("button", {
-    onClick: signInWithGoogle,
+  }, s.language === 'es' ? 'Inicia sesión — tus datos se van a guardar y traer automáticamente entre dispositivos.' : "Log in — your data will automatically save and pull in across your devices."), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowLoginFromWelcome(true),
     style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:11px;border-radius:10px;font-size:13.5px;font-weight:700;cursor:pointer;')
-  }, s.language === 'es' ? 'Iniciar sesión con Google' : 'Sign in with Google'), authError && /*#__PURE__*/React.createElement("div", {
+  }, s.language === 'es' ? 'Iniciar sesión' : 'Log in'), authError && /*#__PURE__*/React.createElement("div", {
     style: css('font-size:11.5px;color:#ff3b30;margin-top:10px;')
   }, authError))), settingsView === 'profile' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
@@ -2992,7 +3302,7 @@ function App() {
       color: '#1d1d1f',
       cursor: 'pointer'
     }
-  }, p === 'allowance' ? t('profileAllowance') : p === 'salary' ? t('profileSalary') : t('profileFreelance')))), s.incomeProfile === 'allowance' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, p === 'allowance' ? t('profileAllowance') : p === 'salary' ? t('profileSalary') : t('profileFreelance')))), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
   }, t('howOldQ')), /*#__PURE__*/React.createElement("input", {
     type: "number",
@@ -3030,7 +3340,7 @@ function App() {
       color: '#1d1d1f',
       cursor: 'pointer'
     }
-  }, t('investNo'))))), s.incomeProfile === 'salary' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, t('investNo')))), s.incomeProfile === 'salary' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
   }, t('employmentQ')), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:8px;margin-bottom:16px;')
@@ -3152,7 +3462,7 @@ function App() {
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:12px;')
   }, t('backupTransfer'), /*#__PURE__*/React.createElement(InfoTip, {
-    text: authUser ? s.language === 'es' ? 'Tu información ya se guarda en tu cuenta automáticamente. Esto es solo por si quieres un archivo extra.' : "Your data already saves to your account automatically. This is just in case you want an extra file." : s.language === 'es' ? 'Tu información vive solo en este dispositivo/navegador. Expórtala aquí, y luego impórtala en otro dispositivo para llevarla contigo.' : "Your data lives only on this device/browser. Export it here, then import that file on another device to bring your data along."
+    text: "Your data lives only on this device/browser. Export it here, then import that file on another device to bring your data along."
   })), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:8px;')
   }, /*#__PURE__*/React.createElement("button", {
@@ -3199,8 +3509,42 @@ function App() {
     onClick: resetApp,
     style: css('width:100%;background:#fff2ef;color:#ff3b30;border:none;padding:10px;border-radius:10px;font-size:12.5px;font-weight:600;cursor:pointer;')
   }, t('resetApp'))))), s.tab === 'metas' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px;')
-  }, t('goals')), /*#__PURE__*/React.createElement("div", {
+    style: css('background:linear-gradient(135deg,#0071e3,#5ac8fa);border-radius:20px;padding:20px;margin-bottom:16px;color:#fff;box-shadow:0 14px 34px rgba(0,113,227,0.22);')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12px;font-weight:600;opacity:0.85;text-transform:uppercase;letter-spacing:0.03em;')
+  }, s.language === 'es' ? 'ahorrado en total' : 'total saved'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 32,
+      fontWeight: 800,
+      letterSpacing: '-0.02em',
+      marginTop: 4
+    }
+  }, fmt(totalCurrent)), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;gap:10px;margin-top:14px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('flex:1;height:8px;background:rgba(255,255,255,0.3);border-radius:4px;overflow:hidden;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: Math.min(overallPct, 100).toFixed(1) + '%',
+      height: '100%',
+      background: '#fff',
+      borderRadius: 4
+    }
+  })), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 13,
+      fontWeight: 700,
+      flex: 'none'
+    }
+  }, Math.round(Math.min(overallPct, 999)), "%")), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;opacity:0.85;margin-top:6px;')
+  }, (s.language === 'es' ? 'de ' : 'of ') + fmt(totalTarget) + (s.language === 'es' ? ' meta' : ' target')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 14,
+      fontWeight: 600,
+      marginTop: 12
+    }
+  }, s.language === 'es' ? 'Repartido entre tus metas.' : 'Split across your goals.')), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;color:#86868b;margin-bottom:16px;')
   }, "Set savings targets and see how your money is split between them."), s.goals.length > 0 && (() => {
     const total = s.goals.reduce((a, g) => a + buildGoalView(g, false).monthlyBoosted, 0);
@@ -3395,12 +3739,120 @@ function App() {
   }, /*#__PURE__*/React.createElement(GoalIconGlyph, {
     icon: sgSource.icon,
     size: 20
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0,
+      position: 'relative',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: css('font-size:16px;font-weight:600;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
+  }, sgSource.name), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setEditingGoalMeta(v => !v),
+    "aria-label": "Edit goal",
+    style: css('flex:none;background:none;border:none;padding:2px;cursor:pointer;display:flex;align-items:center;color:#86868b;')
+  }, /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 24 24",
+    width: "15",
+    height: "15",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M12 20h9"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"
+  }))), editingGoalMeta && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    onClick: () => setEditingGoalMeta(false),
+    style: css('position:fixed;inset:0;z-index:30;')
+  }), /*#__PURE__*/React.createElement("div", {
+    onClick: e => e.stopPropagation(),
+    style: css('position:absolute;top:38px;left:0;z-index:31;background:#fff;border-radius:16px;padding:14px;box-shadow:0 14px 44px rgba(0,0,0,0.20);width:264px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: 40,
+      height: 40,
+      borderRadius: 11,
+      background: sgSource.color,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      flex: 'none'
+    }
+  }, /*#__PURE__*/React.createElement(GoalIconGlyph, {
+    icon: sgSource.icon,
+    size: 20
   })), /*#__PURE__*/React.createElement("input", {
     type: "text",
+    autoFocus: true,
     value: sgSource.name,
     onChange: e => updateGoal(sgSource.id, 'name', e.target.value),
-    style: css('flex:1;min-width:0;font-size:16px;font-weight:600;border:none;background:transparent;padding:6px 0;')
-  }), /*#__PURE__*/React.createElement("div", {
+    onKeyDown: e => {
+      if (e.key === 'Enter') setEditingGoalMeta(false);
+    },
+    style: css('flex:1;min-width:0;font-size:15px;font-weight:600;border:1px solid #e5e5ea;border-radius:9px;padding:9px 10px;background:#fbfbfd;')
+  })), /*#__PURE__*/React.createElement("div", {
+    style: css('display:grid;grid-template-columns:1fr 1fr;gap:10px;')
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:10px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:8px;')
+  }, t('color')), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:6px;flex-wrap:wrap;')
+  }, PALETTE.concat(MORE_COLORS).map(hex => /*#__PURE__*/React.createElement("button", {
+    key: hex,
+    onClick: () => setGoalColor(sgSource.id, hex),
+    style: {
+      width: 22,
+      height: 22,
+      borderRadius: '50%',
+      background: hex,
+      border: 'none',
+      cursor: 'pointer',
+      padding: 0,
+      boxShadow: hex === sgSource.color ? '0 0 0 2px #fff, 0 0 0 3px ' + hex : 'none'
+    }
+  })))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:10px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:8px;')
+  }, t('icon')), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:6px;flex-wrap:wrap;')
+  }, ICONS.concat(MORE_ICONS).map(ic => /*#__PURE__*/React.createElement("button", {
+    key: ic.key,
+    onClick: () => setGoalIcon(sgSource.id, ic.key),
+    style: {
+      width: 26,
+      height: 26,
+      borderRadius: 8,
+      background: ic.key === sgSource.icon ? sgSource.color : '#f5f5f7',
+      border: 'none',
+      cursor: 'pointer',
+      padding: 0,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 24 24",
+    width: "14",
+    height: "14",
+    fill: "none",
+    stroke: ic.key === sgSource.icon ? '#fff' : '#86868b',
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: ic.path
+  })))))))))), /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'relative',
       flex: 'none'
@@ -3622,17 +4074,27 @@ function App() {
         color: '#34c759'
       }
     }, extrasPct.toFixed(0), "%"), " extras")));
-  })()), sgSource.savingsLog && sgSource.savingsLog.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:10.5px;color:#86868b;font-weight:600;margin-top:12px;margin-bottom:4px;')
-  }, t('savingsLogged')), sgSource.savingsLog.map(entry => /*#__PURE__*/React.createElement("div", {
-    key: entry.id,
-    style: css('display:flex;justify-content:space-between;align-items:center;font-size:12.5px;color:#6e6e73;padding:4px 0;border-bottom:1px solid #f5f5f7;')
-  }, /*#__PURE__*/React.createElement("span", null, entry.label), /*#__PURE__*/React.createElement("span", {
-    style: css('display:flex;align-items:center;gap:8px;')
-  }, fmt(entry.amount), /*#__PURE__*/React.createElement("button", {
-    onClick: () => removeSavingsLogEntry(sgSource.id, entry.id),
-    style: css('background:none;border:none;color:#ff3b30;cursor:pointer;font-size:14px;')
-  }, "×"))))), /*#__PURE__*/React.createElement("div", {
+  })()), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setTab('savingsLog'),
+    style: css('display:flex;align-items:center;justify-content:space-between;background:#fff;border:none;border-radius:14px;padding:14px 16px;cursor:pointer;width:100%;margin-top:12px;')
+  }, /*#__PURE__*/React.createElement("span", {
+    style: css('font-size:13.5px;font-weight:700;color:#1d1d1f;')
+  }, t('savingsLogged')), /*#__PURE__*/React.createElement("span", {
+    style: css('display:flex;align-items:center;gap:6px;')
+  }, /*#__PURE__*/React.createElement("span", {
+    style: css('font-size:12px;color:#86868b;')
+  }, (sgSource.savingsLog || []).length), /*#__PURE__*/React.createElement("svg", {
+    viewBox: "0 0 24 24",
+    width: "15",
+    height: "15",
+    fill: "none",
+    stroke: "#c7c7cc",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M9 18l6-6-6-6"
+  })))), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:16px;padding:16px;margin-top:16px;')
   }, (() => {
     const curY = ctx.today.getFullYear(),
@@ -3758,7 +4220,7 @@ function App() {
       marginTop: 8,
       lineHeight: 1.35
     }
-  }, sg.customMsg))), /*#__PURE__*/React.createElement("div", {
+  }, sg.customMsg))), false && /*#__PURE__*/React.createElement("div", {
     style: css('display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:12px;')
