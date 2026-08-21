@@ -798,10 +798,10 @@ function App() {
   useEffect(function () {
     if (!homeHeroRef.current || typeof ResizeObserver === 'undefined') return;
     const el = homeHeroRef.current;
-    const ro = new ResizeObserver(function (entries) {
-      for (const entry of entries) setHomeHeroH(Math.ceil(entry.contentRect.height));
-    });
+    const measure = function () { setHomeHeroH(Math.ceil(el.offsetHeight)); };
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
+    measure();
     return function () { ro.disconnect(); };
   });
   const [lockCfg, setLockCfg] = useState(function () { return readLock(); });
@@ -2631,6 +2631,8 @@ function App() {
       marginTop: 12
     }
   }, homeSpendHeadline))), /*#__PURE__*/React.createElement("div", {
+    ref: pfRevealRef,
+    className: 'pf-reveal',
     style: isDesktop ? css('background:#fff;margin:-26px -20px 0 -20px;padding:28px 20px calc(env(safe-area-inset-bottom) + 90px);border-radius:28px 28px 0 0;position:relative;z-index:1;min-height:74vh;') : {
       background: '#fff',
       marginTop: Math.max(homeHeroH - 26, 0),
@@ -2804,8 +2806,6 @@ function App() {
     const sharePct = v.percent;
     return /*#__PURE__*/React.createElement("div", {
       key: g.id,
-      ref: pfRevealRef,
-      className: 'pf-reveal',
       onClick: () => {
         selectGoal(g.id);
         setTab('metas');
