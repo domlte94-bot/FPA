@@ -252,6 +252,21 @@ function buildGoalSparkline(goal, monthlyBoosted, today) {
   const actual = monthSums.map(v => (running += v));
   return { actual };
 }
+function buildInvestmentSparkline(inv, today) {
+  const N = 6;
+  const months = [];
+  for (let i = N - 1; i >= 0; i--) {
+    const d = addMonths(today, -i);
+    months.push({ year: d.getFullYear(), month: d.getMonth() });
+  }
+  const monthSums = months.map(m => (inv.log || []).filter(e => {
+    const d = new Date(e.date + 'T00:00:00');
+    return d.getFullYear() === m.year && d.getMonth() === m.month;
+  }).reduce((a, e) => a + e.amount, 0));
+  let running = 0;
+  const actual = monthSums.map(v => (running += v));
+  return { actual };
+}
 function smoothCurveD(pts) {
   if (pts.length < 2) return '';
   let d = 'M ' + pts[0][0].toFixed(1) + ' ' + pts[0][1].toFixed(1);
@@ -498,7 +513,7 @@ const STRINGS = {
     tabGoals: 'Goals',
     tabExpenses: 'Expenses',
     tabExtra: 'Extra',
-    tabInvest: 'Invest',
+    tabInvest: 'Portfolio',
     edit: 'Edit',
     done: 'Done',
     log: 'Log',
@@ -524,7 +539,7 @@ const STRINGS = {
     reset: 'Reset',
     plannedBudget: 'Planned budget',
     nonRecurringAllowance: 'Non-recurring allowance',
-    investments: 'Investments',
+    investments: 'Portfolio',
     extraIncome: 'Extra income',
     goals: 'Goals',
     logSavings: 'Log savings',
@@ -589,7 +604,7 @@ const STRINGS = {
     tabGoals: 'Metas',
     tabExpenses: 'Gastos',
     tabExtra: 'Extra',
-    tabInvest: 'Inversión',
+    tabInvest: 'Portafolio',
     edit: 'Editar',
     done: 'Listo',
     log: 'Registrar',
@@ -615,7 +630,7 @@ const STRINGS = {
     reset: 'Reiniciar',
     plannedBudget: 'Presupuesto planificado',
     nonRecurringAllowance: 'Presupuesto no recurrente',
-    investments: 'Inversiones',
+    investments: 'Portafolio',
     extraIncome: 'Ingreso extra',
     goals: 'Metas',
     logSavings: 'Registrar ahorro',
@@ -856,7 +871,29 @@ function App() {
   const [settingsView, setSettingsView] = useState('menu');
   const [showGoalDetail, setShowGoalDetail] = useState(false);
   const [showEmergencyFundPicker, setShowEmergencyFundPicker] = useState(false);
+  const [efEarnsInterest, setEfEarnsInterest] = useState(null);
+  const [efApyInput, setEfApyInput] = useState('');
+  const [showEfApyModal, setShowEfApyModal] = useState(false);
+  const [efApyEdit, setEfApyEdit] = useState('');
+  const [showInvestDetail, setShowInvestDetail] = useState(false);
+  const [showAddFundModal, setShowAddFundModal] = useState(false);
+  const [newFundName, setNewFundName] = useState('');
+  const [newFundRetirement, setNewFundRetirement] = useState(null);
+  const [editingInvestmentName, setEditingInvestmentName] = useState(false);
+  const [investLogAmount, setInvestLogAmount] = useState('');
+  const [investValueEdit, setInvestValueEdit] = useState('');
   const [showDayLog, setShowDayLog] = useState(false);
+  const expensesCalRef = useRef(null);
+  const [expensesCalH, setExpensesCalH] = useState(0);
+  useEffect(function () {
+    if (!expensesCalRef.current || typeof ResizeObserver === 'undefined') return;
+    const el = expensesCalRef.current;
+    const measure = function () { setExpensesCalH(Math.ceil(el.offsetHeight)); };
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    measure();
+    return function () { ro.disconnect(); };
+  });
   const homeHeroRef = useRef(null);
   const [homeHeroH, setHomeHeroH] = useState(230);
   useEffect(function () {
@@ -1554,7 +1591,7 @@ function App() {
       };
     });
   };
-  const addEmergencyFundGoal = months => {
+  const addEmergencyFundGoal = (months, apy) => {
     patch(s => {
       if (s.goals.length >= 6) return {};
       const id = Date.now();
@@ -1574,6 +1611,7 @@ function App() {
         reminderDay: 1,
         savingsLog: [],
         skippedMonths: [],
+        apy: apy != null && apy > 0 ? apy : null,
         createdMonth: now.getMonth(),
         createdYear: now.getFullYear()
       };
@@ -1741,30 +1779,34 @@ function App() {
       };
     });
   };
-  const addInvestment = () => patch(s => ({
-    investments: s.investments.concat([{
-      id: Date.now(),
-      name: 'New investment',
-      fund: '',
-      amount: 0,
-      currentValue: 0,
-      lastUpdated: todayStr
-    }])
-  }));
-  const addPortfolioFund = name => patch(s => ({
-    investments: s.investments.concat([{
-      id: Date.now(),
-      name,
-      fund: '',
-      amount: 0,
-      currentValue: 0,
-      lastUpdated: todayStr
-    }])
-  }));
+  const addInvestment = (name, isRetirement) => {
+    const id = Date.now();
+    patch(s => ({
+      investments: s.investments.concat([{
+        id,
+        name: name || 'New investment',
+        fund: '',
+        amount: 0,
+        currentValue: 0,
+        isRetirement: typeof isRetirement === 'boolean' ? isRetirement : null,
+        log: [],
+        lastUpdated: todayStr
+      }]),
+      selectedInvestmentId: id
+    }));
+    return id;
+  };
+  const addPortfolioFund = (name, isRetirement) => addInvestment(name, isRetirement);
+  const selectInvestment = id => patch({
+    selectedInvestmentId: id
+  });
   const removeInvestment = id => {
-    askConfirm('Delete this investment from your tracker?', () => patch(s => ({
-      investments: s.investments.filter(i => i.id !== id)
-    })));
+    askConfirm("Delete this fund from your portfolio? Its contribution history will be lost.", () => {
+      patch(st => ({
+        investments: st.investments.filter(i => i.id !== id)
+      }));
+      setShowInvestDetail(false);
+    });
   };
   const updateInvestment = (id, field, val) => patch(s => ({
     investments: s.investments.map(i => i.id === id ? {
@@ -1774,6 +1816,28 @@ function App() {
         lastUpdated: todayStr
       } : {})
     } : i)
+  }));
+  const setInvestmentRetirement = (id, isRetirement) => patch(s => ({
+    investments: s.investments.map(i => i.id === id && i.isRetirement == null ? {
+      ...i,
+      isRetirement
+    } : i)
+  }));
+  const logInvestmentContribution = (id, amount) => patch(s => ({
+    investments: s.investments.map(i => {
+      if (i.id !== id || !(amount > 0)) return i;
+      return {
+        ...i,
+        amount: (i.amount || 0) + amount,
+        currentValue: (i.currentValue || 0) + amount,
+        lastUpdated: todayStr,
+        log: [{
+          id: Date.now() + Math.random(),
+          amount,
+          date: todayStr
+        }].concat(i.log || []).slice(0, 24)
+      };
+    })
   }));
   const markInvestmentUpdated = id => patch(s => ({
     investments: s.investments.map(i => i.id === id ? {
@@ -2461,15 +2525,431 @@ function App() {
     const gainAmount = (inv.currentValue || 0) - (inv.amount || 0);
     const gainPct = inv.amount > 0 ? gainAmount / inv.amount * 100 : 0;
     const dateLabel = MONTH_NAMES[lastUpdatedDate.getMonth()] + ' ' + lastUpdatedDate.getDate() + ', ' + lastUpdatedDate.getFullYear();
+    const agoLabel = monthsSince <= 0 ? (s.language === 'es' ? 'Actualizado hoy' : 'Updated today') : monthsSince === 1 ? (s.language === 'es' ? 'Actualizado hace 1 mes' : 'Updated 1 month ago') : (s.language === 'es' ? 'Actualizado hace ' + monthsSince + ' meses' : 'Updated ' + monthsSince + ' months ago');
     return {
       ...inv,
       monthsSince,
       isStale,
       gainAmount,
       gainPct,
-      dateLabel
+      dateLabel,
+      agoLabel
     };
   });
+  const investAssignedTotal = s.goals.reduce((a, g) => a + buildGoalView(g, false).monthlyBoosted, 0);
+  const investLeftover = Math.max(ctx.boostedAvailable - investAssignedTotal, 0);
+  const emergencyGoal = s.goals.find(g => g.name === 'Emergency Fund' || g.name === 'Fondo de emergencia');
+  const selectedInvestment = investmentViews.find(i => i.id === s.selectedInvestmentId) || null;
+  const buildInvestTabContent = () => {
+    const totalGain = investmentValueTotal - investmentTotal;
+    const totalGainPct = investmentTotal > 0 ? totalGain / investmentTotal * 100 : 0;
+    const chevron = /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 24 24",
+      width: 15,
+      height: 15,
+      fill: "none",
+      stroke: "#c7c7cc",
+      strokeWidth: 2.6,
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      style: {
+        flex: 'none'
+      }
+    }, /*#__PURE__*/React.createElement("path", {
+      d: "M9 6l6 6-6 6"
+    }));
+    const cardStyle = 'display:flex;flex-direction:column;justify-content:space-between;width:100%;text-align:left;background:#fff;border:none;border-radius:18px;padding:15px 16px;cursor:pointer;min-height:138px;box-shadow:0 1px 2px rgba(0,0,0,0.05),0 8px 20px rgba(0,0,0,0.04);';
+    const efInPortfolio = emergencyGoal && emergencyGoal.apy != null;
+    const efMonthlyInterest = efInPortfolio ? (emergencyGoal.current || 0) * (emergencyGoal.apy / 100) / 12 : 0;
+    return React.createElement(React.Fragment, null, showInvestDetail ? /*#__PURE__*/React.createElement("button", {
+      onClick: () => setShowInvestDetail(false),
+      style: css('display:flex;align-items:center;gap:6px;background:none;border:none;color:#1d1d1f;font-size:22px;font-weight:700;letter-spacing:-0.01em;cursor:pointer;padding:0;margin-bottom:16px;')
+    }, /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 24 24",
+      width: 22,
+      height: 22,
+      fill: "none",
+      stroke: "#1d1d1f",
+      strokeWidth: 2.4,
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      style: {
+        flex: 'none'
+      }
+    }, /*#__PURE__*/React.createElement("path", {
+      d: "M15 18l-6-6 6-6"
+    })), t('investments')) : /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:16px;')
+    }, t('investments'), /*#__PURE__*/React.createElement(InfoTip, {
+      text: "Track what's growing your money outside your goals. Update the current value every so often — 6 months is a good rhythm."
+    })), !showInvestDetail && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      style: css('background:linear-gradient(135deg,#0071e3,#5ac8fa);border-radius:22px;padding:22px;color:#fff;margin-bottom:18px;box-shadow:0 16px 40px rgba(0,113,227,0.25);')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;opacity:0.85;')
+    }, s.language === 'es' ? 'Valor total' : 'Total value'), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:38px;font-weight:800;letter-spacing:-0.02em;margin:6px 0 8px;font-variant-numeric:tabular-nums;')
+    }, fmt(investmentValueTotal)), /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;align-items:center;gap:8px;flex-wrap:wrap;')
+    }, /*#__PURE__*/React.createElement("span", {
+      style: css('display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,0.2);border-radius:999px;padding:4px 10px;font-size:12.5px;font-weight:700;')
+    }, totalGain >= 0 ? '▲' : '▼', ' ', fmt(Math.abs(totalGain)), ' (', Math.abs(totalGainPct).toFixed(1), '%)'))), s.investments.length === 0 && /*#__PURE__*/React.createElement("div", {
+      style: css('background:#fff;border-radius:18px;padding:18px;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,0.05),0 8px 20px rgba(0,0,0,0.04);')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:15px;font-weight:700;color:#1d1d1f;margin-bottom:4px;')
+    }, s.language === 'es' ? 'Arma tu portafolio' : 'Build your portfolio'), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12.5px;color:#86868b;line-height:1.4;margin-bottom:14px;')
+    }, s.language === 'es' ? 'Un punto de partida simple y muy usado: una mezcla de acciones locales, acciones internacionales y bonos. Elige una categoría para empezar.' : 'A simple, widely-used starting point: a mix of home-market stocks, international stocks, and bonds. Pick a category to start.'), /*#__PURE__*/React.createElement("div", {
+      style: css('display:grid;grid-template-columns:repeat(3,1fr);gap:8px;')
+    }, [{
+      key: 'us',
+      label: s.language === 'es' ? 'Acciones EE.UU.' : 'US Stocks'
+    }, {
+      key: 'intl',
+      label: s.language === 'es' ? 'Acciones intl.' : 'Intl. Stocks'
+    }, {
+      key: 'bonds',
+      label: s.language === 'es' ? 'Bonos' : 'Bonds'
+    }].map(cat => /*#__PURE__*/React.createElement("button", {
+      key: cat.key,
+      onClick: () => {
+        setNewFundName(cat.label);
+        setNewFundRetirement(null);
+        setShowAddFundModal(true);
+      },
+      style: css('background:#eef6ff;border:none;border-radius:12px;padding:12px 6px;font-size:11.5px;font-weight:700;color:#0071e3;cursor:pointer;text-align:center;line-height:1.3;')
+    }, cat.label)))), /*#__PURE__*/React.createElement("div", {
+      style: css('display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:16px;')
+    }, efInPortfolio && /*#__PURE__*/React.createElement("button", {
+      key: "ef-mirror",
+      onClick: () => {
+        setEfApyEdit(String(emergencyGoal.apy));
+        setShowEfApyModal(true);
+      },
+      style: css(cardStyle)
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;align-items:center;gap:8px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: 26,
+        height: 26,
+        borderRadius: 8,
+        background: emergencyGoal.color,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flex: 'none'
+      }
+    }, /*#__PURE__*/React.createElement(GoalIconGlyph, {
+      icon: emergencyGoal.icon,
+      size: 15
+    })), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:13px;font-weight:700;color:#1d1d1f;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
+    }, emergencyGoal.name), chevron), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:22px;font-weight:800;color:#1d1d1f;letter-spacing:-0.01em;font-variant-numeric:tabular-nums;')
+    }, fmt(emergencyGoal.current)), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        fontWeight: 700,
+        color: '#0071e3',
+        marginTop: 3
+      }
+    }, emergencyGoal.apy.toFixed(2).replace(/\.?0+$/, ''), s.language === 'es' ? '% anual' : '% APY'), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:11px;color:#34c759;font-weight:700;margin-top:2px;')
+    }, '+', fmt(efMonthlyInterest), s.language === 'es' ? '/mes en interés' : '/mo interest'))), investmentViews.map(inv => /*#__PURE__*/React.createElement("button", {
+      key: inv.id,
+      ref: pfRevealRef,
+      className: 'pf-reveal',
+      onClick: () => {
+        selectInvestment(inv.id);
+        setShowInvestDetail(true);
+      },
+      style: css(cardStyle)
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;align-items:center;gap:8px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:13px;font-weight:700;color:#1d1d1f;line-height:1.25;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
+    }, inv.name), chevron), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:22px;font-weight:800;color:#1d1d1f;letter-spacing:-0.01em;font-variant-numeric:tabular-nums;')
+    }, fmt(inv.currentValue)), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        fontWeight: 700,
+        color: inv.gainAmount >= 0 ? '#34c759' : '#ff3b30',
+        marginTop: 3
+      }
+    }, inv.gainAmount >= 0 ? '+' : '−', fmt(Math.abs(inv.gainAmount)), " (", Math.abs(inv.gainPct).toFixed(1), "%)"), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:11px;color:#86868b;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
+    }, inv.isRetirement ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: '#0071e3',
+        fontWeight: 700
+      }
+    }, s.language === 'es' ? 'Roth IRA' : 'Roth IRA') : null, inv.isRetirement ? ' · ' : '', inv.agoLabel)))), /*#__PURE__*/React.createElement("button", {
+      key: "add-fund",
+      onClick: () => {
+        setNewFundName('');
+        setNewFundRetirement(null);
+        setShowAddFundModal(true);
+      },
+      style: css('display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:transparent;border:2px dashed #d2d2d7;border-radius:18px;padding:14px;cursor:pointer;min-height:138px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: 34,
+        height: 34,
+        borderRadius: '50%',
+        background: '#eef6ff',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: 22,
+        color: '#0071e3',
+        fontWeight: 400,
+        lineHeight: 1
+      }
+    }, "+"), /*#__PURE__*/React.createElement("span", {
+      style: css('font-size:12.5px;font-weight:700;color:#0071e3;')
+    }, s.language === 'es' ? 'Agregar fondo' : 'Add fund'))), !s.seenTabIntro.invest && /*#__PURE__*/React.createElement("div", {
+      className: "tip-banner",
+      style: css('display:flex;align-items:center;gap:12px;background:#fff;border-radius:16px;padding:16px 18px;margin-top:16px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,0.10);')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('flex:1;font-size:13px;color:#6e6e73;font-weight:400;line-height:1.3;')
+    }, t('tabIntroInvest')), /*#__PURE__*/React.createElement("button", {
+      onClick: () => dismissTabIntro('invest'),
+      style: css('flex:none;background:#fff;color:#0071e3;border:1.5px solid #d2d2d7;padding:8px 15px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
+    }, t('gotIt')))), showInvestDetail && selectedInvestment && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      style: css('position:relative;overflow:hidden;background:linear-gradient(135deg,#0071e3,#5ac8fa);border-radius:22px;padding:22px;color:#fff;margin-bottom:14px;box-shadow:0 16px 40px rgba(0,113,227,0.22);')
+    }, selectedInvestment.log && selectedInvestment.log.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: css('position:absolute;right:-6px;bottom:-10px;width:64%;height:92px;opacity:0.3;pointer-events:none;')
+    }, /*#__PURE__*/React.createElement(GoalSparkline, {
+      actual: buildInvestmentSparkline(selectedInvestment, ctx.today).actual,
+      color: "#ffffff"
+    })), /*#__PURE__*/React.createElement("div", {
+      style: css('position:relative;z-index:1;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:14px;')
+    }, editingInvestmentName ? /*#__PURE__*/React.createElement("input", {
+      type: "text",
+      autoFocus: true,
+      value: selectedInvestment.name,
+      onChange: e => updateInvestment(selectedInvestment.id, 'name', e.target.value),
+      onBlur: () => setEditingInvestmentName(false),
+      onKeyDown: e => {
+        if (e.key === 'Enter') setEditingInvestmentName(false);
+      },
+      style: css('flex:1;min-width:0;font-size:18px;font-weight:800;color:#1d1d1f;border:none;border-radius:9px;padding:7px 10px;background:#fff;')
+    }) : /*#__PURE__*/React.createElement("div", {
+      onClick: () => setEditingInvestmentName(true),
+      style: css('font-size:19px;font-weight:800;color:#fff;cursor:pointer;flex:1;min-width:0;letter-spacing:-0.01em;')
+    }, selectedInvestment.name), selectedInvestment.isRetirement != null && /*#__PURE__*/React.createElement("span", {
+      style: css('flex:none;background:rgba(255,255,255,0.2);color:#fff;font-size:10.5px;font-weight:700;padding:5px 10px;border-radius:999px;white-space:nowrap;')
+    }, selectedInvestment.isRetirement ? 'Roth IRA' : (s.language === 'es' ? 'Gravable' : 'Taxable'))), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;opacity:0.85;')
+    }, s.language === 'es' ? 'Valor actual' : 'Current value'), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:34px;font-weight:800;letter-spacing:-0.02em;margin:4px 0 8px;font-variant-numeric:tabular-nums;')
+    }, fmt(selectedInvestment.currentValue)), /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;align-items:center;gap:8px;flex-wrap:wrap;')
+    }, /*#__PURE__*/React.createElement("span", {
+      style: css('display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,0.2);border-radius:999px;padding:4px 10px;font-size:12.5px;font-weight:700;')
+    }, selectedInvestment.gainAmount >= 0 ? '▲' : '▼', ' ', fmt(Math.abs(selectedInvestment.gainAmount)), ' (', Math.abs(selectedInvestment.gainPct).toFixed(1), '%)')))), selectedInvestment.isRetirement == null && /*#__PURE__*/React.createElement("div", {
+      style: css('background:#fff;border-radius:18px;padding:16px 18px;margin-bottom:14px;box-shadow:0 1px 2px rgba(0,0,0,0.05),0 8px 20px rgba(0,0,0,0.04);')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:13.5px;font-weight:700;color:#1d1d1f;margin-bottom:10px;')
+    }, s.language === 'es' ? '¿Es una cuenta de retiro (Roth IRA)?' : 'Is this a retirement account (Roth IRA)?'), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => setInvestmentRetirement(selectedInvestment.id, true),
+      style: css('flex:1;background:#0071e3;color:#fff;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;')
+    }, s.language === 'es' ? 'Sí' : 'Yes'), /*#__PURE__*/React.createElement("button", {
+      onClick: () => setInvestmentRetirement(selectedInvestment.id, false),
+      style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;')
+    }, s.language === 'es' ? 'No' : 'No')), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:10.5px;color:#86868b;margin-top:8px;line-height:1.3;')
+    }, s.language === 'es' ? 'Esto queda fijo para este fondo.' : "This can't be changed later for this fund.")), /*#__PURE__*/React.createElement("div", {
+      style: css('background:#fff;border-radius:18px;padding:16px 18px;margin-bottom:14px;box-shadow:0 1px 2px rgba(0,0,0,0.05),0 8px 20px rgba(0,0,0,0.04);')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:15px;font-weight:700;color:#1d1d1f;margin-bottom:4px;')
+    }, s.language === 'es' ? 'Registrar aporte' : 'Log a contribution'), investLeftover > 0 && /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12px;color:#86868b;margin-bottom:12px;line-height:1.4;')
+    }, s.language === 'es' ? 'Te quedan ' + fmt(investLeftover) + '/mes después de metas y gastos.' : fmt(investLeftover) + '/mo left over after goals and expenses.'), /*#__PURE__*/React.createElement("div", {
+      style: {
+        position: 'relative',
+        marginBottom: 10
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: css('position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:16px;color:#86868b;pointer-events:none;')
+    }, "$"), /*#__PURE__*/React.createElement("input", {
+      type: "number", inputMode: "decimal",
+      placeholder: investLeftover > 0 ? String(Math.round(investLeftover)) : '0',
+      value: investLogAmount,
+      onChange: e => setInvestLogAmount(e.target.value),
+      style: css('width:100%;padding:13px 12px 13px 28px;border:1px solid #d2d2d7;border-radius:12px;font-size:16px;font-weight:700;background:#fbfbfd;')
+    })), investLeftover > 1 && /*#__PURE__*/React.createElement("button", {
+      onClick: () => setInvestLogAmount(String(Math.round(investLeftover))),
+      style: css('background:#eef6ff;border:none;border-radius:9px;padding:8px 12px;font-size:12px;font-weight:700;color:#0071e3;cursor:pointer;margin-bottom:10px;')
+    }, (s.language === 'es' ? 'Usar disponible: ' : 'Use available: ') + fmt(investLeftover)), /*#__PURE__*/React.createElement("button", {
+      onClick: () => {
+        const amt = parseFloat(investLogAmount) || 0;
+        if (amt > 0) {
+          logInvestmentContribution(selectedInvestment.id, amt);
+          setInvestLogAmount('');
+        }
+      },
+      style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:13px;border-radius:12px;font-size:14px;font-weight:700;cursor:pointer;')
+    }, t('log'))), /*#__PURE__*/React.createElement("div", {
+      style: css('background:#fff;border-radius:18px;padding:16px 18px;margin-bottom:14px;box-shadow:0 1px 2px rgba(0,0,0,0.05),0 8px 20px rgba(0,0,0,0.04);')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:15px;font-weight:700;color:#1d1d1f;margin-bottom:4px;')
+    }, s.language === 'es' ? 'Actualizar valor actual' : 'Update current value'), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12px;color:#86868b;margin-bottom:12px;line-height:1.4;')
+    }, s.language === 'es' ? 'Ajústalo al valor real de la cuenta con intereses.' : 'Set it to the real account value, interest included.'), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement("input", {
+      type: "number", inputMode: "decimal",
+      placeholder: String(selectedInvestment.currentValue || 0),
+      value: investValueEdit,
+      onChange: e => setInvestValueEdit(e.target.value),
+      style: css('flex:1;min-width:0;padding:11px 12px;border:1px solid #d2d2d7;border-radius:11px;font-size:14.5px;background:#fbfbfd;')
+    }), /*#__PURE__*/React.createElement("button", {
+      onClick: () => {
+        if (investValueEdit !== '') {
+          updateInvestment(selectedInvestment.id, 'currentValue', investValueEdit);
+          setInvestValueEdit('');
+        }
+      },
+      style: css('flex:none;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:11px;padding:11px 18px;font-size:13.5px;font-weight:700;cursor:pointer;')
+    }, t('save'))), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:11px;color:#86868b;margin-top:8px;')
+    }, selectedInvestment.agoLabel)), /*#__PURE__*/React.createElement("button", {
+      onClick: () => removeInvestment(selectedInvestment.id),
+      style: css('display:block;margin:4px auto 8px;background:none;border:none;color:#ff3b30;font-size:13px;font-weight:700;cursor:pointer;padding:8px 16px;')
+    }, s.language === 'es' ? 'Eliminar fondo' : 'Delete fund')), showAddFundModal && /*#__PURE__*/React.createElement("div", {
+      onClick: () => setShowAddFundModal(false),
+      className: "pf-overlay-in",
+      style: css('position:fixed;inset:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:24px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      onClick: e => e.stopPropagation(),
+      className: "pf-modal-in",
+      style: css('background:#fff;border-radius:20px;padding:22px;max-width:340px;width:100%;box-shadow:0 30px 70px rgba(0,0,0,0.25);')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:16px;font-weight:700;color:#1d1d1f;margin-bottom:14px;')
+    }, s.language === 'es' ? 'Agregar fondo' : 'Add fund'), /*#__PURE__*/React.createElement("input", {
+      type: "text",
+      autoFocus: true,
+      placeholder: s.language === 'es' ? 'Nombre — ej. VTI, S&P 500…' : 'Name — e.g. VTI, S&P 500…',
+      value: newFundName,
+      onChange: e => setNewFundName(e.target.value),
+      style: css('width:100%;padding:12px;border:1px solid #d2d2d7;border-radius:12px;font-size:15px;background:#fbfbfd;margin-bottom:14px;')
+    }), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12.5px;font-weight:600;color:#1d1d1f;margin-bottom:8px;')
+    }, s.language === 'es' ? '¿Es una cuenta de retiro (Roth IRA)?' : 'Is this a retirement account (Roth IRA)?'), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 8,
+        marginBottom: 16
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => setNewFundRetirement(true),
+      style: css('flex:1;border-radius:10px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;border:' + (newFundRetirement === true ? '2px solid #0071e3' : '1px solid #d2d2d7') + ';background:' + (newFundRetirement === true ? '#eef6ff' : '#fff') + ';color:#1d1d1f;')
+    }, s.language === 'es' ? 'Sí' : 'Yes'), /*#__PURE__*/React.createElement("button", {
+      onClick: () => setNewFundRetirement(false),
+      style: css('flex:1;border-radius:10px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;border:' + (newFundRetirement === false ? '2px solid #0071e3' : '1px solid #d2d2d7') + ';background:' + (newFundRetirement === false ? '#eef6ff' : '#fff') + ';color:#1d1d1f;')
+    }, s.language === 'es' ? 'No' : 'No')), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 10
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => setShowAddFundModal(false),
+      style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;')
+    }, s.language === 'es' ? 'Cancelar' : 'Cancel'), /*#__PURE__*/React.createElement("button", {
+      disabled: !newFundName.trim() || newFundRetirement === null,
+      onClick: () => {
+        addInvestment(newFundName.trim(), newFundRetirement);
+        setShowAddFundModal(false);
+        setShowInvestDetail(true);
+        dismissTabIntro('invest');
+      },
+      style: css('flex:1;background:' + (!newFundName.trim() || newFundRetirement === null ? '#c7c7cc' : '#0071e3') + ';color:#fff;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:' + (!newFundName.trim() || newFundRetirement === null ? 'default' : 'pointer') + ';')
+    }, s.language === 'es' ? 'Agregar' : 'Add')))), showEfApyModal && emergencyGoal && /*#__PURE__*/React.createElement("div", {
+      onClick: () => setShowEfApyModal(false),
+      className: "pf-overlay-in",
+      style: css('position:fixed;inset:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:24px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      onClick: e => e.stopPropagation(),
+      className: "pf-modal-in",
+      style: css('background:#fff;border-radius:20px;padding:22px;max-width:340px;width:100%;box-shadow:0 30px 70px rgba(0,0,0,0.25);')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;align-items:center;gap:10px;margin-bottom:6px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: 30,
+        height: 30,
+        borderRadius: 9,
+        background: emergencyGoal.color,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flex: 'none'
+      }
+    }, /*#__PURE__*/React.createElement(GoalIconGlyph, {
+      icon: emergencyGoal.icon,
+      size: 16
+    })), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:16px;font-weight:700;color:#1d1d1f;')
+    }, s.language === 'es' ? 'Tasa de interés' : 'Interest rate')), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12.5px;color:#86868b;margin-bottom:14px;line-height:1.4;')
+    }, s.language === 'es' ? 'La tasa anual (APY) que te da tu banco por ' + emergencyGoal.name + '.' : 'The annual rate (APY) your bank pays on ' + emergencyGoal.name + '.'), /*#__PURE__*/React.createElement("div", {
+      style: {
+        position: 'relative',
+        marginBottom: 12
+      }
+    }, /*#__PURE__*/React.createElement("input", {
+      type: "number", inputMode: "decimal",
+      autoFocus: true,
+      placeholder: "4.5",
+      value: efApyEdit,
+      onChange: e => setEfApyEdit(e.target.value),
+      style: css('width:100%;padding:13px 30px 13px 14px;border:1px solid #d2d2d7;border-radius:12px;font-size:18px;font-weight:700;background:#fbfbfd;')
+    }), /*#__PURE__*/React.createElement("span", {
+      style: css('position:absolute;right:14px;top:50%;transform:translateY(-50%);font-size:16px;color:#86868b;font-weight:600;pointer-events:none;')
+    }, "%")), /*#__PURE__*/React.createElement("div", {
+      style: css('background:#f0fbf3;border-radius:12px;padding:12px 14px;margin-bottom:16px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:11px;color:#86868b;font-weight:600;margin-bottom:2px;')
+    }, s.language === 'es' ? 'Interés estimado sobre ' + fmt(emergencyGoal.current) : 'Estimated interest on ' + fmt(emergencyGoal.current)), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:15px;font-weight:800;color:#34c759;')
+    }, '+', fmt((emergencyGoal.current || 0) * (parseFloat(efApyEdit) || 0) / 1200), s.language === 'es' ? '/mes' : '/mo', '  ·  +', fmt((emergencyGoal.current || 0) * (parseFloat(efApyEdit) || 0) / 100), s.language === 'es' ? '/año' : '/yr')), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 10,
+        marginBottom: 10
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => setShowEfApyModal(false),
+      style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;')
+    }, s.language === 'es' ? 'Cancelar' : 'Cancel'), /*#__PURE__*/React.createElement("button", {
+      onClick: () => {
+        const v = parseFloat(efApyEdit);
+        updateGoal(emergencyGoal.id, 'apy', v > 0 ? v : null);
+        setShowEfApyModal(false);
+      },
+      style: css('flex:1;background:#0071e3;color:#fff;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;')
+    }, t('save'))), /*#__PURE__*/React.createElement("button", {
+      onClick: () => {
+        setShowEfApyModal(false);
+        setTab('metas');
+        selectGoal(emergencyGoal.id);
+        setShowGoalDetail(true);
+      },
+      style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#0071e3;font-size:13px;font-weight:700;cursor:pointer;padding:4px;')
+    }, s.language === 'es' ? 'Ver en Metas →' : 'View in Goals →'))));
+  };
   const recurringCategoryOptions = s.expenseCategories.map(c => c.name);
   const effectiveLogCategory = logCategory || recurringCategoryOptions[0] || '';
   const currentKey = currentMonthKey();
@@ -3821,7 +4301,40 @@ function App() {
     style: css('font-size:17px;font-weight:700;color:#1d1d1f;margin-bottom:4px;')
   }, s.language === 'es' ? 'Fondo de emergencia' : 'Emergency Fund'), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12.5px;color:#86868b;margin-bottom:16px;line-height:1.4;')
-  }, s.language === 'es' ? 'Elige cuántos meses de gastos quieres tener guardados. Puedes cambiar el monto después.' : 'Choose how many months of expenses you want saved up. You can change the amount later.'), [{
+  }, s.language === 'es' ? 'Elige cuántos meses de gastos quieres tener guardados. Puedes cambiar el monto después.' : 'Choose how many months of expenses you want saved up. You can change the amount later.'), /*#__PURE__*/React.createElement("div", {
+    style: css('background:#f5f5f7;border-radius:14px;padding:14px;margin-bottom:16px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12.5px;font-weight:700;color:#1d1d1f;margin-bottom:2px;')
+  }, s.language === 'es' ? '¿Está en una cuenta que genera intereses?' : 'Is it in an interest-earning account?'), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11px;color:#86868b;margin-bottom:10px;line-height:1.35;')
+  }, s.language === 'es' ? 'Como una cuenta de ahorro high-yield. Si es así, aparecerá también en Portafolio.' : 'Like a high-yield savings account. If so, it also shows up in Portfolio.'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setEfEarnsInterest(true),
+    style: css('flex:1;border-radius:10px;padding:9px;font-size:12.5px;font-weight:700;cursor:pointer;border:' + (efEarnsInterest === true ? '2px solid #0071e3' : '1px solid #d2d2d7') + ';background:' + (efEarnsInterest === true ? '#eef6ff' : '#fff') + ';color:#1d1d1f;')
+  }, s.language === 'es' ? 'Sí' : 'Yes'), /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setEfEarnsInterest(false);
+      setEfApyInput('');
+    },
+    style: css('flex:1;border-radius:10px;padding:9px;font-size:12.5px;font-weight:700;cursor:pointer;border:' + (efEarnsInterest === false ? '2px solid #0071e3' : '1px solid #d2d2d7') + ';background:' + (efEarnsInterest === false ? '#eef6ff' : '#fff') + ';color:#1d1d1f;')
+  }, s.language === 'es' ? 'No' : 'No')), efEarnsInterest === true && /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative',
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "number", inputMode: "decimal",
+    placeholder: s.language === 'es' ? 'Tasa anual (APY), ej. 4.5' : 'Annual rate (APY), e.g. 4.5',
+    value: efApyInput,
+    onChange: e => setEfApyInput(e.target.value),
+    style: css('width:100%;padding:11px 30px 11px 12px;border:1px solid #d2d2d7;border-radius:10px;font-size:14px;background:#fff;')
+  }), /*#__PURE__*/React.createElement("span", {
+    style: css('position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:14px;color:#86868b;font-weight:600;pointer-events:none;')
+  }, "%"))), [{
     months: 3,
     title: s.language === 'es' ? '3 meses' : '3 months',
     desc: s.language === 'es' ? 'Ingreso estable, empleo fijo, pocas personas a cargo, o ya tienes otro respaldo (familia, línea de crédito).' : 'Stable income, fixed job, few dependents, or you already have another safety net (family, credit line).'
@@ -3836,8 +4349,10 @@ function App() {
   }].map(opt => /*#__PURE__*/React.createElement("button", {
     key: opt.months,
     onClick: () => {
-      addEmergencyFundGoal(opt.months);
+      addEmergencyFundGoal(opt.months, efEarnsInterest === true ? parseFloat(efApyInput) || 0 : null);
       setShowEmergencyFundPicker(false);
+      setEfEarnsInterest(null);
+      setEfApyInput('');
       setShowGoalDetail(true);
     },
     style: css('display:block;width:100%;text-align:left;background:#f5f5f7;border:none;border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer;')
@@ -3850,7 +4365,11 @@ function App() {
   }, fmt((ctx.totalExpenses > 0 ? ctx.totalExpenses : monthlyIncomeOf(s) * 0.6) * opt.months))), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:11.5px;color:#6e6e73;line-height:1.4;')
   }, opt.desc))), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setShowEmergencyFundPicker(false),
+    onClick: () => {
+      setShowEmergencyFundPicker(false);
+      setEfEarnsInterest(null);
+      setEfApyInput('');
+    },
     style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#86868b;font-size:13px;font-weight:600;cursor:pointer;padding:6px;margin-top:2px;')
   }, s.language === 'es' ? 'Cancelar' : 'Cancel')))), s.goals.length >= 6 && /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12px;color:#86868b;margin:-10px 0 16px;')
@@ -4306,10 +4825,8 @@ function App() {
   }, sg.estDateLabel), " (", sg.monthsLabel, ")")), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:12.5px;font-weight:700;color:#1d1d1f;margin-bottom:3px;')
-  }, t('hitDate')), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:10.5px;color:#86868b;margin-bottom:8px;line-height:1.35;')
-  }, s.language === 'es' ? 'Pon la fecha en la que necesitas o quieres lograrla.' : 'Set the date you need or want this goal done by.'), /*#__PURE__*/React.createElement("input", {
+    style: css('font-size:12.5px;font-weight:700;color:#1d1d1f;margin-bottom:10px;')
+  }, t('hitDate')), /*#__PURE__*/React.createElement("input", {
     type: "date",
     value: sgSource.customDate || '',
     onChange: e => updateGoal(sgSource.id, 'customDate', e.target.value),
@@ -4580,7 +5097,8 @@ function App() {
   }, "Expenses", /*#__PURE__*/React.createElement(InfoTip, {
     text: "Tap a day to view or log expenses. Tap the month to see the full summary."
   }))), !showDayLog && /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:14px;')
+    ref: expensesCalRef,
+    style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:14px;box-sizing:border-box;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;')
   }, /*#__PURE__*/React.createElement("button", {
@@ -4656,7 +5174,7 @@ function App() {
     onClick: () => dismissTabIntro('gastos'),
     style: css('flex:none;background:#fff;color:#0071e3;border:1.5px solid #d2d2d7;padding:8px 15px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
   }, t('gotIt'))), showDayLog && selectedDate && /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:14px;')
+    style: Object.assign(css('background:#fff;border-radius:16px;padding:16px;margin-bottom:14px;box-sizing:border-box;'), expensesCalH ? { minHeight: expensesCalH } : {})
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowDayLog(false),
     style: css('display:flex;align-items:center;gap:6px;background:none;border:none;color:#0071e3;font-size:13.5px;font-weight:600;cursor:pointer;padding:0 0 14px;')
@@ -5164,117 +5682,7 @@ function App() {
   }, t('tabIntroExtra')), /*#__PURE__*/React.createElement("button", {
     onClick: () => dismissTabIntro('extra'),
     style: css('flex:none;background:#fff;color:#0071e3;border:1.5px solid #d2d2d7;padding:8px 15px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
-  }, t('gotIt')))), s.tab === 'invest' && !hideInvestTab && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:16px;')
-  }, t('investments'), /*#__PURE__*/React.createElement(InfoTip, {
-    text: "Track what's growing your money outside your goals. Update the current value every so often — 6 months is a good rhythm."
-  })), /*#__PURE__*/React.createElement("div", {
-    style: css('background:linear-gradient(135deg,#0071e3,#5ac8fa);border-radius:20px;padding:22px;color:#fff;margin-bottom:18px;box-shadow:0 16px 40px rgba(0,113,227,0.25);')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;opacity:0.85;')
-  }, "Current value"), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:36px;font-weight:700;margin:4px 0 4px;')
-  }, fmt(investmentValueTotal)), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13px;opacity:0.9;margin-bottom:10px;')
-  }, fmt(investmentTotal), " invested · ", (() => {
-    const g = investmentValueTotal - investmentTotal;
-    const pct = investmentTotal > 0 ? g / investmentTotal * 100 : 0;
-    return (g >= 0 ? '+' : '−') + fmt(Math.abs(g)) + ' (' + (g >= 0 ? '+' : '−') + Math.abs(pct).toFixed(1) + '%)';
-  })()), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13.5px;line-height:1.5;opacity:0.95;')
-  }, s.investments.length === 0 ? 'Add an investment below to start tracking it.' : 'Across ' + s.investments.length + (s.investments.length === 1 ? ' investment.' : ' investments.'))), s.investments.length === 0 && /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border:1px solid #eef0f2;border-radius:16px;padding:18px;margin-bottom:16px;')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:15px;font-weight:700;color:#1d1d1f;margin-bottom:4px;')
-  }, s.language === 'es' ? 'Arma tu portafolio' : 'Build your portfolio'), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:12.5px;color:#86868b;line-height:1.4;margin-bottom:14px;')
-  }, s.language === 'es' ? 'Un punto de partida simple y muy usado: una mezcla de acciones locales, acciones internacionales y bonos. Elige una categoría para empezar — luego pon a qué fondo le estás haciendo.' : 'A simple, widely-used starting point: a mix of home-market stocks, international stocks, and bonds. Pick a category to start — then note which fund you\'re actually using.'), /*#__PURE__*/React.createElement("div", {
-    style: css('display:grid;grid-template-columns:repeat(3,1fr);gap:8px;')
-  }, [{
-    key: 'us',
-    label: s.language === 'es' ? 'Acciones EE.UU.' : 'US Stocks'
-  }, {
-    key: 'intl',
-    label: s.language === 'es' ? 'Acciones intl.' : 'Intl. Stocks'
-  }, {
-    key: 'bonds',
-    label: s.language === 'es' ? 'Bonos' : 'Bonds'
-  }].map(cat => /*#__PURE__*/React.createElement("button", {
-    key: cat.key,
-    onClick: () => addPortfolioFund(cat.label),
-    style: css('background:#eef6ff;border:none;border-radius:12px;padding:12px 6px;font-size:11.5px;font-weight:700;color:#0071e3;cursor:pointer;text-align:center;line-height:1.3;')
-  }, cat.label)))), investmentViews.map(inv => /*#__PURE__*/React.createElement("div", {
-    key: inv.id,
-    ref: pfRevealRef,
-    className: 'pf-reveal',
-    style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:12px;')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;gap:10px;align-items:center;margin-bottom:10px;')
-  }, /*#__PURE__*/React.createElement("input", {
-    type: "text",
-    value: inv.name,
-    onChange: e => updateInvestment(inv.id, 'name', e.target.value),
-    style: css('flex:1;min-width:0;font-size:15px;font-weight:600;border:none;background:transparent;padding:4px 0;')
-  }), /*#__PURE__*/React.createElement("button", {
-    onClick: () => removeInvestment(inv.id),
-    style: css('background:#f5f5f7;border:none;color:#ff3b30;width:26px;height:26px;border-radius:8px;cursor:pointer;font-size:14px;')
-  }, "×")), /*#__PURE__*/React.createElement("input", {
-    type: "text",
-    value: inv.fund || '',
-    placeholder: s.language === 'es' ? 'A qué fondo — ej. VTI, tu 401k…' : 'Which fund — e.g. VTI, your 401k…',
-    onChange: e => updateInvestment(inv.id, 'fund', e.target.value),
-    style: css('width:100%;font-size:12.5px;color:#6e6e73;border:none;background:transparent;padding:0 0 10px;margin-top:-6px;')
-  }), /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;gap:10px;align-items:center;flex-wrap:wrap;')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('flex:1;min-width:90px;')
-  }, /*#__PURE__*/React.createElement("label", {
-    style: css('display:block;font-size:11px;color:#86868b;font-weight:600;margin-bottom:4px;')
-  }, "Amount invested"), /*#__PURE__*/React.createElement("input", {
-    type: "number", inputMode: "decimal",
-    value: inv.amount || '',
-    onChange: e => updateInvestment(inv.id, 'amount', e.target.value),
-    style: css('width:100%;padding:8px 10px;border:1px solid #e5e5ea;border-radius:9px;font-size:13.5px;background:#fbfbfd;')
-  })), /*#__PURE__*/React.createElement("div", {
-    style: css('flex:1;min-width:90px;')
-  }, /*#__PURE__*/React.createElement("label", {
-    style: css('display:block;font-size:11px;color:#86868b;font-weight:600;margin-bottom:4px;')
-  }, "Current value"), /*#__PURE__*/React.createElement("input", {
-    type: "number", inputMode: "decimal",
-    value: inv.currentValue || '',
-    onChange: e => updateInvestment(inv.id, 'currentValue', e.target.value),
-    style: css('width:100%;padding:8px 10px;border:1px solid #e5e5ea;border-radius:9px;font-size:13.5px;background:#fbfbfd;')
-  }))), /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;justify-content:space-between;align-items:center;margin-top:10px;')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 13,
-      fontWeight: 700,
-      color: inv.gainAmount >= 0 ? '#34c759' : '#ff3b30'
-    }
-  }, inv.gainAmount >= 0 ? '+' : '−', fmt(Math.abs(inv.gainAmount)), " (", inv.gainAmount >= 0 ? '+' : '−', Math.abs(inv.gainPct).toFixed(1), "%)"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: inv.isStale ? '#ff9500' : '#86868b'
-    }
-  }, "as of ", inv.dateLabel)), inv.isStale && /*#__PURE__*/React.createElement("button", {
-    onClick: () => markInvestmentUpdated(inv.id),
-    style: css('width:100%;margin-top:10px;background:#fff2e5;border:none;color:#ff9500;border-radius:8px;padding:8px;font-size:11.5px;font-weight:700;cursor:pointer;')
-  }, "🔔 It's been ", inv.monthsSince, " months — update the value?"))), /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      addInvestment();
-      dismissTabIntro('invest');
-    },
-    style: css('width:100%;padding:13px;background:#0071e3;color:#fff;border:none;border-radius:14px;font-size:14.5px;font-weight:600;cursor:pointer;')
-  }, t('addInvestment')), !s.seenTabIntro.invest && /*#__PURE__*/React.createElement("div", {
-    className: "tip-banner",
-    style: css('display:flex;align-items:center;gap:12px;background:#fff;border-radius:16px;padding:16px 18px;margin-top:16px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,0.10);')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('flex:1;font-size:13px;color:#6e6e73;font-weight:400;line-height:1.3;')
-  }, t('tabIntroInvest')), /*#__PURE__*/React.createElement("button", {
-    onClick: () => dismissTabIntro('invest'),
-    style: css('flex:none;background:#fff;color:#0071e3;border:1.5px solid #d2d2d7;padding:8px 15px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
-  }, t('gotIt'))))))), !isDesktop && /*#__PURE__*/React.createElement("div", {
+  }, t('gotIt')))), s.tab === 'invest' && !hideInvestTab && /*#__PURE__*/React.createElement(React.Fragment, null, buildInvestTabContent())))), !isDesktop && /*#__PURE__*/React.createElement("div", {
     style: css('position:fixed;bottom:0;left:0;right:0;z-index:30;background:rgba(255,255,255,0.94);backdrop-filter:blur(14px);border-top:1px solid rgba(0,0,0,0.08);display:flex;padding:8px 4px calc(8px + env(safe-area-inset-bottom));')
   }, /*#__PURE__*/React.createElement(TabButton, {
     name: "inicio",
