@@ -645,24 +645,27 @@ function LockScreen(props) {
   function press(d) { if (pin.length >= 4) return; const next = pin + d; setPin(next); if (next.length === 4) submit(next); }
   function back() { setPin(pin.slice(0, -1)); }
   function doBio() { bioVerify(cfg.credId).then(function () { props.onUnlock(); }).catch(function () { setErr(true); setTimeout(function () { setErr(false); }, 700); }); }
-  const keyStyle = { width: 70, height: 70, borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,0.18)', color: '#fff', fontSize: 26, fontWeight: 600, cursor: 'pointer' };
+  const keyStyle = { width: 74, height: 74, borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,0.18)', color: '#fff', fontSize: 27, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: '-apple-system,BlinkMacSystemFont,\"SF Pro Display\",Inter,system-ui,sans-serif' };
+  function lockIcon(sz) { return React.createElement('svg', { viewBox: '0 0 24 24', width: sz, height: sz, fill: 'none', stroke: '#fff', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }, React.createElement('rect', { x: 4, y: 11, width: 16, height: 10, rx: 2.5 }), React.createElement('path', { d: 'M7.5 11V7.5a4.5 4.5 0 0 1 9 0V11' }), React.createElement('circle', { cx: 12, cy: 15.5, r: 1.35, fill: '#fff', stroke: 'none' })); }
+  function faceIcon(sz) { return React.createElement('svg', { viewBox: '0 0 24 24', width: sz, height: sz, fill: 'none', stroke: '#fff', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }, React.createElement('path', { d: 'M4 8.5V6.5A2.5 2.5 0 0 1 6.5 4H8.5' }), React.createElement('path', { d: 'M15.5 4H17.5A2.5 2.5 0 0 1 20 6.5V8.5' }), React.createElement('path', { d: 'M20 15.5V17.5A2.5 2.5 0 0 1 17.5 20H15.5' }), React.createElement('path', { d: 'M8.5 20H6.5A2.5 2.5 0 0 1 4 17.5V15.5' }), React.createElement('path', { d: 'M8.7 9.7V11.2' }), React.createElement('path', { d: 'M15.3 9.7V11.2' }), React.createElement('path', { d: 'M12 9.5V12.6L10.9 13.2' }), React.createElement('path', { d: 'M8.9 15.3C10.1 16.5 13.9 16.5 15.1 15.3' })); }
+  function backIcon(sz) { return React.createElement('svg', { viewBox: '0 0 24 24', width: sz, height: sz, fill: 'none', stroke: '#fff', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' }, React.createElement('path', { d: 'M21 5H8.6a2 2 0 0 0-1.6.8l-4.2 5.6a1 1 0 0 0 0 1.2l4.2 5.6a2 2 0 0 0 1.6.8H21a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z' }), React.createElement('path', { d: 'M17 9.5l-5 5' }), React.createElement('path', { d: 'M12 9.5l5 5' })); }
   function keyBtn(d) { return React.createElement('button', { key: d, onClick: function () { press(d); }, style: keyStyle }, d); }
-  return React.createElement('div', { style: css('position:fixed;inset:0;z-index:200;background:linear-gradient(135deg,#0071e3,#5ac8fa);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;color:#fff;text-align:center;') },
-    React.createElement('div', { style: css('font-size:34px;margin-bottom:8px;') }, '\uD83D\uDD12'),
-    React.createElement('div', { style: css('font-size:19px;font-weight:700;margin-bottom:4px;') }, lang === 'es' ? 'Ingresa tu PIN' : 'Enter your PIN'),
+  return React.createElement('div', { style: css('position:fixed;inset:0;z-index:200;background:linear-gradient(135deg,#0071e3,#5ac8fa);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;color:#fff;text-align:center;font-family:-apple-system,BlinkMacSystemFont,\"SF Pro Display\",Inter,system-ui,sans-serif;') },
+    React.createElement('div', { style: { width: 66, height: 66, borderRadius: 20, background: 'rgba(255,255,255,0.16)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 } }, lockIcon(30)),
+    React.createElement('div', { style: css('font-size:20px;font-weight:700;margin-bottom:5px;letter-spacing:-0.01em;') }, lang === 'es' ? 'Ingresa tu PIN' : 'Enter your PIN'),
     React.createElement('div', { style: css('font-size:13px;opacity:0.85;margin-bottom:24px;') }, lang === 'es' ? 'Para proteger tu informaci\u00F3n' : 'To protect your information'),
     React.createElement('div', { style: { display: 'flex', gap: 14, marginBottom: 26 } },
-      [0, 1, 2, 3].map(function (i) { return React.createElement('div', { key: i, style: { width: 14, height: 14, borderRadius: '50%', background: i < pin.length ? '#fff' : 'rgba(255,255,255,0.35)' } }); })
+      [0, 1, 2, 3].map(function (i) { return React.createElement('div', { key: i, style: { width: 14, height: 14, borderRadius: '50%', background: i < pin.length ? '#fff' : 'transparent', border: '1.5px solid rgba(255,255,255,0.7)' } }); })
     ),
-    React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 70px)', gap: 16, justifyContent: 'center' } },
+    React.createElement('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(3, 74px)', gap: 18, justifyContent: 'center' } },
       ['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(function (d) { return keyBtn(d); }).concat([
-        bioAvail ? React.createElement('button', { key: 'bio', onClick: doBio, style: keyStyle }, '\uD83D\uDE42') : React.createElement('div', { key: 'sp' }),
+        bioAvail ? React.createElement('button', { key: 'bio', onClick: doBio, 'aria-label': 'Face ID', style: keyStyle }, faceIcon(30)) : React.createElement('div', { key: 'sp' }),
         keyBtn('0'),
-        React.createElement('button', { key: 'bk', onClick: back, style: keyStyle }, '\u232B')
+        React.createElement('button', { key: 'bk', onClick: back, 'aria-label': 'Delete', style: keyStyle }, backIcon(26))
       ])
     ),
     err && React.createElement('div', { style: css('font-size:14px;margin-top:18px;font-weight:600;') }, lang === 'es' ? 'PIN incorrecto' : 'Wrong PIN'),
-    React.createElement('button', { onClick: props.onSignOut, style: css('margin-top:26px;background:none;border:none;color:#fff;opacity:0.85;font-size:13px;text-decoration:underline;cursor:pointer;') }, lang === 'es' ? 'Cerrar sesi\u00F3n' : 'Sign out')
+    React.createElement('button', { onClick: props.onSignOut, style: css('margin-top:28px;background:none;border:none;color:#fff;opacity:0.85;font-size:13px;font-weight:600;text-decoration:underline;cursor:pointer;font-family:-apple-system,BlinkMacSystemFont,\"SF Pro Display\",Inter,system-ui,sans-serif;') }, lang === 'es' ? 'Cerrar sesi\u00F3n' : 'Sign out')
   );
 }
 function SecuritySettings(props) {
@@ -2441,234 +2444,7 @@ function App() {
       fn();
     },
     style: css('flex:1;background:#ff3b30;color:#fff;border:none;padding:11px;border-radius:10px;font-size:13.5px;font-weight:600;cursor:pointer;')
-  }, s.language === 'es' ? 'Sí, continuar' : 'Yes, continue')))), !s.hasSeenWelcome && /*#__PURE__*/React.createElement("div", {
-    style: css('position:fixed;inset:0;z-index:100;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:24px;')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border-radius:20px;padding:26px 24px;max-width:360px;width:100%;box-shadow:0 30px 70px rgba(0,0,0,0.25);')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#0071e3,#34c759);display:flex;align-items:center;justify-content:center;margin-bottom:16px;')
-  }, /*#__PURE__*/React.createElement("svg", {
-    viewBox: "0 0 24 24",
-    width: "24",
-    height: "24",
-    fill: "none",
-    stroke: "#fff",
-    strokeWidth: "2",
-    strokeLinecap: "round",
-    strokeLinejoin: "round"
-  }, /*#__PURE__*/React.createElement("circle", {
-    cx: "12",
-    cy: "12",
-    r: "9"
-  }), /*#__PURE__*/React.createElement("path", {
-    d: "M12 7v5l3 3"
-  }))), welcomeStep === 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;gap:6px;margin-bottom:16px;')
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setLanguage('en'),
-    style: {
-      flex: 1,
-      background: s.language !== 'es' ? '#0071e3' : '#f5f5f7',
-      color: s.language !== 'es' ? '#fff' : '#1d1d1f',
-      border: 'none',
-      padding: 8,
-      borderRadius: 8,
-      fontSize: 12.5,
-      fontWeight: 700,
-      cursor: 'pointer'
-    }
-  }, "English"), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setLanguage('es'),
-    style: {
-      flex: 1,
-      background: s.language === 'es' ? '#0071e3' : '#f5f5f7',
-      color: s.language === 'es' ? '#fff' : '#1d1d1f',
-      border: 'none',
-      padding: 8,
-      borderRadius: 8,
-      fontSize: 12.5,
-      fontWeight: 700,
-      cursor: 'pointer'
-    }
-  }, "Español")), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:20px;font-weight:700;letter-spacing:-0.01em;margin-bottom:6px;')
-  }, t('welcome')), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13.5px;color:#6e6e73;line-height:1.5;margin-bottom:14px;')
-  }, t('profileQTitle')), /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;flex-direction:column;gap:8px;margin-bottom:18px;')
-  }, ['allowance', 'salary', 'freelance'].map(p => /*#__PURE__*/React.createElement("button", {
-    key: p,
-    onClick: () => setIncomeProfile(p),
-    style: {
-      textAlign: 'left',
-      padding: '12px 14px',
-      borderRadius: 12,
-      border: s.incomeProfile === p ? '2px solid #0071e3' : '1px solid #e5e5ea',
-      background: s.incomeProfile === p ? '#eef6ff' : '#fbfbfd',
-      fontSize: 13.5,
-      fontWeight: 600,
-      color: '#1d1d1f',
-      cursor: 'pointer'
-    }
-  }, p === 'allowance' ? t('profileAllowance') : p === 'salary' ? t('profileSalary') : t('profileFreelance')))), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setWelcomeStep(1),
-    style: css('width:100%;padding:12px;background:#0071e3;color:#fff;border:none;border-radius:12px;font-size:14.5px;font-weight:600;cursor:pointer;')
-  }, t('continueLabel')), sbClient && /*#__PURE__*/React.createElement("button", {
-    onClick: () => setShowLoginFromWelcome(true),
-    style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#0071e3;font-size:12.5px;font-weight:700;cursor:pointer;padding:0;margin-top:14px;')
-  }, s.language === 'es' ? '¿Ya tienes cuenta? Iniciar sesión →' : 'Already have an account? Log in →')) : welcomeStep === 1 ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:20px;font-weight:700;letter-spacing:-0.01em;margin-bottom:16px;')
-  }, t('welcome')), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13.5px;color:#6e6e73;margin-bottom:10px;')
-  }, t('howOldQ')), /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'relative',
-      marginBottom: 20
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    type: "number",
-    autoFocus: true,
-    placeholder: t('yourAge'),
-    value: s.studentAge || '',
-    onChange: e => setStudentAge(parseInt(e.target.value, 10) || null),
-    style: css('width:100%;padding:11px 12px;border:1px solid #d2d2d7;border-radius:12px;font-size:15px;background:#fbfbfd;')
-  })), s.studentAge && s.studentAge < 18 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13.5px;color:#6e6e73;margin-bottom:10px;')
-  }, t('investQ')), /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;flex-direction:column;gap:8px;margin-bottom:20px;')
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setInvestsWithParents(true),
-    style: {
-      textAlign: 'left',
-      padding: '11px 14px',
-      borderRadius: 11,
-      border: s.investsWithParents === true ? '2px solid #0071e3' : '1px solid #e5e5ea',
-      background: s.investsWithParents === true ? '#eef6ff' : '#fbfbfd',
-      fontSize: 13,
-      fontWeight: 600,
-      color: '#1d1d1f',
-      cursor: 'pointer'
-    }
-  }, t('investYes')), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setInvestsWithParents(false),
-    style: {
-      textAlign: 'left',
-      padding: '11px 14px',
-      borderRadius: 11,
-      border: s.investsWithParents === false ? '2px solid #0071e3' : '1px solid #e5e5ea',
-      background: s.investsWithParents === false ? '#eef6ff' : '#fbfbfd',
-      fontSize: 13,
-      fontWeight: 600,
-      color: '#1d1d1f',
-      cursor: 'pointer'
-    }
-  }, t('investNo')))), s.incomeProfile === 'salary' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13.5px;color:#6e6e73;margin-bottom:10px;')
-  }, t('employmentQ')), /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;gap:8px;margin-bottom:18px;')
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setEmploymentType('fulltime'),
-    style: {
-      flex: 1,
-      padding: 11,
-      borderRadius: 11,
-      border: s.employmentType !== 'parttime' ? '2px solid #0071e3' : '1px solid #e5e5ea',
-      background: s.employmentType !== 'parttime' ? '#eef6ff' : '#fbfbfd',
-      fontSize: 13,
-      fontWeight: 600,
-      color: '#1d1d1f',
-      cursor: 'pointer'
-    }
-  }, t('fulltimeLabel')), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setEmploymentType('parttime'),
-    style: {
-      flex: 1,
-      padding: 11,
-      borderRadius: 11,
-      border: s.employmentType === 'parttime' ? '2px solid #0071e3' : '1px solid #e5e5ea',
-      background: s.employmentType === 'parttime' ? '#eef6ff' : '#fbfbfd',
-      fontSize: 13,
-      fontWeight: 600,
-      color: '#1d1d1f',
-      cursor: 'pointer'
-    }
-  }, t('parttimeLabel'))), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13.5px;color:#6e6e73;margin-bottom:10px;')
-  }, t('payFreqQ')), /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;gap:8px;margin-bottom:20px;')
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setPayFrequency('monthly'),
-    style: {
-      flex: 1,
-      padding: 11,
-      borderRadius: 11,
-      border: s.payFrequency !== 'biweekly' ? '2px solid #0071e3' : '1px solid #e5e5ea',
-      background: s.payFrequency !== 'biweekly' ? '#eef6ff' : '#fbfbfd',
-      fontSize: 13,
-      fontWeight: 600,
-      color: '#1d1d1f',
-      cursor: 'pointer'
-    }
-  }, t('monthlyLabel')), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setPayFrequency('biweekly'),
-    style: {
-      flex: 1,
-      padding: 11,
-      borderRadius: 11,
-      border: s.payFrequency === 'biweekly' ? '2px solid #0071e3' : '1px solid #e5e5ea',
-      background: s.payFrequency === 'biweekly' ? '#eef6ff' : '#fbfbfd',
-      fontSize: 13,
-      fontWeight: 600,
-      color: '#1d1d1f',
-      cursor: 'pointer'
-    }
-  }, t('biweeklyLabel')))), s.incomeProfile === 'freelance' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13.5px;color:#6e6e73;margin-bottom:10px;')
-  }, t('fixedContractsQ')), /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;gap:8px;margin-bottom:20px;')
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setHasFixedContracts(true),
-    style: {
-      flex: 1,
-      padding: 11,
-      borderRadius: 11,
-      border: s.hasFixedContracts === true ? '2px solid #0071e3' : '1px solid #e5e5ea',
-      background: s.hasFixedContracts === true ? '#eef6ff' : '#fbfbfd',
-      fontSize: 13,
-      fontWeight: 600,
-      color: '#1d1d1f',
-      cursor: 'pointer'
-    }
-  }, t('yesLabel')), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setHasFixedContracts(false),
-    style: {
-      flex: 1,
-      padding: 11,
-      borderRadius: 11,
-      border: s.hasFixedContracts === false ? '2px solid #0071e3' : '1px solid #e5e5ea',
-      background: s.hasFixedContracts === false ? '#eef6ff' : '#fbfbfd',
-      fontSize: 13,
-      fontWeight: 600,
-      color: '#1d1d1f',
-      cursor: 'pointer'
-    }
-  }, t('noLabel')))), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setWelcomeStep(2),
-    style: css('width:100%;padding:12px;background:#0071e3;color:#fff;border:none;border-radius:12px;font-size:14.5px;font-weight:600;cursor:pointer;')
-  }, t('continueLabel'))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:20px;font-weight:700;letter-spacing:-0.01em;margin-bottom:6px;')
-  }, t('welcome')), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13.5px;color:#6e6e73;line-height:1.5;margin-bottom:16px;')
-  }, s.language === 'es' ? 'Un aviso rápido antes de empezar:' : 'A quick heads-up before you start:'), s.language === 'es' ? /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13px;color:#1d1d1f;line-height:1.7;margin-bottom:14px;')
-  }, "1. Pon tu ", /*#__PURE__*/React.createElement("b", null, s.incomeProfile === 'allowance' ? 'mesada' : s.incomeProfile === 'freelance' ? 'ingreso de contratos fijos' : 'ingreso'), " en Inicio.", /*#__PURE__*/React.createElement("br", null), "2. Agrega tus ", /*#__PURE__*/React.createElement("b", null, "gastos"), " en la pestaña Gastos — marca los fijos.", /*#__PURE__*/React.createElement("br", null), "3. Crea una ", /*#__PURE__*/React.createElement("b", null, "meta"), " y registra tus ahorros ahí.", /*#__PURE__*/React.createElement("br", null), "4. Todo se guarda solo en ", /*#__PURE__*/React.createElement("b", null, "este dispositivo/navegador"), " — usa Ajustes → Exportar para respaldarlo.") : /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:13px;color:#1d1d1f;line-height:1.7;margin-bottom:14px;')
-  }, "1. Set your ", /*#__PURE__*/React.createElement("b", null, s.incomeProfile === 'allowance' ? 'allowance' : s.incomeProfile === 'freelance' ? 'fixed contracts income' : 'income'), " on the Home tab.", /*#__PURE__*/React.createElement("br", null), "2. Add your ", /*#__PURE__*/React.createElement("b", null, "expenses"), " in the Expenses tab — mark the fixed ones.", /*#__PURE__*/React.createElement("br", null), "3. Add a ", /*#__PURE__*/React.createElement("b", null, "goal"), " and log savings as you go.", /*#__PURE__*/React.createElement("br", null), "4. Everything saves only on ", /*#__PURE__*/React.createElement("b", null, "this device/browser"), " — use Settings → Export to back it up."), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:12px;color:#0071e3;background:#eef6ff;border-radius:10px;padding:10px 12px;margin-bottom:18px;line-height:1.5;')
-  }, s.language === 'es' ? '🤝 Próximamente: metas compartidas — invita a alguien de confianza a ahorrar contigo para el mismo objetivo (ej. una casa), y cada quien aporta un % justo según su propio ingreso y gastos.' : "🤝 Coming soon: shared goals — invite someone you trust to save toward the same goal together (like a house), with each person's fair share based on their own income and expenses."), /*#__PURE__*/React.createElement("button", {
-    onClick: dismissWelcome,
-    style: css('width:100%;padding:12px;background:#0071e3;color:#fff;border:none;border-radius:12px;font-size:14.5px;font-weight:600;cursor:pointer;')
-  }, t('getStarted'))))), /*#__PURE__*/React.createElement("div", {
+  }, s.language === 'es' ? 'Sí, continuar' : 'Yes, continue')))), !s.hasSeenWelcome && React.createElement('div', { style: css('position:fixed;inset:0;z-index:100;background:#fff;display:flex;flex-direction:column;overflow-y:auto;padding:calc(env(safe-area-inset-top) + 20px) 24px calc(env(safe-area-inset-bottom) + 28px);') }, React.createElement('div', { style: css('width:100%;max-width:420px;margin:0 auto;flex:1;display:flex;flex-direction:column;') }, React.createElement('div', { style: css('display:flex;justify-content:flex-end;margin-bottom:2px;') }, React.createElement('button', { onClick: function(){ setLanguage(s.language==='es'?'en':'es'); }, style: css('background:none;border:none;color:#86868b;font-size:12.5px;font-weight:700;cursor:pointer;padding:4px;') }, s.language==='es'?'EN':'ES')), (welcomeStep < 3) && React.createElement('div', { style: css('margin-bottom:8px;') }, React.createElement('div', { style: css('text-align:center;font-size:12px;color:#86868b;font-weight:600;margin-bottom:8px;') }, welcomeStep===0 ? (s.language==='es'?'Paso 1':'Step 1') : welcomeStep===1 ? (s.language==='es'?'Paso 2 de 3':'Step 2 of 3') : (s.language==='es'?'Paso 3 de 3':'Step 3 of 3')), React.createElement('div', { style: css('display:flex;gap:8px;') }, [0,1,2].map(function(idx){ return React.createElement('div', { key: idx, style: { flex:1, height:4, borderRadius:2, background: idx<=welcomeStep ? '#1d1d1f' : '#e5e5ea' } }); }))), welcomeStep===0 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'14vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, t('profileQTitle')), ['allowance','salary','freelance'].map(function(pp){ return React.createElement('button', { key:pp, onClick: function(){ setIncomeProfile(pp); }, style: { display:'block', width:'100%', textAlign:'left', padding:'14px 16px', borderRadius:12, border: s.incomeProfile===pp ? '2px solid #2f6bff' : '1px solid #d2d2d7', background: s.incomeProfile===pp ? '#eef4ff' : '#fff', fontSize:14, fontWeight:500, color:'#1d1d1f', cursor:'pointer', marginBottom:10 } }, pp==='allowance'?t('profileAllowance'):pp==='salary'?t('profileSalary'):t('profileFreelance')); }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(1), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : welcomeStep===1 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'14vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, t('howOldQ')), React.createElement('input', { type:'number', autoFocus:true, placeholder: t('yourAge'), value: s.studentAge || '', onChange: function(e){ setStudentAge(parseInt(e.target.value,10)||null); }, style: css('width:100%;padding:14px 16px;border:1px solid #d2d2d7;border-radius:12px;font-size:15px;background:#fff;margin-bottom:16px;') }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(2), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : welcomeStep===2 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'14vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, s.language==='es'?'¿Inviertes?':'Do you invest?'), [ { k:true, label: s.language==='es'?'Sí, mis padres y yo invertimos juntos':'Yes, my parents and I invest together' }, { k:'own', label: s.language==='es'?'Sí, tengo mi propia cuenta':'Yes, I have my own account' }, { k:false, label: t('investNo') } ].map(function(opt,ix){ return React.createElement('button', { key:ix, onClick: function(){ setInvestsWithParents(opt.k); }, style: { display:'block', width:'100%', textAlign:'left', padding:'14px 16px', borderRadius:12, border: s.investsWithParents===opt.k ? '2px solid #2f6bff' : '1px solid #d2d2d7', background: s.investsWithParents===opt.k ? '#eef4ff' : '#fff', fontSize:14, fontWeight:500, color:'#1d1d1f', cursor:'pointer', marginBottom:10 } }, opt.label); }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(3), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'8vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;line-height:1.15;margin-bottom:26px;') }, s.language==='es'?'¡Últimos pasos! Es hora de configurar tu cuenta':"Last steps! It's time to set up your account"), [ { tt: s.language==='es'?'Ingreso':'Income', dd: s.language==='es'?'Dinos cuánto y cada cuánto te pagan.':'Tell us how much and how often you get paid.', tb:'inicio' }, { tt: s.language==='es'?'Plan de gastos':'Expenses Budget Plan', dd: s.language==='es'?'Define tu plan de gasto del mes.':'Set your spending plan for the month.', tb:'gastos' }, { tt: s.language==='es'?'Metas':'Goals', dd: s.language==='es'?'Agrega metas que quieras lograr.':'Add goals you want to achieve.', tb:'metas' } ].map(function(card,ci){ return React.createElement('button', { key:ci, onClick: function(){ dismissWelcome(); setTab(card.tb); }, style: css('display:block;width:100%;text-align:left;background:#fff;border:1px solid #e5e5ea;border-radius:14px;padding:16px;margin-bottom:12px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.05);') }, React.createElement('div', { style: css('font-size:15px;font-weight:700;color:#1d1d1f;margin-bottom:3px;') }, card.tt), React.createElement('div', { style: css('font-size:12.5px;color:#86868b;') }, card.dd)); }), React.createElement('button', { onClick: function(){ dismissWelcome(); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#2f6bff;font-size:14px;font-weight:700;cursor:pointer;margin-top:8px;padding:0;') }, s.language==='es'?'Hacerlo después':'Do it later') ))), /*#__PURE__*/React.createElement("div", {
     style: css('padding-bottom:' + (isDesktop ? '20' : '96') + 'px;display:flex;')
   }, isDesktop && /*#__PURE__*/React.createElement("div", {
     style: {
