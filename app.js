@@ -206,6 +206,23 @@ function css(s) {
 function fmt(n) {
   return '$' + Math.round(n || 0).toLocaleString('en-US');
 }
+function pfRevealRef(el) {
+  if (!el || el._pfRevealed) return;
+  if (typeof IntersectionObserver === 'undefined') {
+    el.classList.add('pf-visible');
+    return;
+  }
+  const io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('pf-visible');
+        io.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.15, rootMargin: '0px 0px -30px 0px' });
+  io.observe(el);
+  el._pfRevealed = true;
+}
 function sum(rows) {
   return rows.reduce((a, r) => a + (parseFloat(r.amount) || 0), 0);
 }
@@ -776,6 +793,17 @@ function App() {
   const [allocatingLeftover, setAllocatingLeftover] = useState(false);
   const [welcomeStep, setWelcomeStep] = useState(0);
   const [settingsView, setSettingsView] = useState('menu');
+  const homeHeroRef = useRef(null);
+  const [homeHeroH, setHomeHeroH] = useState(230);
+  useEffect(function () {
+    if (!homeHeroRef.current || typeof ResizeObserver === 'undefined') return;
+    const el = homeHeroRef.current;
+    const ro = new ResizeObserver(function (entries) {
+      for (const entry of entries) setHomeHeroH(Math.ceil(entry.contentRect.height));
+    });
+    ro.observe(el);
+    return function () { ro.disconnect(); };
+  });
   const [lockCfg, setLockCfg] = useState(function () { return readLock(); });
   const [locked, setLocked] = useState(function () {
     try {
@@ -2430,8 +2458,10 @@ function App() {
   return /*#__PURE__*/React.createElement("div", {
     style: css('min-height:100vh;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",Inter,system-ui,sans-serif;color:#1d1d1f;')
   }, confirmDialog && /*#__PURE__*/React.createElement("div", {
+    className: "pf-overlay-in",
     style: css('position:fixed;inset:0;z-index:110;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:24px;')
   }, /*#__PURE__*/React.createElement("div", {
+    className: "pf-modal-in",
     style: css('background:#fff;border-radius:18px;padding:22px;max-width:340px;width:100%;box-shadow:0 30px 70px rgba(0,0,0,0.25);')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:14.5px;color:#1d1d1f;line-height:1.5;margin-bottom:20px;')
@@ -2447,7 +2477,7 @@ function App() {
       fn();
     },
     style: css('flex:1;background:#ff3b30;color:#fff;border:none;padding:11px;border-radius:10px;font-size:13.5px;font-weight:600;cursor:pointer;')
-  }, s.language === 'es' ? 'Sí, continuar' : 'Yes, continue')))), quickAddGoalId && (function () { var qa = s.goals.find(function (g) { return g.id === quickAddGoalId; }); if (!qa) return null; var qaMonthly = buildGoalView(qa, false).monthlyBoosted; return React.createElement('div', { onClick: function () { setQuickAddGoalId(null); }, style: css('position:fixed;inset:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:24px;') }, React.createElement('div', { onClick: function (e) { e.stopPropagation(); }, style: css('background:#fff;border-radius:20px;padding:22px;max-width:340px;width:100%;box-shadow:0 30px 70px rgba(0,0,0,0.25);') }, React.createElement('div', { style: css('display:flex;align-items:center;gap:12px;margin-bottom:16px;') }, React.createElement('div', { style: { width: 40, height: 40, borderRadius: 11, background: qa.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' } }, React.createElement(GoalIconGlyph, { icon: qa.icon, size: 20 })), React.createElement('div', null, React.createElement('div', { style: css('font-size:16px;font-weight:700;') }, s.language === 'es' ? 'Agregar ahorro' : 'Add savings'), React.createElement('div', { style: css('font-size:12.5px;color:#86868b;') }, qa.name))), React.createElement('div', { style: { position: 'relative', marginBottom: 12 } }, React.createElement('span', { style: css('position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:17px;color:#86868b;pointer-events:none;') }, '$'), React.createElement('input', { type: 'number', autoFocus: true, placeholder: '0', value: depositAmount, onChange: function (e) { setDepositAmount(e.target.value); }, onKeyDown: function (e) { if (e.key === 'Enter') { registerDeposit(quickAddGoalId); setQuickAddGoalId(null); } }, style: css('width:100%;padding:13px 12px 13px 26px;border:1px solid #d2d2d7;border-radius:12px;font-size:18px;font-weight:700;background:#fbfbfd;') })), qaMonthly > 0 && React.createElement('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } }, React.createElement('button', { onClick: function () { setDepositAmount(String(Math.round(qaMonthly))); }, style: css('flex:1;background:#f5f5f7;border:none;border-radius:10px;padding:9px;font-size:12.5px;font-weight:600;color:#1d1d1f;cursor:pointer;') }, (s.language === 'es' ? 'Este mes: ' : 'This month: ') + fmt(qaMonthly)), React.createElement('button', { onClick: function () { setDepositAmount(String(Math.round(qaMonthly / 2))); }, style: css('flex:none;background:#f5f5f7;border:none;border-radius:10px;padding:9px 12px;font-size:12.5px;font-weight:600;color:#1d1d1f;cursor:pointer;') }, s.language === 'es' ? 'Mitad' : 'Half')), React.createElement('div', { style: { display: 'flex', gap: 10 } }, React.createElement('button', { onClick: function () { setQuickAddGoalId(null); setDepositAmount(''); }, style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;') }, s.language === 'es' ? 'Cancelar' : 'Cancel'), React.createElement('button', { onClick: function () { registerDeposit(quickAddGoalId); setQuickAddGoalId(null); }, style: css('flex:1;background:#0071e3;color:#fff;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;') }, s.language === 'es' ? 'Agregar' : 'Add')))); })(), !s.hasSeenWelcome && React.createElement('div', { style: css('position:fixed;inset:0;z-index:100;background:#fff;display:flex;flex-direction:column;overflow-y:auto;padding:calc(env(safe-area-inset-top) + 20px) 24px calc(env(safe-area-inset-bottom) + 28px);') }, React.createElement('div', { style: css('width:100%;max-width:420px;margin:0 auto;flex:1;display:flex;flex-direction:column;') }, React.createElement('div', { style: css('display:flex;justify-content:flex-end;margin-bottom:2px;') }, React.createElement('button', { onClick: function(){ setLanguage(s.language==='es'?'en':'es'); }, style: css('background:none;border:none;color:#86868b;font-size:12.5px;font-weight:700;cursor:pointer;padding:4px;') }, s.language==='es'?'EN':'ES')), (welcomeStep < 3) && React.createElement('div', { style: css('margin-bottom:8px;') }, React.createElement('div', { style: css('text-align:center;font-size:12px;color:#86868b;font-weight:600;margin-bottom:8px;') }, welcomeStep===0 ? (s.language==='es'?'Paso 1':'Step 1') : welcomeStep===1 ? (s.language==='es'?'Paso 2 de 3':'Step 2 of 3') : (s.language==='es'?'Paso 3 de 3':'Step 3 of 3')), React.createElement('div', { style: css('display:flex;gap:8px;') }, [0,1,2].map(function(idx){ return React.createElement('div', { key: idx, style: { flex:1, height:4, borderRadius:2, background: idx<=welcomeStep ? '#1d1d1f' : '#e5e5ea' } }); }))), welcomeStep===0 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, t('profileQTitle')), ['allowance','salary','freelance'].map(function(pp){ return React.createElement('button', { key:pp, onClick: function(){ setIncomeProfile(pp); }, style: { display:'block', width:'100%', textAlign:'left', padding:'14px 16px', borderRadius:12, border: s.incomeProfile===pp ? '2px solid #2f6bff' : '1px solid #d2d2d7', background: s.incomeProfile===pp ? '#eef4ff' : '#fff', fontSize:14, fontWeight:500, color:'#1d1d1f', cursor:'pointer', marginBottom:10 } }, pp==='allowance'?t('profileAllowance'):pp==='salary'?t('profileSalary'):t('profileFreelance')); }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(1), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : welcomeStep===1 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, t('howOldQ')), React.createElement('input', { type:'number', autoFocus:true, placeholder: t('yourAge'), value: s.studentAge || '', onChange: function(e){ setStudentAge(parseInt(e.target.value,10)||null); }, style: css('width:100%;padding:14px 16px;border:1px solid #d2d2d7;border-radius:12px;font-size:15px;background:#fff;margin-bottom:16px;') }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(2), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : welcomeStep===2 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, s.language==='es'?'¿Inviertes?':'Do you invest?'), [ { k:true, label: s.language==='es'?'Sí, mis padres y yo invertimos juntos':'Yes, my parents and I invest together' }, { k:'own', label: s.language==='es'?'Sí, tengo mi propia cuenta':'Yes, I have my own account' }, { k:false, label: t('investNo') } ].map(function(opt,ix){ return React.createElement('button', { key:ix, onClick: function(){ setInvestsWithParents(opt.k); }, style: { display:'block', width:'100%', textAlign:'left', padding:'14px 16px', borderRadius:12, border: s.investsWithParents===opt.k ? '2px solid #2f6bff' : '1px solid #d2d2d7', background: s.investsWithParents===opt.k ? '#eef4ff' : '#fff', fontSize:14, fontWeight:500, color:'#1d1d1f', cursor:'pointer', marginBottom:10 } }, opt.label); }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(3), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'8vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;line-height:1.15;margin-bottom:26px;') }, s.language==='es'?'¡Últimos pasos! Es hora de configurar tu cuenta':"Last steps! It's time to set up your account"), [ { tt: s.language==='es'?'Ingreso':'Income', dd: s.language==='es'?'Dinos cuánto y cada cuánto te pagan.':'Tell us how much and how often you get paid.', tb:'inicio' }, { tt: s.language==='es'?'Plan de gastos':'Expenses Budget Plan', dd: s.language==='es'?'Define tu plan de gasto del mes.':'Set your spending plan for the month.', tb:'budgetPlan' }, { tt: s.language==='es'?'Metas':'Goals', dd: s.language==='es'?'Agrega metas que quieras lograr.':'Add goals you want to achieve.', tb:'metas' } ].map(function(card,ci){ return React.createElement('button', { key:ci, onClick: function(){ dismissWelcome(); setTab(card.tb); }, style: css('display:block;width:100%;text-align:left;background:#fff;border:1px solid #e5e5ea;border-radius:14px;padding:16px;margin-bottom:12px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.05);') }, React.createElement('div', { style: css('font-size:15px;font-weight:700;color:#1d1d1f;margin-bottom:3px;') }, card.tt), React.createElement('div', { style: css('font-size:12.5px;color:#86868b;') }, card.dd)); }), React.createElement('button', { onClick: function(){ dismissWelcome(); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#2f6bff;font-size:14px;font-weight:700;cursor:pointer;margin-top:8px;padding:0;') }, s.language==='es'?'Hacerlo después':'Do it later') ))), /*#__PURE__*/React.createElement("div", {
+  }, s.language === 'es' ? 'Sí, continuar' : 'Yes, continue')))), quickAddGoalId && (function () { var qa = s.goals.find(function (g) { return g.id === quickAddGoalId; }); if (!qa) return null; var qaMonthly = buildGoalView(qa, false).monthlyBoosted; return React.createElement('div', { onClick: function () { setQuickAddGoalId(null); }, className: 'pf-overlay-in', style: css('position:fixed;inset:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:24px;') }, React.createElement('div', { onClick: function (e) { e.stopPropagation(); }, className: 'pf-modal-in', style: css('background:#fff;border-radius:20px;padding:22px;max-width:340px;width:100%;box-shadow:0 30px 70px rgba(0,0,0,0.25);') }, React.createElement('div', { style: css('display:flex;align-items:center;gap:12px;margin-bottom:16px;') }, React.createElement('div', { style: { width: 40, height: 40, borderRadius: 11, background: qa.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' } }, React.createElement(GoalIconGlyph, { icon: qa.icon, size: 20 })), React.createElement('div', null, React.createElement('div', { style: css('font-size:16px;font-weight:700;') }, s.language === 'es' ? 'Agregar ahorro' : 'Add savings'), React.createElement('div', { style: css('font-size:12.5px;color:#86868b;') }, qa.name))), React.createElement('div', { style: { position: 'relative', marginBottom: 12 } }, React.createElement('span', { style: css('position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:17px;color:#86868b;pointer-events:none;') }, '$'), React.createElement('input', { type: 'number', inputMode: 'decimal', autoFocus: true, placeholder: '0', value: depositAmount, onChange: function (e) { setDepositAmount(e.target.value); }, onKeyDown: function (e) { if (e.key === 'Enter') { registerDeposit(quickAddGoalId); setQuickAddGoalId(null); } }, style: css('width:100%;padding:13px 12px 13px 26px;border:1px solid #d2d2d7;border-radius:12px;font-size:18px;font-weight:700;background:#fbfbfd;') })), qaMonthly > 0 && React.createElement('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } }, React.createElement('button', { onClick: function () { setDepositAmount(String(Math.round(qaMonthly))); }, style: css('flex:1;background:#f5f5f7;border:none;border-radius:10px;padding:9px;font-size:12.5px;font-weight:600;color:#1d1d1f;cursor:pointer;') }, (s.language === 'es' ? 'Este mes: ' : 'This month: ') + fmt(qaMonthly)), React.createElement('button', { onClick: function () { setDepositAmount(String(Math.round(qaMonthly / 2))); }, style: css('flex:none;background:#f5f5f7;border:none;border-radius:10px;padding:9px 12px;font-size:12.5px;font-weight:600;color:#1d1d1f;cursor:pointer;') }, s.language === 'es' ? 'Mitad' : 'Half')), React.createElement('div', { style: { display: 'flex', gap: 10 } }, React.createElement('button', { onClick: function () { setQuickAddGoalId(null); setDepositAmount(''); }, style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;') }, s.language === 'es' ? 'Cancelar' : 'Cancel'), React.createElement('button', { onClick: function () { registerDeposit(quickAddGoalId); setQuickAddGoalId(null); }, style: css('flex:1;background:#0071e3;color:#fff;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;') }, s.language === 'es' ? 'Agregar' : 'Add')))); })(), !s.hasSeenWelcome && React.createElement('div', { style: css('position:fixed;inset:0;z-index:100;background:#fff;display:flex;flex-direction:column;overflow-y:auto;padding:calc(env(safe-area-inset-top) + 20px) 24px calc(env(safe-area-inset-bottom) + 28px);') }, React.createElement('div', { style: css('width:100%;max-width:420px;margin:0 auto;flex:1;display:flex;flex-direction:column;') }, React.createElement('div', { style: css('display:flex;justify-content:flex-end;margin-bottom:2px;') }, React.createElement('button', { onClick: function(){ setLanguage(s.language==='es'?'en':'es'); }, style: css('background:none;border:none;color:#86868b;font-size:12.5px;font-weight:700;cursor:pointer;padding:4px;') }, s.language==='es'?'EN':'ES')), (welcomeStep < 3) && React.createElement('div', { style: css('margin-bottom:8px;') }, React.createElement('div', { style: css('text-align:center;font-size:12px;color:#86868b;font-weight:600;margin-bottom:8px;') }, welcomeStep===0 ? (s.language==='es'?'Paso 1':'Step 1') : welcomeStep===1 ? (s.language==='es'?'Paso 2 de 3':'Step 2 of 3') : (s.language==='es'?'Paso 3 de 3':'Step 3 of 3')), React.createElement('div', { style: css('display:flex;gap:8px;') }, [0,1,2].map(function(idx){ return React.createElement('div', { key: idx, style: { flex:1, height:4, borderRadius:2, background: idx<=welcomeStep ? '#1d1d1f' : '#e5e5ea' } }); }))), welcomeStep===0 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, t('profileQTitle')), ['allowance','salary','freelance'].map(function(pp){ return React.createElement('button', { key:pp, onClick: function(){ setIncomeProfile(pp); }, style: { display:'block', width:'100%', textAlign:'left', padding:'14px 16px', borderRadius:12, border: s.incomeProfile===pp ? '2px solid #2f6bff' : '1px solid #d2d2d7', background: s.incomeProfile===pp ? '#eef4ff' : '#fff', fontSize:14, fontWeight:500, color:'#1d1d1f', cursor:'pointer', marginBottom:10 } }, pp==='allowance'?t('profileAllowance'):pp==='salary'?t('profileSalary'):t('profileFreelance')); }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(1), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : welcomeStep===1 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, t('howOldQ')), React.createElement('input', { type:'number', inputMode:'numeric', autoFocus:true, placeholder: t('yourAge'), value: s.studentAge || '', onChange: function(e){ setStudentAge(parseInt(e.target.value,10)||null); }, style: css('width:100%;padding:14px 16px;border:1px solid #d2d2d7;border-radius:12px;font-size:15px;background:#fff;margin-bottom:16px;') }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(2), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : welcomeStep===2 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, s.language==='es'?'¿Inviertes?':'Do you invest?'), [ { k:true, label: s.language==='es'?'Sí, mis padres y yo invertimos juntos':'Yes, my parents and I invest together' }, { k:'own', label: s.language==='es'?'Sí, tengo mi propia cuenta':'Yes, I have my own account' }, { k:false, label: t('investNo') } ].map(function(opt,ix){ return React.createElement('button', { key:ix, onClick: function(){ setInvestsWithParents(opt.k); }, style: { display:'block', width:'100%', textAlign:'left', padding:'14px 16px', borderRadius:12, border: s.investsWithParents===opt.k ? '2px solid #2f6bff' : '1px solid #d2d2d7', background: s.investsWithParents===opt.k ? '#eef4ff' : '#fff', fontSize:14, fontWeight:500, color:'#1d1d1f', cursor:'pointer', marginBottom:10 } }, opt.label); }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(3), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'8vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;line-height:1.15;margin-bottom:26px;') }, s.language==='es'?'¡Últimos pasos! Es hora de configurar tu cuenta':"Last steps! It's time to set up your account"), [ { tt: s.language==='es'?'Ingreso':'Income', dd: s.language==='es'?'Dinos cuánto y cada cuánto te pagan.':'Tell us how much and how often you get paid.', tb:'inicio' }, { tt: s.language==='es'?'Plan de gastos':'Expenses Budget Plan', dd: s.language==='es'?'Define tu plan de gasto del mes.':'Set your spending plan for the month.', tb:'budgetPlan' }, { tt: s.language==='es'?'Metas':'Goals', dd: s.language==='es'?'Agrega metas que quieras lograr.':'Add goals you want to achieve.', tb:'metas' } ].map(function(card,ci){ return React.createElement('button', { key:ci, onClick: function(){ dismissWelcome(); setTab(card.tb); }, style: css('display:block;width:100%;text-align:left;background:#fff;border:1px solid #e5e5ea;border-radius:14px;padding:16px;margin-bottom:12px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.05);') }, React.createElement('div', { style: css('font-size:15px;font-weight:700;color:#1d1d1f;margin-bottom:3px;') }, card.tt), React.createElement('div', { style: css('font-size:12.5px;color:#86868b;') }, card.dd)); }), React.createElement('button', { onClick: function(){ dismissWelcome(); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#2f6bff;font-size:14px;font-weight:700;cursor:pointer;margin-top:8px;padding:0;') }, s.language==='es'?'Hacerlo después':'Do it later') ))), /*#__PURE__*/React.createElement("div", {
     style: css('padding-bottom:' + (isDesktop ? '20' : '96') + 'px;display:flex;')
   }, isDesktop && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -2556,9 +2586,11 @@ function App() {
       padding: isDesktop ? '20px 24px 0' : 'calc(20px + env(safe-area-inset-top)) 20px 0'
     }
   }, s.tab === 'inicio' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: css('position:relative;background:linear-gradient(135deg,' + (homeSpentPct >= 100 ? '#ff3b30,#ff9500' : '#0071e3,#5ac8fa') + ');color:#fff;' + (isDesktop ? 'border-radius:20px;padding:20px;margin-bottom:16px;box-shadow:0 14px 34px rgba(0,113,227,0.22);' : 'margin:calc(-20px - env(safe-area-inset-top)) -20px 0 -20px;padding:calc(env(safe-area-inset-top) + 58px) 20px 48px;border-radius:0 0 28px 28px;box-shadow:0 10px 28px rgba(0,113,227,0.18);'))
+    ref: homeHeroRef,
+    style: css('position:relative;background:linear-gradient(135deg,' + (homeSpentPct >= 100 ? '#ff3b30,#ff9500' : '#0071e3,#5ac8fa') + ');color:#fff;' + (isDesktop ? 'border-radius:20px;padding:20px;margin-bottom:16px;box-shadow:0 14px 34px rgba(0,113,227,0.22);' : 'position:fixed;top:0;left:0;right:0;z-index:0;padding:calc(env(safe-area-inset-top) + 58px) 20px 48px;box-shadow:0 10px 28px rgba(0,113,227,0.18);'))
   }, !isDesktop && /*#__PURE__*/React.createElement("button", {
     onClick: () => setTab('settings'),
+    "aria-label": "Settings",
     style: css('position:absolute;top:calc(env(safe-area-inset-top) + 14px);right:16px;background:rgba(255,255,255,0.2);border:none;width:34px;height:34px;border-radius:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2;')
   }, /*#__PURE__*/React.createElement("svg", {
     viewBox: "0 0 24 24", width: "18", height: "18", fill: "none", stroke: "#fff", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round"
@@ -2599,8 +2631,18 @@ function App() {
       marginTop: 12
     }
   }, homeSpendHeadline))), /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;margin:-26px -20px 0 -20px;padding:28px 20px calc(env(safe-area-inset-bottom) + 90px);border-radius:28px 28px 0 0;position:relative;z-index:1;min-height:74vh;')
-  }, s.pendingLeftover && /*#__PURE__*/React.createElement("div", {
+    style: isDesktop ? css('background:#fff;margin:-26px -20px 0 -20px;padding:28px 20px calc(env(safe-area-inset-bottom) + 90px);border-radius:28px 28px 0 0;position:relative;z-index:1;min-height:74vh;') : {
+      background: '#fff',
+      marginTop: Math.max(homeHeroH - 26, 0),
+      marginLeft: -20,
+      marginRight: -20,
+      padding: '28px 20px calc(env(safe-area-inset-bottom) + 90px)',
+      borderRadius: '28px 28px 0 0',
+      position: 'relative',
+      zIndex: 1,
+      minHeight: '74vh'
+    }
+  }, !!s.pendingLeftover && /*#__PURE__*/React.createElement("div", {
     style: css('background:linear-gradient(135deg,#0071e3,#34c759);border-radius:18px;padding:18px;color:#fff;margin-bottom:16px;box-shadow:0 12px 30px rgba(0,113,227,0.25);')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;opacity:0.9;')
@@ -2626,7 +2668,7 @@ function App() {
   }, /*#__PURE__*/React.createElement("span", {
     style: css('font-size:13px;')
   }, "Add to spending"), /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     placeholder: "0",
     value: leftoverSplits.spending || '',
     onChange: e => setLeftoverSplits(v => ({
@@ -2640,7 +2682,7 @@ function App() {
   }, /*#__PURE__*/React.createElement("span", {
     style: css('font-size:13px;')
   }, g.name), /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     placeholder: "0",
     value: leftoverSplits[g.id] || '',
     onChange: e => setLeftoverSplits(v => ({
@@ -2753,13 +2795,17 @@ function App() {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:10px;')
   }, "Your goals"), s.goals.map(g => {
     const v = buildGoalView(g, false);
-    const salaryPart = ctx.boostedAvailable * ((g.mode === 'manual' ? g.percent || 0 : ctx.autoPercentEach) / 100);
-    const extraPart = ctx.assignedByGoal[g.id] || 0;
-    const totalPart = salaryPart + extraPart;
-    const salaryPct = totalPart > 0 ? salaryPart / totalPart * 100 : 0;
-    const extraPct = totalPart > 0 ? extraPart / totalPart * 100 : 0;
+    const goalMonthEntries = (g.savingsLog || []).filter(entry => {
+      const p = parseMonthYearLabel(entry.label);
+      return p.year === ctx.today.getFullYear() && p.month === ctx.today.getMonth();
+    });
+    const loggedThisMonth = goalMonthEntries.reduce((a, e) => a + e.amount, 0);
+    const monthPct = v.monthlyBoosted > 0 ? Math.min(100, loggedThisMonth / v.monthlyBoosted * 100) : loggedThisMonth > 0 ? 100 : 0;
+    const sharePct = v.percent;
     return /*#__PURE__*/React.createElement("div", {
       key: g.id,
+      ref: pfRevealRef,
+      className: 'pf-reveal',
       onClick: () => {
         selectGoal(g.id);
         setTab('metas');
@@ -2802,9 +2848,9 @@ function App() {
         background: v.isCompleted ? '#34c759' : g.color,
         width: v.isCompleted ? '100%' : v.progressWidth
       }
-    })), !v.isCompleted && totalPart > 0 && /*#__PURE__*/React.createElement("div", {
-      style: css('display:flex;justify-content:space-between;margin-top:10px;font-size:12.5px;color:#86868b;')
-    }, /*#__PURE__*/React.createElement("span", null, fmt(salaryPart), "/mo (", salaryPct.toFixed(0), "%)"), /*#__PURE__*/React.createElement("span", null, fmt(extraPart), "/mo (", extraPct.toFixed(0), "%)"))), !v.isCompleted && /*#__PURE__*/React.createElement("div", { style: css('flex:none;display:flex;flex-direction:column;align-items:center;gap:5px;') }, /*#__PURE__*/React.createElement("button", { onClick: function (e) { e.stopPropagation(); setDepositAmount(''); setQuickAddGoalId(g.id); }, style: css('width:52px;height:52px;border-radius:50%;background:#f5f5f7;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;') }, /*#__PURE__*/React.createElement("svg", { viewBox: "0 0 24 24", width: 24, height: 24, fill: "none", stroke: "#0071e3", strokeWidth: 2, strokeLinecap: "round" }, /*#__PURE__*/React.createElement("path", { d: "M12 5v14" }), /*#__PURE__*/React.createElement("path", { d: "M5 12h14" }))), /*#__PURE__*/React.createElement("div", { style: css('font-size:12px;font-weight:700;color:#0071e3;text-align:center;line-height:1.15;') }, s.language === 'es' ? 'Agregar ahorro' : 'Add savings'))));
+    })), !v.isCompleted && /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px;margin-top:10px;font-size:12px;color:#86868b;')
+    }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", { style: { color: '#1d1d1f', fontWeight: 700 } }, sharePct.toFixed(0), "%"), s.language === 'es' ? ' de tu ahorro mensual' : ' of your monthly savings'), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", { style: { color: monthPct >= 100 ? '#34c759' : '#1d1d1f', fontWeight: 700 } }, monthPct.toFixed(0), "%"), s.language === 'es' ? ' cumplido este mes' : ' met this month'))), !v.isCompleted && /*#__PURE__*/React.createElement("div", { style: css('flex:none;display:flex;flex-direction:column;align-items:center;gap:5px;') }, /*#__PURE__*/React.createElement("button", { onClick: function (e) { e.stopPropagation(); setDepositAmount(''); setQuickAddGoalId(g.id); }, style: css('width:52px;height:52px;border-radius:50%;background:#f5f5f7;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;') }, /*#__PURE__*/React.createElement("svg", { viewBox: "0 0 24 24", width: 24, height: 24, fill: "none", stroke: "#0071e3", strokeWidth: 2, strokeLinecap: "round" }, /*#__PURE__*/React.createElement("path", { d: "M12 5v14" }), /*#__PURE__*/React.createElement("path", { d: "M5 12h14" }))), /*#__PURE__*/React.createElement("div", { style: css('font-size:12px;font-weight:700;color:#0071e3;text-align:center;line-height:1.15;') }, s.language === 'es' ? 'Agregar ahorro' : 'Add savings'))));
   }))), s.tab === 'incomeHistory' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:center;gap:10px;margin-bottom:16px;')
   }, /*#__PURE__*/React.createElement("button", {
@@ -2840,7 +2886,7 @@ function App() {
   }, /*#__PURE__*/React.createElement("span", {
     style: css('position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:15px;color:#86868b;pointer-events:none;')
   }, "$"), /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     autoFocus: true,
     value: s.income || '',
     onChange: onIncome,
@@ -2960,7 +3006,7 @@ function App() {
   }, /*#__PURE__*/React.createElement("span", {
     style: css('position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:13px;color:#86868b;pointer-events:none;')
   }, "$"), /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     placeholder: "0",
     value: newPaycheckAmount,
     onChange: e => setNewPaycheckAmount(e.target.value),
@@ -3021,7 +3067,7 @@ function App() {
   }, /*#__PURE__*/React.createElement("span", null, entry.label), editingSavingsEntryId === entry.id ? /*#__PURE__*/React.createElement("span", {
     style: css('display:flex;align-items:center;gap:6px;')
   }, /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     autoFocus: true,
     value: editingSavingsAmount,
     onChange: e => setEditingSavingsAmount(e.target.value),
@@ -3061,7 +3107,7 @@ function App() {
     key: i,
     value: i
   }, m))), /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     value: newSavingsYear,
     onChange: e => setNewSavingsYear(parseInt(e.target.value, 10) || new Date().getFullYear()),
     style: css('width:80px;padding:9px;border:1px solid #e5e5ea;border-radius:9px;font-size:12.5px;background:#fbfbfd;')
@@ -3073,7 +3119,7 @@ function App() {
   }, /*#__PURE__*/React.createElement("span", {
     style: css('position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:13px;color:#86868b;pointer-events:none;')
   }, "$"), /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     placeholder: "0",
     value: newSavingsAmount,
     onChange: e => setNewSavingsAmount(e.target.value),
@@ -3295,7 +3341,7 @@ function App() {
   }, p === 'allowance' ? t('profileAllowance') : p === 'salary' ? t('profileSalary') : t('profileFreelance')))), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
   }, t('howOldQ')), /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     placeholder: t('yourAge'),
     value: s.studentAge || '',
     onChange: e => setStudentAge(parseInt(e.target.value, 10) || null),
@@ -3435,7 +3481,7 @@ function App() {
   }, "Q3 (Jul–Sep)"), /*#__PURE__*/React.createElement("option", {
     value: 4
   }, "Q4 (Oct–Dec)")), /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     value: reportYear,
     onChange: e => setReportYear(parseInt(e.target.value, 10) || new Date().getFullYear()),
     style: css('width:90px;padding:9px 10px;border:1px solid #e5e5ea;border-radius:10px;font-size:13px;background:#fbfbfd;')
@@ -3619,6 +3665,8 @@ function App() {
     const selected = g.id === s.selectedGoalId;
     return /*#__PURE__*/React.createElement("div", {
       key: g.id,
+      ref: pfRevealRef,
+      className: 'pf-reveal',
       onClick: () => selectGoal(g.id),
       style: {
         position: 'relative',
@@ -3728,7 +3776,8 @@ function App() {
     style: css('position:fixed;inset:0;z-index:30;')
   }), /*#__PURE__*/React.createElement("div", {
     onClick: e => e.stopPropagation(),
-    style: css('position:absolute;top:38px;left:0;z-index:31;background:#fff;border-radius:16px;padding:14px;box-shadow:0 14px 44px rgba(0,0,0,0.20);width:264px;')
+    className: 'pf-popover-in',
+    style: css('position:absolute;top:38px;left:0;z-index:31;background:#fff;border-radius:16px;padding:14px;box-shadow:0 14px 44px rgba(0,0,0,0.20);width:264px;transform-origin:top left;')
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -3817,11 +3866,12 @@ function App() {
     onClick: () => setShowReminderPopup(v => !v),
     style: css('background:#f5f5f7;border:none;padding:6px 12px;border-radius:8px;font-size:11.5px;font-weight:600;color:#1d1d1f;cursor:pointer;white-space:nowrap;')
   }, sgSource.reminderOn ? s.language === 'es' ? 'Día ' + sgSource.reminderDay : 'Day ' + sgSource.reminderDay : t('setReminder')), showReminderPopup && /*#__PURE__*/React.createElement("div", {
-    style: css('position:absolute;top:34px;right:0;z-index:20;background:#fff;border-radius:12px;padding:12px;box-shadow:0 12px 30px rgba(0,0,0,0.18);width:200px;')
+    className: 'pf-popover-in',
+    style: css('position:absolute;top:34px;right:0;z-index:20;background:#fff;border-radius:12px;padding:12px;box-shadow:0 12px 30px rgba(0,0,0,0.18);width:200px;transform-origin:top right;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:center;gap:6px;font-size:11.5px;color:#86868b;margin-bottom:12px;')
   }, /*#__PURE__*/React.createElement("span", null, s.language === 'es' ? 'día' : 'day'), /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     min: "1",
     max: "31",
     value: sgSource.reminderDay || '',
@@ -3876,7 +3926,7 @@ function App() {
   }, /*#__PURE__*/React.createElement("span", {
     style: css('position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:14px;color:#86868b;pointer-events:none;')
   }, "$"), /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     autoFocus: true,
     value: sgSource.target || '',
     onChange: e => updateGoal(sgSource.id, 'target', parseFloat(e.target.value) || 0),
@@ -3903,7 +3953,7 @@ function App() {
   }, /*#__PURE__*/React.createElement("span", {
     style: css('position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:14px;color:#86868b;pointer-events:none;')
   }, "$"), /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     autoFocus: true,
     value: sgSource.current || '',
     onChange: e => updateGoal(sgSource.id, 'current', parseFloat(e.target.value) || 0),
@@ -3931,7 +3981,7 @@ function App() {
   }, /*#__PURE__*/React.createElement("span", {
     style: css('position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:14px;color:#86868b;pointer-events:none;')
   }, "$"), /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     placeholder: "0",
     value: depositAmount,
     onChange: e => setDepositAmount(e.target.value),
@@ -4142,7 +4192,7 @@ function App() {
   }, "% of monthly savings"), sgSource.mode === 'manual' ? /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:baseline;gap:5px;font-size:13px;color:#86868b;margin-bottom:8px;')
   }, /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     min: "0",
     max: "100",
     value: sgSource.percent || '',
@@ -4204,7 +4254,8 @@ function App() {
     onClick: () => setShowColorPopup(v => !v),
     style: css('width:22px;height:22px;border-radius:50%;background:#f5f5f7;border:1px dashed #c7c7cc;display:flex;align-items:center;justify-content:center;font-size:13px;color:#86868b;cursor:pointer;padding:0;')
   }, "+"), showColorPopup && /*#__PURE__*/React.createElement("div", {
-    style: css('position:absolute;top:28px;left:0;z-index:20;background:#fff;border-radius:12px;padding:10px;box-shadow:0 12px 30px rgba(0,0,0,0.18);display:flex;gap:6px;flex-wrap:wrap;width:112px;')
+    className: 'pf-popover-in',
+    style: css('position:absolute;top:28px;left:0;z-index:20;background:#fff;border-radius:12px;padding:10px;box-shadow:0 12px 30px rgba(0,0,0,0.18);display:flex;gap:6px;flex-wrap:wrap;width:112px;transform-origin:top left;')
   }, MORE_COLORS.map(hex => /*#__PURE__*/React.createElement("button", {
     key: hex,
     onClick: () => {
@@ -4259,7 +4310,8 @@ function App() {
     onClick: () => setShowIconPopup(v => !v),
     style: css('width:26px;height:26px;border-radius:8px;background:#f5f5f7;border:1px dashed #c7c7cc;cursor:pointer;font-size:13px;color:#86868b;display:flex;align-items:center;justify-content:center;padding:0;')
   }, "+"), showIconPopup && /*#__PURE__*/React.createElement("div", {
-    style: css('position:absolute;top:32px;left:0;z-index:20;background:#fff;border-radius:12px;padding:10px;box-shadow:0 12px 30px rgba(0,0,0,0.18);display:flex;gap:6px;flex-wrap:wrap;width:130px;')
+    className: 'pf-popover-in',
+    style: css('position:absolute;top:32px;left:0;z-index:20;background:#fff;border-radius:12px;padding:10px;box-shadow:0 12px 30px rgba(0,0,0,0.18);display:flex;gap:6px;flex-wrap:wrap;width:130px;transform-origin:top left;')
   }, MORE_ICONS.map(ic => /*#__PURE__*/React.createElement("button", {
     key: ic.key,
     onClick: () => {
@@ -4584,7 +4636,7 @@ function App() {
   }), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:8px;')
   }, /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     placeholder: "Amount spent",
     value: logAmount,
     onChange: e => {
@@ -4792,7 +4844,7 @@ function App() {
       whiteSpace: 'nowrap'
     }
   }, row.fixed ? '✓ Fixed' : 'Fixed'), /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     value: row.amount || '',
     onChange: e => updateExpenseRow(i, 'amount', e.target.value),
     style: css('width:80px;border:1px solid #e5e5ea;border-radius:8px;padding:6px 8px;font-size:13px;background:#fbfbfd;')
@@ -4819,7 +4871,7 @@ function App() {
   }, t('nonRecurringAllowance')), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;')
   }, "Outings, one-off buys — a monthly cap for everything that isn't a fixed category")), /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     value: s.nonRecurringBudget || '',
     onChange: onNonRecurringBudget,
     style: css('width:80px;border:1px solid #e5e5ea;border-radius:8px;padding:6px 8px;font-size:13px;background:#fbfbfd;')
@@ -4896,7 +4948,7 @@ function App() {
   }, s.incomeProfile === 'freelance' ? t('freelanceExtrasLabel') : t('extraIncome'), /*#__PURE__*/React.createElement(InfoTip, {
     text: "Freelance, sales, commissions — every extra dollar speeds up your goals."
   })), /*#__PURE__*/React.createElement("div", {
-    style: css('background:linear-gradient(135deg,#0071e3,#34c759);border-radius:20px;padding:22px;color:#fff;margin-bottom:18px;box-shadow:0 16px 40px rgba(0,113,227,0.25);')
+    style: css('background:linear-gradient(135deg,#0071e3,#5ac8fa);border-radius:20px;padding:22px;color:#fff;margin-bottom:18px;box-shadow:0 16px 40px rgba(0,113,227,0.25);')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;opacity:0.85;')
   }, "Total extra / month"), /*#__PURE__*/React.createElement("div", {
@@ -4938,7 +4990,7 @@ function App() {
     }, /*#__PURE__*/React.createElement("label", {
       style: css('display:block;font-size:11px;color:#86868b;font-weight:600;margin-bottom:4px;')
     }, "Amount / month"), /*#__PURE__*/React.createElement("input", {
-      type: "number",
+      type: "number", inputMode: "decimal",
       value: h.amount || '',
       onChange: e => updateHustle(h.id, 'amount', e.target.value),
       style: css('width:100%;padding:8px 10px;border:1px solid #e5e5ea;border-radius:9px;font-size:13.5px;background:#fbfbfd;')
@@ -4989,7 +5041,7 @@ function App() {
       addHustle();
       dismissTabIntro('extra');
     },
-    style: css('width:100%;padding:13px;background:#34c759;color:#fff;border:none;border-radius:14px;font-size:14.5px;font-weight:600;cursor:pointer;')
+    style: css('width:100%;padding:13px;background:#0071e3;color:#fff;border:none;border-radius:14px;font-size:14.5px;font-weight:600;cursor:pointer;')
   }, t('addSideHustle')), !s.seenTabIntro.extra && /*#__PURE__*/React.createElement("div", {
     className: "tip-banner",
     style: css('display:flex;align-items:center;gap:12px;background:#fff;border-radius:16px;padding:16px 18px;margin-top:16px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,0.10);')
@@ -5003,7 +5055,7 @@ function App() {
   }, t('investments'), /*#__PURE__*/React.createElement(InfoTip, {
     text: "Track what's growing your money outside your goals. Update the current value every so often — 6 months is a good rhythm."
   })), /*#__PURE__*/React.createElement("div", {
-    style: css('background:linear-gradient(135deg,#0071e3,#34c759);border-radius:20px;padding:22px;color:#fff;margin-bottom:18px;box-shadow:0 16px 40px rgba(0,113,227,0.25);')
+    style: css('background:linear-gradient(135deg,#0071e3,#5ac8fa);border-radius:20px;padding:22px;color:#fff;margin-bottom:18px;box-shadow:0 16px 40px rgba(0,113,227,0.25);')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;opacity:0.85;')
   }, "Current value"), /*#__PURE__*/React.createElement("div", {
@@ -5018,6 +5070,8 @@ function App() {
     style: css('font-size:13.5px;line-height:1.5;opacity:0.95;')
   }, s.investments.length === 0 ? 'Add an investment below to start tracking it.' : 'Across ' + s.investments.length + (s.investments.length === 1 ? ' investment.' : ' investments.'))), investmentViews.map(inv => /*#__PURE__*/React.createElement("div", {
     key: inv.id,
+    ref: pfRevealRef,
+    className: 'pf-reveal',
     style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:12px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:10px;align-items:center;margin-bottom:10px;')
@@ -5036,7 +5090,7 @@ function App() {
   }, /*#__PURE__*/React.createElement("label", {
     style: css('display:block;font-size:11px;color:#86868b;font-weight:600;margin-bottom:4px;')
   }, "Amount invested"), /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     value: inv.amount || '',
     onChange: e => updateInvestment(inv.id, 'amount', e.target.value),
     style: css('width:100%;padding:8px 10px;border:1px solid #e5e5ea;border-radius:9px;font-size:13.5px;background:#fbfbfd;')
@@ -5045,7 +5099,7 @@ function App() {
   }, /*#__PURE__*/React.createElement("label", {
     style: css('display:block;font-size:11px;color:#86868b;font-weight:600;margin-bottom:4px;')
   }, "Current value"), /*#__PURE__*/React.createElement("input", {
-    type: "number",
+    type: "number", inputMode: "decimal",
     value: inv.currentValue || '',
     onChange: e => updateInvestment(inv.id, 'currentValue', e.target.value),
     style: css('width:100%;padding:8px 10px;border:1px solid #e5e5ea;border-radius:9px;font-size:13.5px;background:#fbfbfd;')

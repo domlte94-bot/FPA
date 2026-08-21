@@ -32,6 +32,30 @@
   button{font-family:inherit;}
   button:focus-visible, a:focus-visible{outline:2px solid #0071e3; outline-offset:2px; border-radius:6px;}
   button:focus:not(:focus-visible){outline:none;}
+
+  /* ---- motion system ---- */
+  button, .pf-press{transition:transform 160ms cubic-bezier(0.23,1,0.32,1);}
+  button:active, .pf-press:active{transform:scale(0.97);}
+
+  @keyframes pf-fade-in{from{opacity:0}to{opacity:1}}
+  @keyframes pf-modal-in{from{opacity:0;transform:scale(0.95)}to{opacity:1;transform:scale(1)}}
+  @keyframes pf-popover-in{from{opacity:0;transform:scale(0.95) translateY(-4px)}to{opacity:1;transform:scale(1) translateY(0)}}
+  @keyframes pf-item-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+
+  .pf-overlay-in{animation:pf-fade-in 200ms cubic-bezier(0.23,1,0.32,1) both;}
+  .pf-modal-in{animation:pf-modal-in 220ms cubic-bezier(0.23,1,0.32,1) both;transform-origin:center;}
+  .pf-popover-in{animation:pf-popover-in 160ms cubic-bezier(0.23,1,0.32,1) both;}
+  .tip-banner{animation:pf-item-in 380ms cubic-bezier(0.23,1,0.32,1) both;}
+
+  .pf-reveal{opacity:0;transform:translateY(14px);transition:opacity 480ms cubic-bezier(0.23,1,0.32,1),transform 480ms cubic-bezier(0.23,1,0.32,1);}
+  .pf-reveal.pf-visible{opacity:1;transform:translateY(0);}
+
+  @media (prefers-reduced-motion: reduce){
+    button, .pf-press{transition:none;}
+    button:active, .pf-press:active{transform:none;}
+    .pf-overlay-in, .pf-modal-in, .pf-popover-in, .tip-banner{animation-duration:1ms !important;animation-delay:0ms !important;}
+    .pf-reveal{opacity:1 !important;transform:none !important;transition:none !important;}
+  }
 </style>
 </head>
 <body>
