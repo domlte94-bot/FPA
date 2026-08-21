@@ -840,6 +840,7 @@ function App() {
   const [showIconPopup, setShowIconPopup] = useState(false);
   const [showReminderPopup, setShowReminderPopup] = useState(false);
   const [editingGoalMeta, setEditingGoalMeta] = useState(false);
+  const [editingGoalName, setEditingGoalName] = useState(false);
   const [showAddPaycheck, setShowAddPaycheck] = useState(false);
   const [showAddSavingsEntry, setShowAddSavingsEntry] = useState(false);
   const [newSavingsMonth, setNewSavingsMonth] = useState(new Date().getMonth());
@@ -3869,85 +3870,22 @@ function App() {
   }, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:center;gap:12px;margin-bottom:14px;')
   }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 40,
-      height: 40,
-      borderRadius: 11,
-      background: sgSource.color,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      flex: 'none'
-    }
+    style: css('position:relative;flex:none;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setEditingGoalMeta(v => !v),
+    "aria-label": s.language === 'es' ? 'Editar ícono y color' : 'Edit icon and color',
+    style: css('width:40px;height:40px;border-radius:11px;background:' + sgSource.color + ';border:none;cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center;')
   }, /*#__PURE__*/React.createElement(GoalIconGlyph, {
     icon: sgSource.icon,
     size: 20
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      minWidth: 0,
-      position: 'relative',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 6
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: css('font-size:16px;font-weight:600;color:#1d1d1f;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word;line-height:1.25;flex:1;min-width:0;')
-  }, sgSource.name), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setEditingGoalMeta(v => !v),
-    "aria-label": "Edit goal",
-    style: css('flex:none;background:none;border:none;padding:2px;cursor:pointer;display:flex;align-items:center;color:#86868b;')
-  }, /*#__PURE__*/React.createElement("svg", {
-    viewBox: "0 0 24 24",
-    width: "15",
-    height: "15",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: "2",
-    strokeLinecap: "round",
-    strokeLinejoin: "round"
-  }, /*#__PURE__*/React.createElement("path", {
-    d: "M12 20h9"
-  }), /*#__PURE__*/React.createElement("path", {
-    d: "M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"
-  }))), editingGoalMeta && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  })), editingGoalMeta && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     onClick: () => setEditingGoalMeta(false),
     style: css('position:fixed;inset:0;z-index:30;')
   }), /*#__PURE__*/React.createElement("div", {
     onClick: e => e.stopPropagation(),
     className: 'pf-popover-in',
-    style: css('position:absolute;top:38px;left:0;z-index:31;background:#fff;border-radius:16px;padding:14px;box-shadow:0 14px 44px rgba(0,0,0,0.20);width:264px;transform-origin:top left;')
+    style: css('position:absolute;top:46px;left:0;z-index:31;background:#fff;border-radius:16px;padding:14px;box-shadow:0 14px 44px rgba(0,0,0,0.20);width:264px;transform-origin:top left;')
   }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 10,
-      marginBottom: 14
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 40,
-      height: 40,
-      borderRadius: 11,
-      background: sgSource.color,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      flex: 'none'
-    }
-  }, /*#__PURE__*/React.createElement(GoalIconGlyph, {
-    icon: sgSource.icon,
-    size: 20
-  })), /*#__PURE__*/React.createElement("input", {
-    type: "text",
-    autoFocus: true,
-    value: sgSource.name,
-    onChange: e => updateGoal(sgSource.id, 'name', e.target.value),
-    onKeyDown: e => {
-      if (e.key === 'Enter') setEditingGoalMeta(false);
-    },
-    style: css('flex:1;min-width:0;font-size:15px;font-weight:600;border:1px solid #e5e5ea;border-radius:9px;padding:9px 10px;background:#fbfbfd;')
-  })), /*#__PURE__*/React.createElement("div", {
     style: css('display:grid;grid-template-columns:1fr 1fr;gap:10px;')
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:8px;')
@@ -3997,6 +3935,21 @@ function App() {
   }, /*#__PURE__*/React.createElement("path", {
     d: ic.path
   })))))))))), /*#__PURE__*/React.createElement("div", {
+    style: css('flex:1;min-width:0;')
+  }, editingGoalName ? /*#__PURE__*/React.createElement("input", {
+    type: "text",
+    autoFocus: true,
+    value: sgSource.name,
+    onChange: e => updateGoal(sgSource.id, 'name', e.target.value),
+    onBlur: () => setEditingGoalName(false),
+    onKeyDown: e => {
+      if (e.key === 'Enter') setEditingGoalName(false);
+    },
+    style: css('width:100%;font-size:16px;font-weight:600;color:#1d1d1f;border:1px solid #d2d2d7;border-radius:9px;padding:7px 9px;background:#fbfbfd;')
+  }) : /*#__PURE__*/React.createElement("span", {
+    onClick: () => setEditingGoalName(true),
+    style: css('display:block;font-size:16px;font-weight:600;color:#1d1d1f;overflow:hidden;cursor:pointer;line-height:1.25;')
+  }, sgSource.name)), /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'relative',
       flex: 'none'
@@ -4158,8 +4111,9 @@ function App() {
         minWidth: 150,
         order: 1,
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
-        gap: 10
+        gap: 8
       }
     }, /*#__PURE__*/React.createElement("svg", {
       viewBox: "0 0 64 64",
@@ -4205,7 +4159,7 @@ function App() {
       strokeDashoffset: C2 * (1 - extrasPct / 100),
       transform: "rotate(-90 32 32)"
     })), /*#__PURE__*/React.createElement("div", {
-      style: css('font-size:10px;color:#86868b;line-height:1.4;')
+      style: css('font-size:10px;color:#86868b;line-height:1.4;text-align:center;')
     }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
       style: {
         fontSize: 14,
@@ -4260,7 +4214,7 @@ function App() {
     }
     return /*#__PURE__*/React.createElement("div", {
       ref: monthStripRef,
-      style: css('display:flex;gap:12px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch;')
+      style: css('display:flex;gap:12px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch;scroll-snap-type:x mandatory;')
     }, monthsList.map((mo, idx) => {
       const monthActual = (sgSource.savingsLog || []).filter(e => {
         const p = parseMonthYearLabel(e.label);
@@ -4281,7 +4235,8 @@ function App() {
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
-          gap: 4
+          gap: 4,
+          scrollSnapAlign: 'start'
         }
       }, /*#__PURE__*/React.createElement("svg", {
         viewBox: "0 0 36 36",
@@ -4607,7 +4562,9 @@ function App() {
       opacity: 0.3,
       marginRight: 5
     }
-  }), s.language === 'es' ? 'Proyección' : 'Projected')))), /*#__PURE__*/React.createElement("button", {
+  }), s.language === 'es' ? 'Proyección' : 'Projected')))), /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border-radius:18px;padding:16px;margin-top:14px;')
+  }, /*#__PURE__*/React.createElement("button", {
     onClick: () => askConfirm(s.language === 'es' ? '¿Eliminar esta meta? Se perderá el progreso guardado y su historial.' : "Delete this goal? Its saved progress and history will be lost.", () => {
       patch(st => {
         const goals = st.goals.filter(g => g.id !== sgSource.id);
@@ -4615,8 +4572,8 @@ function App() {
       });
       setShowGoalDetail(false);
     }),
-    style: css('width:100%;background:#fff2ef;color:#ff3b30;border:none;border-radius:14px;padding:14px;font-size:14.5px;font-weight:700;cursor:pointer;margin-top:18px;')
-  }, s.language === 'es' ? 'Eliminar meta' : 'Delete goal'))), s.tab === 'gastos' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: css('width:100%;background:#fff2ef;color:#ff3b30;border:none;border-radius:12px;padding:13px;font-size:13.5px;font-weight:700;cursor:pointer;')
+  }, s.language === 'es' ? 'Eliminar meta' : 'Delete goal')))), s.tab === 'gastos' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:center;gap:10px;margin-bottom:16px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;')
@@ -4803,8 +4760,8 @@ function App() {
     style: css('background:#0071e3;color:#fff;border:none;padding:9px 16px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;')
   }, "Log")))), /*#__PURE__*/React.createElement("button", {
     onClick: function(){ setTab('budgetPlan'); },
-    style: css('width:100%;display:flex;align-items:center;justify-content:center;gap:6px;background:#eef6ff;color:#0071e3;border:none;padding:12px;border-radius:12px;font-size:13.5px;font-weight:700;cursor:pointer;margin-bottom:14px;')
-  }, /*#__PURE__*/React.createElement("svg", { viewBox: "0 0 24 24", width: 14, height: 14, fill: "none", stroke: "#0071e3", strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round" }, /*#__PURE__*/React.createElement("path", { d: "M12 20h9" }), /*#__PURE__*/React.createElement("path", { d: "M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" })), s.language==='es'?'Presupuesto':'Budget'), true && /*#__PURE__*/React.createElement("div", {
+    style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:12px;border-radius:12px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:14px;')
+  }, s.language==='es'?'Plan de presupuesto':'Budget plan'), true && /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:14px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:4px;')
