@@ -3421,11 +3421,12 @@ function App() {
       marginTop: Math.max(homeHeroH - 26, 0),
       marginLeft: -20,
       marginRight: -20,
-      padding: '28px 20px calc(env(safe-area-inset-bottom) + 90px)',
+      marginBottom: -96,
+      padding: '28px 20px calc(env(safe-area-inset-bottom) + 96px)',
       borderRadius: '28px 28px 0 0',
       position: 'relative',
       zIndex: 1,
-      minHeight: '74vh'
+      minHeight: 'calc(100vh - ' + Math.max(homeHeroH - 26, 0) + 'px)'
     }
   }, !!s.pendingLeftover && /*#__PURE__*/React.createElement("div", {
     style: css('background:linear-gradient(135deg,#0071e3,#34c759);border-radius:18px;padding:18px;color:#fff;margin-bottom:16px;box-shadow:0 12px 30px rgba(0,113,227,0.25);')
