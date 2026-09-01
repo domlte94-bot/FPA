@@ -573,18 +573,15 @@ function computeCtx(s) {
   // An investment participates only if its effective mode is 'auto' or 'manual'
   // (default new/existing investments are 'off' and don't take a share).
   const invs = s.investments || [];
+  // A fund synced to a goal is that goal's *vehicle* — the goal's own share of the
+  // split flows into it. It is NOT a separate claimant, so it doesn't take an extra %.
+  // Only funds with their own independent mode participate as separate claimants.
   const effInvMode = i => {
-    if (i.goalId && i.syncWithGoal) {
-      const g = s.goals.find(x => x.id === i.goalId);
-      if (g) return g.mode === 'manual' ? 'manual' : 'auto';
-    }
+    if (i.goalId && i.syncWithGoal) return 'off';
     return i.mode === 'auto' || i.mode === 'manual' ? i.mode : 'off';
   };
   const effInvPercent = i => {
-    if (i.goalId && i.syncWithGoal) {
-      const g = s.goals.find(x => x.id === i.goalId);
-      if (g) return g.mode === 'manual' ? g.percent || 0 : 0;
-    }
+    if (i.goalId && i.syncWithGoal) return 0;
     return i.percent || 0;
   };
   // A completed goal (fully funded) stops taking a share of the split, so the
@@ -2981,10 +2978,21 @@ function App() {
     return view;
   }
   function buildInvestView(inv) {
-    const mode = ctx.effInvMode(inv);
-    const percent = mode === 'manual' ? ctx.effInvPercent(inv) || 0 : mode === 'auto' ? ctx.autoPercentEach : 0;
-    const monthly = mode === 'off' ? 0 : ctx.boostedAvailable * (percent / 100);
     const linkedGoal = inv.goalId ? s.goals.find(g => g.id === inv.goalId) : null;
+    const synced = !!(inv.goalId && inv.syncWithGoal && linkedGoal);
+    let mode, percent, monthly;
+    if (synced) {
+      // Vehicle for its goal: shows the goal's own share (the money flowing in),
+      // but it is not a separate claimant in the split.
+      const gv = buildGoalView(linkedGoal, false);
+      mode = linkedGoal.mode === 'manual' ? 'manual' : 'auto';
+      percent = gv.percent;
+      monthly = gv.monthlyBoosted;
+    } else {
+      mode = ctx.effInvMode(inv);
+      percent = mode === 'manual' ? ctx.effInvPercent(inv) || 0 : mode === 'auto' ? ctx.autoPercentEach : 0;
+      monthly = mode === 'off' ? 0 : ctx.boostedAvailable * (percent / 100);
+    }
     const assetType = guessAssetType(inv);
     const assetGuessed = !inv.assetType && !!assetType;
     return {
@@ -2994,7 +3002,7 @@ function App() {
       linkedGoal,
       assetType,
       assetGuessed,
-      synced: !!(inv.goalId && inv.syncWithGoal),
+      synced,
       percentLabel: Math.round(percent) + '%',
       monthlyLabel: fmt(monthly)
     };
@@ -3096,7 +3104,9 @@ function App() {
     };
   });
   const investAssignedTotal = s.goals.reduce((a, g) => a + buildGoalView(g, false).monthlyBoosted, 0);
-  const investParticipatingTotal = s.investments.reduce((a, i) => a + buildInvestView(i).monthly, 0);
+  // Synced funds are excluded: their money is already counted in investAssignedTotal
+  // via their linked goal (the fund is the goal's vehicle, not a separate claimant).
+  const investParticipatingTotal = s.investments.reduce((a, i) => a + (buildInvestView(i).synced ? 0 : buildInvestView(i).monthly), 0);
   const investLeftover = Math.max(ctx.boostedAvailable - investAssignedTotal - investParticipatingTotal, 0);
   const emergencyGoal = s.goals.find(g => g.name === 'Emergency Fund' || g.name === 'Fondo de emergencia');
   const es = s.language === 'es';
@@ -3233,7 +3243,8 @@ function App() {
       return a + buildGoalView(g, false).monthlyBoosted;
     }, 0);
     var assignedInvs = s.investments.reduce(function (a, i) {
-      return a + buildInvestView(i).monthly;
+      var iv = buildInvestView(i);
+      return a + (iv.synced ? 0 : iv.monthly);
     }, 0);
     var unassigned = ctx.boostedAvailable - assignedGoals - assignedInvs;
     if (unassigned > 20 && (s.goals.length > 0 || s.investments.length > 0)) {
@@ -6503,7 +6514,8 @@ function App() {
       });
       s.investments.forEach(function (i) {
         var iv = buildInvestView(i);
-        if (iv.mode !== 'off') {
+        // Skip synced funds — their share is already counted via their linked goal above.
+        if (iv.mode !== 'off' && !iv.synced) {
           var sh = Math.round(L * iv.percent / 100);
           if (sh > 0) {
             byInv[i.id] = sh;
