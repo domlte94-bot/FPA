@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pf-cache-v3';
+const CACHE_NAME = 'pf-cache-v4';
 
 // Files that change when you update the app — always try the network first,
 // so you get the latest version automatically. Cache is only a fallback for offline use.
@@ -24,6 +24,24 @@ self.addEventListener('activate', (event) => {
     caches.keys()
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
+  );
+});
+
+// When the user taps a notification (e.g. the end-of-month summary),
+// focus an open tab or open the app at the deep-linked screen.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || './?action=monthSummary';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if ('focus' in client) {
+          if ('navigate' in client) { try { client.navigate(target); } catch (e) {} }
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(target);
+    })
   );
 });
 

@@ -134,6 +134,8 @@ function buildPersistPayload(state) {
     language: state.language,
     pendingLeftover: state.pendingLeftover,
     spendingBoost: state.spendingBoost,
+    notificationsEnabled: state.notificationsEnabled,
+    dismissedTips: state.dismissedTips,
     lastProcessedMonth: state.lastProcessedMonth,
     lastProcessedYear: state.lastProcessedYear,
     expenseCategories: state.expenseCategories,
@@ -236,6 +238,42 @@ function addMonths(date, n) {
   const d = new Date(date);
   d.setMonth(d.getMonth() + n);
   return d;
+}
+// --- Time horizon per goal ---
+// If the goal has an exact customDate, derive the horizon in months from today.
+// Otherwise fall back to the coarse goal.horizon selector ('short'|'medium'|'long').
+function goalHorizonMonths(goal, today) {
+  if (goal && goal.customDate) {
+    const cd = new Date(goal.customDate + 'T00:00:00');
+    if (!isNaN(cd.getTime())) {
+      const m = (cd.getFullYear() - today.getFullYear()) * 12 + (cd.getMonth() - today.getMonth());
+      return Math.max(m, 0);
+    }
+  }
+  return null;
+}
+function classifyHorizonMonths(m) {
+  if (m == null) return null;
+  return m < 36 ? 'short' : m < 84 ? 'medium' : 'long';
+}
+function goalHorizonClass(goal, today) {
+  const m = goalHorizonMonths(goal, today);
+  if (m != null) return classifyHorizonMonths(m);
+  return goal && goal.horizon ? goal.horizon : null;
+}
+// Simple keyword heuristic to guess whether an investment is equity/stocks,
+// used only when the user hasn't set investment.assetType explicitly.
+function guessAssetType(inv) {
+  if (inv && inv.assetType) return inv.assetType;
+  const txt = ((inv && inv.fund || '') + ' ' + (inv && inv.name || '')).toLowerCase();
+  if (!txt.trim()) return null;
+  const equity = ['stock', 'stocks', 'equity', 'equities', 'acci', 's&p', 'sp500', 'sp 500', 'index', 'indice', 'índice', 'etf', 'vti', 'voo', 'vt ', 'qqq', 'nasdaq', 'total market', 'growth', '401k', 'roth', 'ira', 'brokerage'];
+  const bonds = ['bond', 'bonos', 'treasury', 'tesoro', 'bnd', 'agg', 'fixed income', 'renta fija'];
+  const cash = ['cash', 'savings', 'ahorro', 'high yield', 'high-yield', 'hysa', 'money market', 'cd ', 'certificate'];
+  if (bonds.some(k => txt.includes(k))) return 'bonds';
+  if (cash.some(k => txt.includes(k))) return 'cash';
+  if (equity.some(k => txt.includes(k))) return 'equity';
+  return null;
 }
 function buildGoalSparkline(goal, monthlyBoosted, today) {
   const N = 6;
@@ -450,7 +488,7 @@ function defaultState() {
   const today = new Date();
   return {
     tab: 'inicio',
-    income: 3173,
+    income: 0,
     payFrequency: 'monthly',
     nextPaydayDate: '',
     paycheckLog: [],
@@ -473,6 +511,8 @@ function defaultState() {
     language: 'en',
     pendingLeftover: null,
     spendingBoost: 0,
+    notificationsEnabled: false,
+    dismissedTips: {},
     lastProcessedMonth: today.getMonth(),
     lastProcessedYear: today.getFullYear(),
     expenseCategories: [],
@@ -520,8 +560,30 @@ function computeCtx(s) {
   const usingActualPaychecks = s.payFrequency === 'biweekly' && receivedThisMonth(s, today) > 0;
   const baseAvailable = monthlyIncome - totalExpenses;
   const boostedAvailable = monthlyIncome + generalHustleTotal - totalExpenses;
-  const manualPercentTotal = s.goals.filter(g => g.mode === 'manual').reduce((a, g) => a + (g.percent || 0), 0);
-  const autoCount = Math.max(s.goals.filter(g => g.mode !== 'manual').length, 1);
+  // Investments can opt into the same auto/manual split as goals.
+  // An investment participates only if its effective mode is 'auto' or 'manual'
+  // (default new/existing investments are 'off' and don't take a share).
+  const invs = s.investments || [];
+  const effInvMode = i => {
+    if (i.goalId && i.syncWithGoal) {
+      const g = s.goals.find(x => x.id === i.goalId);
+      if (g) return g.mode === 'manual' ? 'manual' : 'auto';
+    }
+    return i.mode === 'auto' || i.mode === 'manual' ? i.mode : 'off';
+  };
+  const effInvPercent = i => {
+    if (i.goalId && i.syncWithGoal) {
+      const g = s.goals.find(x => x.id === i.goalId);
+      if (g) return g.mode === 'manual' ? g.percent || 0 : 0;
+    }
+    return i.percent || 0;
+  };
+  const manualGoalTotal = s.goals.filter(g => g.mode === 'manual').reduce((a, g) => a + (g.percent || 0), 0);
+  const manualInvTotal = invs.filter(i => effInvMode(i) === 'manual').reduce((a, i) => a + (effInvPercent(i) || 0), 0);
+  const manualPercentTotal = manualGoalTotal + manualInvTotal;
+  const autoGoalCount = s.goals.filter(g => g.mode !== 'manual').length;
+  const autoInvCount = invs.filter(i => effInvMode(i) === 'auto').length;
+  const autoCount = Math.max(autoGoalCount + autoInvCount, 1);
   const autoPercentEach = Math.max(100 - manualPercentTotal, 0) / autoCount;
   const assignedByGoal = {};
   s.hustles.forEach(h => {
@@ -539,6 +601,8 @@ function computeCtx(s) {
     autoCount,
     autoPercentEach,
     assignedByGoal,
+    effInvMode,
+    effInvPercent,
     today
   };
 }
@@ -637,6 +701,59 @@ const STRINGS = {
     setReminder: 'Set reminder',
     savingsProjection: 'Savings projection (next 12 months)',
     hitDate: 'Want to hit a specific date?',
+    timeHorizon: 'Time horizon',
+    horizonShort: 'Soon (under 3 years)',
+    horizonMedium: 'In a few years (3–7)',
+    horizonLong: 'Long term / retirement (7+)',
+    horizonShortTag: 'Short term',
+    horizonMediumTag: 'Medium term',
+    horizonLongTag: 'Long term',
+    horizonHint: 'No exact date? Pick a rough timeframe instead.',
+    investShareTitle: 'Monthly savings share',
+    investShareOff: 'Off',
+    investShareHint: 'Include this fund in the automatic split of your extra money.',
+    linkToGoal: 'For which goal?',
+    notLinked: 'Not linked',
+    matchGoalPct: "Match the goal's %",
+    assetTypeLabel: 'What kind of fund is it?',
+    assetTypeHint: 'Only used to flag if it fits your goal’s time horizon.',
+    assetEquity: 'Stocks',
+    assetEquityDesc: 'can rise and fall with the market',
+    assetBonds: 'Bonds',
+    assetBondsDesc: 'steadier',
+    assetOther: 'Other',
+    assetOtherDesc: 'real estate, crypto, etc.',
+    assetUnsure: 'Not sure',
+    assetUnsureDesc: 'no heads-up either way',
+    guideEquityShort: 'Heads up: this looks like stocks, but its goal is short term. Money you’ll need within ~3 years is usually kept in cash or bonds, so a market dip right before you need it can’t hurt you. You can keep it — just worth weighing.',
+    guideEquityMedium: 'Note: stocks for a medium-term goal (3–7 yrs) carries some timing risk. A blend of stocks and bonds is a common middle ground. Your call.',
+    monthSummaryTitle: 'Month summary',
+    msIncome: 'Income',
+    msSpent: 'Spent',
+    msLeftover: 'Left over',
+    msByCategory: 'By category',
+    msNonRecurring: 'Non-recurring',
+    msAssignTitle: 'Put your leftover to work',
+    msAssignHint: 'Suggested from your plan — edit anything before confirming.',
+    msUseSuggestion: 'Use plan suggestion',
+    msSpending: 'Spending money',
+    msLeftToAssign: 'left to assign',
+    msOverAssigned: "that's more than you have",
+    msConfirm: 'Confirm',
+    msSaveAll: 'Save it all per my plan',
+    msKeepSpending: 'Keep as spending money',
+    msNoLeftover: 'No leftover to review right now.',
+    msIncomeNote: 'Income shown is your current monthly setting.',
+    notifToggle: 'End-of-month reminder',
+    notifToggleDesc: 'Get a notification to review and assign your leftover.',
+    notifBlocked: 'Notifications are turned off in your device or browser settings — turn them on there to receive it.',
+    coachEyebrow: 'Guide',
+    coachSeeAll: 'See all tips',
+    coachNotNow: 'Not now',
+    coachGotIt: 'Got it',
+    coachAllGood: "You're on track — no tips right now.",
+    guideTitle: 'Guide',
+    guideIntro: 'General rules of thumb based on your setup — not personalized advice. Apply or edit anything.',
     settings: 'Settings',
     welcome: 'Welcome',
     getStarted: 'Get started',
@@ -728,6 +845,59 @@ const STRINGS = {
     setReminder: 'Recordatorio',
     savingsProjection: 'Proyección de ahorro (próximos 12 meses)',
     hitDate: '¿Quieres llegar en una fecha específica?',
+    timeHorizon: 'Horizonte de tiempo',
+    horizonShort: 'Pronto (menos de 3 años)',
+    horizonMedium: 'En unos años (3–7)',
+    horizonLong: 'Largo plazo / retiro (7+)',
+    horizonShortTag: 'Corto plazo',
+    horizonMediumTag: 'Mediano plazo',
+    horizonLongTag: 'Largo plazo',
+    horizonHint: '¿Sin fecha exacta? Elige un plazo aproximado.',
+    investShareTitle: 'Parte del ahorro mensual',
+    investShareOff: 'No',
+    investShareHint: 'Incluye este fondo en el reparto automático de tu dinero extra.',
+    linkToGoal: '¿Para qué meta?',
+    notLinked: 'Sin vincular',
+    matchGoalPct: 'Igualar el % de la meta',
+    assetTypeLabel: '¿Qué tipo de fondo es?',
+    assetTypeHint: 'Solo se usa para avisarte si encaja con el horizonte de tu meta.',
+    assetEquity: 'Acciones',
+    assetEquityDesc: 'puede subir y bajar con el mercado',
+    assetBonds: 'Bonos',
+    assetBondsDesc: 'más estable',
+    assetOther: 'Otros',
+    assetOtherDesc: 'bienes raíces, cripto, etc.',
+    assetUnsure: 'No estoy seguro',
+    assetUnsureDesc: 'sin aviso en ningún sentido',
+    guideEquityShort: 'Ojo: esto parece acciones, pero su meta es de corto plazo. El dinero que necesitarás en ~3 años suele mantenerse en efectivo o bonos, para que una caída del mercado justo antes no te afecte. Puedes dejarlo así — solo algo a considerar.',
+    guideEquityMedium: 'Nota: acciones para una meta de mediano plazo (3–7 años) tiene algo de riesgo de tiempo. Una mezcla de acciones y bonos es un término medio común. Tú decides.',
+    monthSummaryTitle: 'Resumen del mes',
+    msIncome: 'Ingreso',
+    msSpent: 'Gastado',
+    msLeftover: 'Sobrante',
+    msByCategory: 'Por categoría',
+    msNonRecurring: 'No recurrente',
+    msAssignTitle: 'Pon tu sobrante a trabajar',
+    msAssignHint: 'Sugerido según tu plan — edítalo antes de confirmar.',
+    msUseSuggestion: 'Usar sugerencia del plan',
+    msSpending: 'Dinero disponible',
+    msLeftToAssign: 'por asignar',
+    msOverAssigned: 'es más de lo que tienes',
+    msConfirm: 'Confirmar',
+    msSaveAll: 'Guardar todo según mi plan',
+    msKeepSpending: 'Dejar como dinero disponible',
+    msNoLeftover: 'No hay sobrante por revisar ahora.',
+    msIncomeNote: 'El ingreso mostrado es tu configuración mensual actual.',
+    notifToggle: 'Aviso de fin de mes',
+    notifToggleDesc: 'Recibe una notificación para revisar y asignar tu sobrante.',
+    notifBlocked: 'Las notificaciones están desactivadas en los ajustes de tu dispositivo o navegador — actívalas ahí para recibirla.',
+    coachEyebrow: 'Guía',
+    coachSeeAll: 'Ver todas',
+    coachNotNow: 'Ahora no',
+    coachGotIt: 'Entendido',
+    coachAllGood: 'Todo en orden — nada que sugerir ahora.',
+    guideTitle: 'Guía',
+    guideIntro: 'Reglas generales según tu configuración — no es asesoría personalizada. Aplica o edita lo que quieras.',
     settings: 'Ajustes',
     welcome: 'Bienvenida',
     getStarted: 'Comenzar',
@@ -1024,6 +1194,7 @@ function App() {
     onYes
   });
   const [leftoverSplits, setLeftoverSplits] = useState({});
+  const [msSplits, setMsSplits] = useState({});
   const [reportQuarter, setReportQuarter] = useState(Math.floor(new Date().getMonth() / 3) + 1);
   const [authUser, setAuthUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -1161,6 +1332,33 @@ function App() {
       block: 'nearest'
     });else monthStripRef.current.scrollLeft = monthStripRef.current.scrollWidth;
   }, [state && state.selectedGoalId, state && state.tab]);
+  const notifiedLeftoverRef = useRef(null);
+  useEffect(() => {
+    if (!state || !state.pendingLeftover || !state.notificationsEnabled) return;
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const key = state.pendingLeftover.label + ':' + state.pendingLeftover.amount;
+    if (notifiedLeftoverRef.current === key) return;
+    notifiedLeftoverRef.current = key;
+    const title = state.language === 'es' ? 'Resumen de ' + state.pendingLeftover.label : state.pendingLeftover.label + ' summary';
+    const body = state.language === 'es' ? 'Te sobraron ' + fmt(state.pendingLeftover.amount) + '. Toca para asignarlo.' : 'You had ' + fmt(state.pendingLeftover.amount) + ' left over. Tap to assign it.';
+    try {
+      if (navigator.serviceWorker && navigator.serviceWorker.ready) {
+        navigator.serviceWorker.ready.then(reg => {
+          reg.showNotification(title, {
+            body: body,
+            tag: 'pf-month-summary',
+            data: {
+              url: './?action=monthSummary'
+            }
+          });
+        }).catch(() => {});
+      } else {
+        new Notification(title, {
+          body: body
+        });
+      }
+    } catch (e) {}
+  }, [state && state.pendingLeftover && state.pendingLeftover.label + state.pendingLeftover.amount, state && state.notificationsEnabled]);
   const donutCanvasRef = useRef(null);
   const saveTimer = useRef(null);
   const budgetRowRefs = useRef({});
@@ -1298,8 +1496,11 @@ function App() {
             loaded.lastProcessedYear = curYear;
           }
           const merged = Object.assign(defaultState(), loaded);
-          if (typeof window !== 'undefined' && window.location && window.location.search.includes('action=logExpense')) {
+          const qs = typeof window !== 'undefined' && window.location ? window.location.search : '';
+          if (qs.includes('action=logExpense')) {
             merged.tab = 'gastos';
+          } else if (qs.includes('action=monthSummary')) {
+            merged.tab = 'monthSummary';
           } else {
             merged.tab = 'inicio';
           }
@@ -1307,8 +1508,11 @@ function App() {
           setState(merged);
         } else {
           const fresh = defaultState();
-          if (typeof window !== 'undefined' && window.location && window.location.search.includes('action=logExpense')) {
+          const qs = typeof window !== 'undefined' && window.location ? window.location.search : '';
+          if (qs.includes('action=logExpense')) {
             fresh.tab = 'gastos';
+          } else if (qs.includes('action=monthSummary')) {
+            fresh.tab = 'monthSummary';
           }
           setState(fresh);
         }
@@ -1491,12 +1695,11 @@ function App() {
       };
     });
   };
-  const applyLeftoverAllocation = (spendingAmt, goalAmts) => {
+  const applyLeftoverAllocation = (spendingAmt, goalAmts, invAmts) => {
     patch(s => {
-      let goals = s.goals;
       const label = (s.pendingLeftover && s.pendingLeftover.label ? s.pendingLeftover.label : 'Last month') + ' leftover';
-      goals = s.goals.map(g => {
-        const amt = goalAmts[g.id] || 0;
+      const goals = s.goals.map(g => {
+        const amt = (goalAmts && goalAmts[g.id]) || 0;
         if (amt <= 0) return g;
         return {
           ...g,
@@ -1508,12 +1711,41 @@ function App() {
           }].concat(g.savingsLog || []).slice(0, 12)
         };
       });
+      const investments = s.investments.map(i => {
+        const amt = (invAmts && invAmts[i.id]) || 0;
+        if (amt <= 0) return i;
+        return {
+          ...i,
+          amount: (i.amount || 0) + amt,
+          currentValue: (i.currentValue || 0) + amt,
+          lastUpdated: todayStr,
+          log: [{
+            id: Date.now() + Math.random(),
+            amount: amt,
+            date: todayStr
+          }].concat(i.log || []).slice(0, 24)
+        };
+      });
       return {
         goals,
+        investments,
         spendingBoost: (s.spendingBoost || 0) + (spendingAmt || 0),
         pendingLeftover: null
       };
     });
+  };
+  const setNotificationsEnabled = on => {
+    // Reflect the user's intent immediately so the toggle always responds.
+    // Whether a notification actually fires is still gated on real permission at fire time.
+    patch({
+      notificationsEnabled: !!on
+    });
+    if (on && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      try {
+        const r = Notification.requestPermission();
+        if (r && typeof r.then === 'function') r.then(() => setState(s => Object.assign({}, s))).catch(() => {});
+      } catch (e) {}
+    }
   };
   const dismissLeftover = () => {
     patch(s => {
@@ -1664,6 +1896,7 @@ function App() {
         mode: 'auto',
         percent: 0,
         customDate: '',
+        horizon: null,
         reminderOn: false,
         reminderDay: 1,
         savingsLog: [],
@@ -1693,6 +1926,7 @@ function App() {
         mode: 'auto',
         percent: 0,
         customDate: '',
+        horizon: 'short',
         reminderOn: false,
         reminderDay: 1,
         savingsLog: [],
@@ -1875,6 +2109,11 @@ function App() {
         amount: 0,
         currentValue: 0,
         isRetirement: typeof isRetirement === 'boolean' ? isRetirement : null,
+        mode: 'off',
+        percent: 0,
+        goalId: null,
+        syncWithGoal: false,
+        assetType: null,
         log: [],
         lastUpdated: todayStr
       }]),
@@ -1897,10 +2136,29 @@ function App() {
   const updateInvestment = (id, field, val) => patch(s => ({
     investments: s.investments.map(i => i.id === id ? {
       ...i,
-      [field]: field === 'amount' || field === 'currentValue' ? parseFloat(val) || 0 : val,
+      [field]: field === 'amount' || field === 'currentValue' ? parseFloat(val) || 0 : field === 'percent' ? Math.max(0, Math.min(100, parseFloat(val) || 0)) : val,
       ...(field === 'currentValue' ? {
         lastUpdated: todayStr
       } : {})
+    } : i)
+  }));
+  const cycleInvestmentMode = id => patch(s => ({
+    investments: s.investments.map(i => i.id === id ? {
+      ...i,
+      mode: i.mode === 'off' || !i.mode ? 'auto' : i.mode === 'auto' ? 'manual' : 'off'
+    } : i)
+  }));
+  const setInvestmentGoalLink = (id, goalId) => patch(s => ({
+    investments: s.investments.map(i => i.id === id ? {
+      ...i,
+      goalId: goalId || null,
+      syncWithGoal: goalId ? i.syncWithGoal : false
+    } : i)
+  }));
+  const toggleInvestmentSync = id => patch(s => ({
+    investments: s.investments.map(i => i.id === id ? {
+      ...i,
+      syncWithGoal: !i.syncWithGoal
     } : i)
   }));
   const setInvestmentRetirement = (id, isRetirement) => patch(s => ({
@@ -1969,6 +2227,11 @@ function App() {
       ...s.seenTabIntro,
       [key]: true
     }
+  }));
+  const dismissTip = id => patch(s => ({
+    dismissedTips: Object.assign({}, s.dismissedTips, {
+      [id]: true
+    })
   }));
   const setLanguage = lang => patch({
     language: lang
@@ -2556,6 +2819,25 @@ function App() {
     view.paceGapPct = paceGapPct;
     return view;
   }
+  function buildInvestView(inv) {
+    const mode = ctx.effInvMode(inv);
+    const percent = mode === 'manual' ? ctx.effInvPercent(inv) || 0 : mode === 'auto' ? ctx.autoPercentEach : 0;
+    const monthly = mode === 'off' ? 0 : ctx.boostedAvailable * (percent / 100);
+    const linkedGoal = inv.goalId ? s.goals.find(g => g.id === inv.goalId) : null;
+    const assetType = guessAssetType(inv);
+    const assetGuessed = !inv.assetType && !!assetType;
+    return {
+      mode,
+      percent,
+      monthly,
+      linkedGoal,
+      assetType,
+      assetGuessed,
+      synced: !!(inv.goalId && inv.syncWithGoal),
+      percentLabel: Math.round(percent) + '%',
+      monthlyLabel: fmt(monthly)
+    };
+  }
   const monthlyTotal = ctx.totalExpenses,
     hustleTotal = ctx.hustleTotal;
   const totalCurrent = s.goals.reduce((a, g) => a + (g.current || 0), 0);
@@ -2653,9 +2935,148 @@ function App() {
     };
   });
   const investAssignedTotal = s.goals.reduce((a, g) => a + buildGoalView(g, false).monthlyBoosted, 0);
-  const investLeftover = Math.max(ctx.boostedAvailable - investAssignedTotal, 0);
+  const investParticipatingTotal = s.investments.reduce((a, i) => a + buildInvestView(i).monthly, 0);
+  const investLeftover = Math.max(ctx.boostedAvailable - investAssignedTotal - investParticipatingTotal, 0);
   const emergencyGoal = s.goals.find(g => g.name === 'Emergency Fund' || g.name === 'Fondo de emergencia');
+  const es = s.language === 'es';
+  function openGoal(id) {
+    selectGoal(id);
+    setShowGoalDetail(true);
+    setTab('metas');
+  }
+  function openInvestment(id) {
+    selectInvestment(id);
+    setShowInvestDetail(true);
+    setTab('invest');
+  }
+  // Rules engine: reads the current state and returns a prioritized list of
+  // plain-language suggestions (general financial rules of thumb, not advice).
+  function buildCoachTips() {
+    const tips = [];
+    const participatingInvs = s.investments.filter(i => buildInvestView(i).mode !== 'off');
+    const equityInvs = s.investments.filter(i => guessAssetType(i) === 'equity');
+    const efFunded = emergencyGoal && emergencyGoal.current >= emergencyGoal.target && emergencyGoal.target > 0;
+    // 1. Safety net first
+    if (!emergencyGoal) {
+      tips.push({
+        id: 'ef-missing',
+        title: es ? 'Empieza por tu red de seguridad' : 'Start with a safety net',
+        body: es ? 'Antes de invertir, lo común es tener 3–6 meses de gastos guardados para imprevistos.' : 'Before investing, it’s common to keep 3–6 months of expenses saved for surprises.',
+        actionLabel: es ? 'Crear fondo' : 'Create fund',
+        action: () => {
+          setTab('metas');
+          setShowEmergencyFundPicker(true);
+        }
+      });
+    } else if (!efFunded && equityInvs.some(i => buildInvestView(i).mode !== 'off')) {
+      tips.push({
+        id: 'ef-underfunded',
+        title: es ? 'Termina tu red de seguridad' : 'Finish your safety net',
+        body: es ? 'Tu fondo de emergencia aún no está completo. Suele recomendarse llenarlo antes de arriesgar más en acciones.' : 'Your emergency fund isn’t full yet. It’s usually wise to finish it before putting more into stocks.',
+        actionLabel: es ? 'Ver fondo' : 'View fund',
+        action: () => openGoal(emergencyGoal.id)
+      });
+    }
+    // 2. Over-allocated (config error)
+    if (ctx.manualPercentTotal > 100) {
+      tips.push({
+        id: 'over-allocated',
+        title: es ? 'Tus % pasan de 100' : 'Your % add up past 100',
+        body: (es ? 'Los porcentajes manuales suman ' : 'Your manual percentages add up to ') + ctx.manualPercentTotal.toFixed(0) + (es ? '%. Bájalos para que quepan en tu ingreso.' : '%. Lower them so they fit your income.'),
+        actionLabel: es ? 'Ir a metas' : 'Go to goals',
+        action: () => setTab('metas')
+      });
+    }
+    // 3. Horizon / risk mismatch
+    var mismatch = s.investments.find(function (i) {
+      if (guessAssetType(i) !== 'equity' || !i.goalId) return false;
+      var g = s.goals.find(function (x) {
+        return x.id === i.goalId;
+      });
+      if (!g) return false;
+      var hz = goalHorizonClass(g, ctx.today);
+      return hz === 'short' || hz === 'medium';
+    });
+    if (mismatch) {
+      var mg = s.goals.find(function (x) {
+        return x.id === mismatch.goalId;
+      });
+      tips.push({
+        id: 'mismatch-' + mismatch.id,
+        title: es ? 'Acciones para una meta cercana' : 'Stocks for a near-term goal',
+        body: (es ? '“' + mismatch.name + '” financia “' + mg.name + '”, que es de plazo corto/medio. El dinero que necesitarás pronto suele ir en algo más estable.' : '“' + mismatch.name + '” funds “' + mg.name + '”, a short/medium-term goal. Money you’ll need soon usually goes somewhere steadier.'),
+        actionLabel: es ? 'Revisar fondo' : 'Review fund',
+        action: () => openInvestment(mismatch.id)
+      });
+    }
+    // 4. Goal with no timeframe
+    var noHorizon = s.goals.find(function (g) {
+      return !g.customDate && !g.horizon;
+    });
+    if (noHorizon) {
+      tips.push({
+        id: 'no-horizon-' + noHorizon.id,
+        title: es ? 'Ponle un plazo a tu meta' : 'Give your goal a timeframe',
+        body: (es ? 'Define cuándo quieres lograr “' + noHorizon.name + '” para poder sugerirte dónde guardarlo.' : 'Set when you want to reach “' + noHorizon.name + '” so we can suggest where to keep it.'),
+        actionLabel: es ? 'Definir' : 'Set it',
+        action: () => openGoal(noHorizon.id)
+      });
+    }
+    // 5. Long-term goal not being invested
+    var longUninvested = s.goals.find(function (g) {
+      if (goalHorizonClass(g, ctx.today) !== 'long') return false;
+      return !s.investments.some(function (i) {
+        return i.goalId === g.id;
+      });
+    });
+    if (longUninvested && s.investments.length > 0) {
+      tips.push({
+        id: 'long-uninvested-' + longUninvested.id,
+        title: es ? 'Dinero a largo plazo puede crecer más' : 'Long-term money can grow more',
+        body: (es ? '“' + longUninvested.name + '” es a largo plazo. A ese plazo, el dinero suele crecer más invertido. Vincula un fondo.' : '“' + longUninvested.name + '” is long term. Over that horizon money usually grows more invested. Link a fund to it.'),
+        actionLabel: es ? 'Ver portafolio' : 'Open portfolio',
+        action: () => setTab('invest')
+      });
+    }
+    // 6. Investment with no goal
+    var unlinked = s.investments.find(function (i) {
+      return !i.goalId;
+    });
+    if (unlinked) {
+      tips.push({
+        id: 'unlinked-' + unlinked.id,
+        title: es ? '¿Para qué es este fondo?' : 'What is this fund for?',
+        body: (es ? 'Vincula “' + unlinked.name + '” a una meta para verlo todo junto y recibir mejores sugerencias.' : 'Link “' + unlinked.name + '” to a goal to see it all together and get better tips.'),
+        actionLabel: es ? 'Vincular' : 'Link it',
+        action: () => openInvestment(unlinked.id)
+      });
+    }
+    // 7. Unassigned monthly money
+    var assignedGoals = s.goals.reduce(function (a, g) {
+      return a + buildGoalView(g, false).monthlyBoosted;
+    }, 0);
+    var assignedInvs = s.investments.reduce(function (a, i) {
+      return a + buildInvestView(i).monthly;
+    }, 0);
+    var unassigned = ctx.boostedAvailable - assignedGoals - assignedInvs;
+    if (unassigned > 20 && (s.goals.length > 0 || s.investments.length > 0)) {
+      tips.push({
+        id: 'unassigned',
+        title: es ? 'Dinero sin asignar' : 'Unassigned money',
+        body: (es ? 'Te quedan ' + fmt(unassigned) + '/mes sin asignar a ninguna meta o fondo. Súbele el % a algo para ponerlo a trabajar.' : fmt(unassigned) + '/mo isn’t assigned to any goal or fund. Raise a share to put it to work.'),
+        actionLabel: es ? 'Ir a metas' : 'Go to goals',
+        action: () => setTab('metas')
+      });
+    }
+    const dt = s.dismissedTips || {};
+    return tips.filter(function (tp) {
+      return !dt[tp.id];
+    });
+  }
+  const coachTips = buildCoachTips();
   const selectedInvestment = investmentViews.find(i => i.id === s.selectedInvestmentId) || null;
+  const selInvView = selectedInvestment ? buildInvestView(selectedInvestment) : null;
+  const investSuggest = selInvView && selInvView.mode !== 'off' ? Math.round(selInvView.monthly) : Math.round(investLeftover);
   const buildInvestTabContent = () => {
     const totalGain = investmentValueTotal - investmentTotal;
     const totalGainPct = investmentTotal > 0 ? totalGain / investmentTotal * 100 : 0;
@@ -2895,13 +3316,105 @@ function App() {
       style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;')
     }, s.language === 'es' ? 'No' : 'No')), /*#__PURE__*/React.createElement("div", {
       style: css('font-size:10.5px;color:#86868b;margin-top:8px;line-height:1.3;')
-    }, s.language === 'es' ? 'Esto queda fijo para este fondo.' : "This can't be changed later for this fund.")), /*#__PURE__*/React.createElement("div", {
+    }, s.language === 'es' ? 'Esto queda fijo para este fondo.' : "This can't be changed later for this fund.")), (function () {
+      var iv = buildInvestView(selectedInvestment);
+      var per = s.language === 'es' ? '/mes' : '/mo';
+      var modeLabel = iv.mode === 'off' ? t('investShareOff') : iv.mode === 'manual' ? 'Manual' : 'Auto';
+      var hzClass = iv.linkedGoal ? goalHorizonClass(iv.linkedGoal, ctx.today) : null;
+      var showEquityWarn = iv.assetType === 'equity' && (hzClass === 'short' || hzClass === 'medium');
+      return /*#__PURE__*/React.createElement("div", {
+        style: css('background:#fff;border-radius:18px;padding:16px 18px;margin-bottom:14px;box-shadow:0 1px 2px rgba(0,0,0,0.05),0 8px 20px rgba(0,0,0,0.04);')
+      }, /*#__PURE__*/React.createElement("div", {
+        style: css('font-size:12.5px;color:#1d1d1f;font-weight:700;margin-bottom:2px;')
+      }, t('assetTypeLabel')), /*#__PURE__*/React.createElement("div", {
+        style: css('font-size:11px;color:#86868b;margin-bottom:10px;line-height:1.35;')
+      }, t('assetTypeHint')), /*#__PURE__*/React.createElement("div", {
+        style: css('display:flex;flex-direction:column;gap:6px;margin-bottom:16px;')
+      }, [['equity', 'assetEquity', 'assetEquityDesc'], ['bonds', 'assetBonds', 'assetBondsDesc'], ['other', 'assetOther', 'assetOtherDesc'], [null, 'assetUnsure', 'assetUnsureDesc']].map(function (o) {
+        var val = o[0];
+        var sel = (selectedInvestment.assetType || null) === val;
+        return /*#__PURE__*/React.createElement("button", {
+          key: o[1],
+          onClick: function () {
+            updateInvestment(selectedInvestment.id, 'assetType', val);
+          },
+          style: {
+            display: 'block',
+            width: '100%',
+            textAlign: 'left',
+            border: sel ? '1.5px solid #0071e3' : '1px solid #e5e5ea',
+            background: sel ? '#eef6ff' : '#fff',
+            borderRadius: 11,
+            padding: '9px 12px',
+            cursor: 'pointer'
+          }
+        }, /*#__PURE__*/React.createElement("span", {
+          style: css('font-size:13px;font-weight:600;color:#1d1d1f;')
+        }, t(o[1])), /*#__PURE__*/React.createElement("span", {
+          style: css('font-size:11.5px;color:#86868b;')
+        }, "  ·  " + t(o[2])));
+      })), /*#__PURE__*/React.createElement("div", {
+        style: css('font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:8px;')
+      }, t('linkToGoal')), /*#__PURE__*/React.createElement("select", {
+        value: selectedInvestment.goalId || '',
+        onChange: function (e) {
+          var v = e.target.value;
+          setInvestmentGoalLink(selectedInvestment.id, v ? isNaN(+v) ? v : +v : null);
+        },
+        style: css('width:100%;padding:10px 12px;border:1px solid #e5e5ea;border-radius:11px;font-size:13.5px;background:#fbfbfd;margin-bottom:10px;')
+      }, /*#__PURE__*/React.createElement("option", {
+        value: ''
+      }, t('notLinked')), s.goals.map(function (g) {
+        return /*#__PURE__*/React.createElement("option", {
+          key: g.id,
+          value: g.id
+        }, g.name);
+      })), iv.linkedGoal && /*#__PURE__*/React.createElement("label", {
+        style: css('display:flex;align-items:center;gap:8px;font-size:12.5px;color:#1d1d1f;margin-bottom:16px;cursor:pointer;')
+      }, /*#__PURE__*/React.createElement("input", {
+        type: "checkbox",
+        checked: !!selectedInvestment.syncWithGoal,
+        onChange: function () {
+          toggleInvestmentSync(selectedInvestment.id);
+        }
+      }), t('matchGoalPct')), /*#__PURE__*/React.createElement("div", {
+        style: css('display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding-top:14px;border-top:1px solid #f5f5f7;')
+      }, /*#__PURE__*/React.createElement("label", {
+        style: css('font-size:11.5px;color:#86868b;font-weight:600;')
+      }, t('investShareTitle')), /*#__PURE__*/React.createElement("button", {
+        onClick: function () {
+          if (!iv.synced) cycleInvestmentMode(selectedInvestment.id);
+        },
+        style: css('background:' + (iv.synced ? '#f0f0f2' : '#f5f5f7') + ';border:none;padding:4px 9px;border-radius:8px;font-size:10.5px;font-weight:600;color:' + (iv.synced ? '#86868b' : '#1d1d1f') + ';cursor:' + (iv.synced ? 'default' : 'pointer') + ';')
+      }, iv.synced ? modeLabel + ' · ' + (s.language === 'es' ? 'sig. meta' : 'follows goal') : modeLabel)), iv.mode === 'off' ? /*#__PURE__*/React.createElement("div", {
+        style: css('font-size:11.5px;color:#86868b;line-height:1.35;')
+      }, t('investShareHint')) : iv.mode === 'manual' && !iv.synced ? /*#__PURE__*/React.createElement("div", {
+        style: css('display:flex;align-items:baseline;gap:5px;font-size:15px;color:#1d1d1f;font-weight:700;')
+      }, /*#__PURE__*/React.createElement("input", {
+        type: "number", inputMode: "decimal",
+        min: "0",
+        max: "100",
+        value: selectedInvestment.percent || '',
+        onChange: function (e) {
+          updateInvestment(selectedInvestment.id, 'percent', e.target.value);
+        },
+        style: css('width:42px;padding:2px 3px;border:none;border-bottom:1.5px solid #0071e3;font-size:15px;font-weight:700;color:#1d1d1f;background:transparent;text-align:center;')
+      }), /*#__PURE__*/React.createElement("span", {
+        style: css('font-size:13px;color:#86868b;font-weight:600;')
+      }, "% → " + iv.monthlyLabel + per)) : /*#__PURE__*/React.createElement("div", {
+        style: css('font-size:15px;font-weight:700;color:#1d1d1f;')
+      }, iv.percentLabel, /*#__PURE__*/React.createElement("span", {
+        style: css('font-size:13px;color:#86868b;font-weight:600;')
+      }, " → " + iv.monthlyLabel + per)), showEquityWarn && /*#__PURE__*/React.createElement("div", {
+        style: css('margin-top:12px;padding:10px 12px;background:#fff8ef;border-radius:10px;font-size:11.5px;color:#8a6d3b;line-height:1.4;')
+      }, hzClass === 'short' ? t('guideEquityShort') : t('guideEquityMedium')));
+    })(), /*#__PURE__*/React.createElement("div", {
       style: css('background:#fff;border-radius:18px;padding:16px 18px;margin-bottom:14px;box-shadow:0 1px 2px rgba(0,0,0,0.05),0 8px 20px rgba(0,0,0,0.04);')
     }, /*#__PURE__*/React.createElement("div", {
       style: css('font-size:15px;font-weight:700;color:#1d1d1f;margin-bottom:4px;')
-    }, s.language === 'es' ? 'Registrar aporte' : 'Log a contribution'), investLeftover > 0 && /*#__PURE__*/React.createElement("div", {
+    }, s.language === 'es' ? 'Registrar aporte' : 'Log a contribution'), investSuggest > 0 && /*#__PURE__*/React.createElement("div", {
       style: css('font-size:12px;color:#86868b;margin-bottom:12px;line-height:1.4;')
-    }, s.language === 'es' ? 'Te quedan ' + fmt(investLeftover) + '/mes después de metas y gastos.' : fmt(investLeftover) + '/mo left over after goals and expenses.'), /*#__PURE__*/React.createElement("div", {
+    }, selInvView && selInvView.mode !== 'off' ? s.language === 'es' ? 'Tu plan sugiere ' + fmt(investSuggest) + '/mes para este fondo.' : 'Your plan suggests ' + fmt(investSuggest) + '/mo for this fund.' : s.language === 'es' ? 'Te quedan ' + fmt(investSuggest) + '/mes después de metas y gastos.' : fmt(investSuggest) + '/mo left over after goals and expenses.'), /*#__PURE__*/React.createElement("div", {
       style: {
         position: 'relative',
         marginBottom: 10
@@ -2910,14 +3423,14 @@ function App() {
       style: css('position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:16px;color:#86868b;pointer-events:none;')
     }, "$"), /*#__PURE__*/React.createElement("input", {
       type: "number", inputMode: "decimal",
-      placeholder: investLeftover > 0 ? String(Math.round(investLeftover)) : '0',
+      placeholder: investSuggest > 0 ? String(investSuggest) : '0',
       value: investLogAmount,
       onChange: e => setInvestLogAmount(e.target.value),
       style: css('width:100%;padding:13px 12px 13px 28px;border:1px solid #d2d2d7;border-radius:12px;font-size:16px;font-weight:700;background:#fbfbfd;')
-    })), investLeftover > 1 && /*#__PURE__*/React.createElement("button", {
-      onClick: () => setInvestLogAmount(String(Math.round(investLeftover))),
+    })), investSuggest > 1 && /*#__PURE__*/React.createElement("button", {
+      onClick: () => setInvestLogAmount(String(investSuggest)),
       style: css('background:#eef6ff;border:none;border-radius:9px;padding:8px 12px;font-size:12px;font-weight:700;color:#0071e3;cursor:pointer;margin-bottom:10px;')
-    }, (s.language === 'es' ? 'Usar disponible: ' : 'Use available: ') + fmt(investLeftover)), /*#__PURE__*/React.createElement("button", {
+    }, (s.language === 'es' ? 'Usar sugerido: ' : 'Use suggested: ') + fmt(investSuggest)), /*#__PURE__*/React.createElement("button", {
       onClick: () => {
         const amt = parseFloat(investLogAmount) || 0;
         if (amt > 0) {
@@ -3432,22 +3945,22 @@ function App() {
     style: css('background:linear-gradient(135deg,#0071e3,#34c759);border-radius:18px;padding:18px;color:#fff;margin-bottom:16px;box-shadow:0 12px 30px rgba(0,113,227,0.25);')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;opacity:0.9;')
-  }, "Leftover from ", s.pendingLeftover.label), /*#__PURE__*/React.createElement("div", {
+  }, (s.language === 'es' ? 'Sobrante de ' : 'Leftover from ') + s.pendingLeftover.label), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:28px;font-weight:800;margin:4px 0 8px;')
   }, fmt(s.pendingLeftover.amount)), !allocatingLeftover ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;opacity:0.95;margin-bottom:12px;')
-  }, "You had this left over — split it yourself, or we'll add it all to savings for you."), /*#__PURE__*/React.createElement("div", {
+  }, s.language === 'es' ? 'Te sobró esto — revísalo y asígnalo, o lo mandamos todo a ahorro por ti.' : "You had this left over — review and assign it, or we'll add it all to savings for you."), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:8px;')
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => {
-      setLeftoverSplits({});
-      setAllocatingLeftover(true);
+      setMsSplits({});
+      setTab('monthSummary');
     },
     style: css('flex:1;background:#fff;color:#0071e3;border:none;padding:10px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;')
-  }, "Split it up"), /*#__PURE__*/React.createElement("button", {
+  }, s.language === 'es' ? 'Ver resumen' : 'Review it'), /*#__PURE__*/React.createElement("button", {
     onClick: dismissLeftover,
     style: css('background:rgba(255,255,255,0.2);color:#fff;border:none;padding:10px 14px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;')
-  }, "Just save it all"))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, s.language === 'es' ? 'Solo ahorrarlo' : 'Just save it all'))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12px;opacity:0.9;margin-bottom:10px;')
   }, "Split it however you like — spending, one goal, or several."), /*#__PURE__*/React.createElement("div", {
     style: css('background:rgba(255,255,255,0.15);border-radius:12px;padding:10px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;')
@@ -4091,7 +4604,43 @@ function App() {
       fontWeight: 600,
       cursor: 'pointer'
     }
-  }, "Español")), /*#__PURE__*/React.createElement("div", {
+  }, "Español")), typeof Notification !== 'undefined' && /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('flex:1;min-width:0;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;font-weight:600;color:#1d1d1f;')
+  }, t('notifToggle')), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;color:#86868b;line-height:1.35;margin-top:2px;')
+  }, t('notifToggleDesc'))), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setNotificationsEnabled(!s.notificationsEnabled),
+    "aria-label": t('notifToggle'),
+    style: {
+      width: 44,
+      height: 26,
+      borderRadius: 13,
+      border: 'none',
+      background: s.notificationsEnabled ? '#34c759' : '#e5e5ea',
+      position: 'relative',
+      cursor: 'pointer',
+      flex: 'none',
+      padding: 0
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      position: 'absolute',
+      top: 3,
+      left: s.notificationsEnabled ? 21 : 3,
+      width: 20,
+      height: 20,
+      borderRadius: '50%',
+      background: '#fff',
+      transition: 'left 160ms',
+      boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
+    }
+  }))), typeof Notification !== 'undefined' && s.notificationsEnabled && Notification.permission === 'denied' && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;color:#ff9500;margin-top:-14px;margin-bottom:20px;line-height:1.35;')
+  }, t('notifBlocked')), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
   }, t('profileQTitle')), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;flex-direction:column;gap:8px;margin-bottom:20px;')
@@ -4319,7 +4868,28 @@ function App() {
     style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px;')
   }, t('goals')), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;color:#86868b;margin-bottom:16px;')
-  }, s.language === 'es' ? 'Así va cada meta este mes.' : 'How each goal is pacing this month.'), s.goals.length > 0 && (() => {
+  }, s.language === 'es' ? 'Así va cada meta este mes.' : 'How each goal is pacing this month.'), coachTips.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: css('background:#f7faff;border:1px solid #e4eefb;border-radius:14px;padding:14px 16px;margin-bottom:16px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;')
+  }, /*#__PURE__*/React.createElement("span", {
+    style: css('font-size:10.5px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#0071e3;')
+  }, t('coachEyebrow')), coachTips.length > 1 && /*#__PURE__*/React.createElement("button", {
+    onClick: () => setTab('guide'),
+    style: css('background:none;border:none;color:#0071e3;font-size:11.5px;font-weight:600;cursor:pointer;padding:0;')
+  }, t('coachSeeAll') + ' (' + coachTips.length + ')')), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:14px;font-weight:700;color:#1d1d1f;')
+  }, coachTips[0].title), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12.5px;color:#6e6e73;line-height:1.4;margin-top:3px;margin-bottom:12px;')
+  }, coachTips[0].body), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;justify-content:flex-end;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => dismissTip(coachTips[0].id),
+    style: css('background:none;border:none;color:#86868b;font-size:12.5px;font-weight:600;cursor:pointer;padding:8px 6px;')
+  }, coachTips[0].action ? t('coachNotNow') : t('coachGotIt')), coachTips[0].action && /*#__PURE__*/React.createElement("button", {
+    onClick: coachTips[0].action,
+    style: css('background:#0071e3;color:#fff;border:none;border-radius:9px;padding:8px 14px;font-size:12.5px;font-weight:700;cursor:pointer;')
+  }, coachTips[0].actionLabel))), s.goals.length > 0 && (() => {
     const total = s.goals.reduce((a, g) => a + buildGoalView(g, false).monthlyBoosted, 0);
     const R = 46,
       C = 2 * Math.PI * R;
@@ -5027,7 +5597,35 @@ function App() {
       marginTop: 8,
       lineHeight: 1.35
     }
-  }, sg.customMsg))), false && /*#__PURE__*/React.createElement("div", {
+  }, sg.customMsg), !sgSource.customDate && /*#__PURE__*/React.createElement("div", {
+    style: css('margin-top:10px;padding-top:10px;border-top:1px solid #f5f5f7;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:10.5px;color:#86868b;margin-bottom:8px;line-height:1.3;')
+  }, t('horizonHint')), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;flex-direction:column;gap:6px;')
+  }, [['short', 'horizonShort'], ['medium', 'horizonMedium'], ['long', 'horizonLong']].map(function (opt) {
+    var val = opt[0];
+    var sel = sgSource.horizon === val;
+    return /*#__PURE__*/React.createElement("button", {
+      key: val,
+      onClick: function () {
+        updateGoal(sgSource.id, 'horizon', sel ? null : val);
+      },
+      style: {
+        display: 'block',
+        width: '100%',
+        textAlign: 'left',
+        padding: '8px 10px',
+        borderRadius: 9,
+        border: sel ? '1.5px solid #0071e3' : '1px solid #e5e5ea',
+        background: sel ? '#eef6ff' : '#fff',
+        fontSize: 11.5,
+        fontWeight: 600,
+        color: '#1d1d1f',
+        cursor: 'pointer'
+      }
+    }, t(opt[1]));
+  }))))), false && /*#__PURE__*/React.createElement("div", {
     style: css('display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:12px;')
@@ -5618,7 +6216,244 @@ function App() {
         width: Math.min(nrPct, 100).toFixed(1) + '%'
       }
     })));
-  })()))), s.tab === 'budgetPlan' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement('div', { style: css('display:flex;align-items:center;gap:10px;margin-bottom:6px;') }, /*#__PURE__*/React.createElement('button', { onClick: function(){ setTab('gastos'); }, style: css('background:#f5f5f7;border:none;width:34px;height:34px;border-radius:10px;cursor:pointer;font-size:20px;color:#1d1d1f;display:flex;align-items:center;justify-content:center;line-height:1;') }, '\u2039'), /*#__PURE__*/React.createElement('div', { style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;') }, s.language==='es'?'Plan de presupuesto':'Budget Plan')), /*#__PURE__*/React.createElement('div', { style: css('font-size:13px;color:#86868b;margin-bottom:16px;line-height:1.4;') }, s.language==='es'?'Esta es la base de tus gastos. Def\u00EDnelo primero y aj\u00FAstalo con el tiempo.':'This is the base for your expenses. Set it up first, then adjust it over time.'), /*#__PURE__*/React.createElement('div', { style: css('background:linear-gradient(135deg,#0071e3,#5ac8fa);border-radius:16px;padding:16px;margin-bottom:14px;color:#fff;') }, /*#__PURE__*/React.createElement('div', { style: css('font-size:11.5px;opacity:0.85;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:8px;') }, s.language==='es'?'Resumen del plan':'Plan summary'), /*#__PURE__*/React.createElement('div', { style: css('display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px;') }, /*#__PURE__*/React.createElement('span', { style: css('opacity:0.9;') }, s.language==='es'?'Ingreso mensual':'Monthly income'), /*#__PURE__*/React.createElement('b', null, fmt(ctx.monthlyIncome))), /*#__PURE__*/React.createElement('div', { style: css('display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px;') }, /*#__PURE__*/React.createElement('span', { style: css('opacity:0.9;') }, s.language==='es'?'Presupuesto planeado':'Planned budget'), /*#__PURE__*/React.createElement('b', null, fmt(monthlyTotal))), /*#__PURE__*/React.createElement('div', { style: css('display:flex;justify-content:space-between;font-size:14px;font-weight:700;margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.25);') }, /*#__PURE__*/React.createElement('span', null, s.language==='es'?'Te queda para ahorrar':'Left to save'), /*#__PURE__*/React.createElement('span', null, fmt(Math.max(ctx.monthlyIncome - monthlyTotal, 0))))), /*#__PURE__*/React.createElement("div", {
+  })()))), s.tab === 'guide' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;gap:10px;margin-bottom:6px;')
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setTab('metas'),
+    style: css('background:#f5f5f7;border:none;width:34px;height:34px;border-radius:10px;cursor:pointer;font-size:20px;color:#1d1d1f;display:flex;align-items:center;justify-content:center;line-height:1;')
+  }, "‹"), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;')
+  }, t('guideTitle'))), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12.5px;color:#86868b;margin-bottom:16px;line-height:1.4;')
+  }, t('guideIntro')), coachTips.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;color:#86868b;text-align:center;padding:24px;')
+  }, t('coachAllGood')) : coachTips.map(function (tip) {
+    return /*#__PURE__*/React.createElement("div", {
+      key: tip.id,
+      style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px 16px;margin-bottom:10px;box-shadow:0 1px 2px rgba(0,0,0,0.04);')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:14px;font-weight:700;color:#1d1d1f;')
+    }, tip.title), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12.5px;color:#6e6e73;line-height:1.4;margin-top:3px;margin-bottom:12px;')
+    }, tip.body), /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;gap:8px;justify-content:flex-end;')
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: function () {
+        dismissTip(tip.id);
+      },
+      style: css('background:none;border:none;color:#86868b;font-size:12.5px;font-weight:600;cursor:pointer;padding:8px 6px;')
+    }, tip.action ? t('coachNotNow') : t('coachGotIt')), tip.action && /*#__PURE__*/React.createElement("button", {
+      onClick: tip.action,
+      style: css('background:#0071e3;color:#fff;border:none;border-radius:9px;padding:8px 14px;font-size:12.5px;font-weight:700;cursor:pointer;')
+    }, tip.actionLabel)));
+  })), s.tab === 'monthSummary' && (function () {
+    var pl = s.pendingLeftover;
+    var parsed = pl ? parseMonthYearLabel(pl.label) : {
+      month: s.logMonth,
+      year: s.logYear
+    };
+    var pmMonth = parsed.month,
+      pmYear = parsed.year;
+    var label = pl ? pl.label : MONTH_NAMES[pmMonth] + ' ' + pmYear;
+    var pmEntries = s.expenseLog.filter(function (e) {
+      var d = new Date(entryDateStr(e) + 'T00:00:00');
+      return d.getFullYear() === pmYear && d.getMonth() === pmMonth;
+    });
+    var pmSpent = pmEntries.reduce(function (a, e) {
+      return a + e.amount;
+    }, 0);
+    var catRows = s.expenseCategories.map(function (c) {
+      return {
+        name: c.name,
+        amt: pmEntries.filter(function (e) {
+          return e.recurring && e.name === c.name;
+        }).reduce(function (a, e) {
+          return a + e.amount;
+        }, 0)
+      };
+    }).filter(function (r) {
+      return r.amt > 0;
+    });
+    var pmNonRec = pmEntries.filter(function (e) {
+      return !e.recurring;
+    }).reduce(function (a, e) {
+      return a + e.amount;
+    }, 0);
+    var pmIncome = ctx.monthlyIncome;
+    var leftover = pl ? pl.amount : Math.max(pmIncome - pmSpent, 0);
+    var suggestion = (function () {
+      if (!pl) return {
+        spending: 0,
+        byGoal: {},
+        byInv: {}
+      };
+      var L = pl.amount,
+        byGoal = {},
+        byInv = {},
+        assigned = 0;
+      s.goals.forEach(function (g) {
+        var p = g.mode === 'manual' ? g.percent || 0 : ctx.autoPercentEach;
+        var sh = Math.round(L * p / 100);
+        if (sh > 0) {
+          byGoal[g.id] = sh;
+          assigned += sh;
+        }
+      });
+      s.investments.forEach(function (i) {
+        var iv = buildInvestView(i);
+        if (iv.mode !== 'off') {
+          var sh = Math.round(L * iv.percent / 100);
+          if (sh > 0) {
+            byInv[i.id] = sh;
+            assigned += sh;
+          }
+        }
+      });
+      return {
+        spending: Math.max(L - assigned, 0),
+        byGoal: byGoal,
+        byInv: byInv
+      };
+    })();
+    var allocated = Object.keys(msSplits).reduce(function (a, k) {
+      return a + (parseFloat(msSplits[k]) || 0);
+    }, 0);
+    var remaining = leftover - allocated;
+    var rowStyle = 'display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:6px;';
+    var inputStyle = 'width:88px;padding:6px 8px;border:1px solid #e5e5ea;border-radius:8px;font-size:13px;text-align:right;background:#fbfbfd;';
+    var splitRow = function (key, name) {
+      return /*#__PURE__*/React.createElement("div", {
+        key: key,
+        style: css('display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-top:1px solid #f5f5f7;')
+      }, /*#__PURE__*/React.createElement("span", {
+        style: css('font-size:13px;color:#1d1d1f;')
+      }, name), /*#__PURE__*/React.createElement("div", {
+        style: {
+          position: 'relative'
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: css('position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:12px;color:#86868b;pointer-events:none;')
+      }, "$"), /*#__PURE__*/React.createElement("input", {
+        type: "number", inputMode: "decimal",
+        placeholder: "0",
+        value: msSplits[key] || '',
+        onChange: function (e) {
+          var v = e.target.value;
+          setMsSplits(function (prev) {
+            var n = Object.assign({}, prev);
+            n[key] = v;
+            return n;
+          });
+        },
+        style: css('width:96px;padding:6px 8px 6px 18px;border:1px solid #e5e5ea;border-radius:8px;font-size:13px;text-align:right;background:#fbfbfd;')
+      })));
+    };
+    var confirmSplit = function () {
+      var spendingAmt = parseFloat(msSplits.spending) || 0;
+      var goalAmts = {};
+      s.goals.forEach(function (g) {
+        goalAmts[g.id] = parseFloat(msSplits['g' + g.id]) || 0;
+      });
+      var invAmts = {};
+      s.investments.forEach(function (i) {
+        invAmts[i.id] = parseFloat(msSplits['i' + i.id]) || 0;
+      });
+      applyLeftoverAllocation(spendingAmt, goalAmts, invAmts);
+      setMsSplits({});
+      setTab('inicio');
+    };
+    return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;align-items:center;gap:10px;margin-bottom:14px;')
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: function () {
+        setTab('inicio');
+      },
+      style: css('background:#f5f5f7;border:none;width:34px;height:34px;border-radius:10px;cursor:pointer;font-size:20px;color:#1d1d1f;display:flex;align-items:center;justify-content:center;line-height:1;')
+    }, "‹"), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;')
+    }, t('monthSummaryTitle')), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:13px;color:#86868b;')
+    }, label))), /*#__PURE__*/React.createElement("div", {
+      style: css('background:#fff;border:1px solid #f0f0f2;border-radius:16px;padding:16px 18px;margin-bottom:14px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css(rowStyle)
+    }, /*#__PURE__*/React.createElement("span", {
+      style: css('color:#86868b;')
+    }, t('msIncome')), /*#__PURE__*/React.createElement("b", null, fmt(pmIncome))), /*#__PURE__*/React.createElement("div", {
+      style: css(rowStyle)
+    }, /*#__PURE__*/React.createElement("span", {
+      style: css('color:#86868b;')
+    }, t('msSpent')), /*#__PURE__*/React.createElement("b", null, fmt(pmSpent))), catRows.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: css('margin:8px 0;padding:8px 0;border-top:1px solid #f5f5f7;border-bottom:1px solid #f5f5f7;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:6px;')
+    }, t('msByCategory')), catRows.map(function (r) {
+      return /*#__PURE__*/React.createElement("div", {
+        key: r.name,
+        style: css('display:flex;justify-content:space-between;font-size:12.5px;color:#6e6e73;margin-bottom:4px;')
+      }, /*#__PURE__*/React.createElement("span", null, r.name), /*#__PURE__*/React.createElement("span", null, fmt(r.amt)));
+    }), pmNonRec > 0 && /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;justify-content:space-between;font-size:12.5px;color:#6e6e73;')
+    }, /*#__PURE__*/React.createElement("span", null, t('msNonRecurring')), /*#__PURE__*/React.createElement("span", null, fmt(pmNonRec)))), /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;justify-content:space-between;align-items:center;font-size:15px;font-weight:800;color:#1d1d1f;margin-top:6px;')
+    }, /*#__PURE__*/React.createElement("span", null, t('msLeftover')), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: leftover >= 0 ? '#34c759' : '#ff3b30'
+      }
+    }, fmt(leftover))), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:10.5px;color:#86868b;margin-top:8px;line-height:1.3;')
+    }, t('msIncomeNote'))), pl && leftover > 0 ? /*#__PURE__*/React.createElement("div", {
+      style: css('background:#fff;border:1px solid #f0f0f2;border-radius:16px;padding:16px 18px;margin-bottom:14px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:15px;font-weight:700;color:#1d1d1f;margin-bottom:3px;')
+    }, t('msAssignTitle')), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12px;color:#86868b;margin-bottom:10px;line-height:1.35;')
+    }, t('msAssignHint')), /*#__PURE__*/React.createElement("button", {
+      onClick: function () {
+        var ns = {
+          spending: String(suggestion.spending)
+        };
+        Object.keys(suggestion.byGoal).forEach(function (id) {
+          ns['g' + id] = String(suggestion.byGoal[id]);
+        });
+        Object.keys(suggestion.byInv).forEach(function (id) {
+          ns['i' + id] = String(suggestion.byInv[id]);
+        });
+        setMsSplits(ns);
+      },
+      style: css('background:#eef6ff;border:none;border-radius:9px;padding:8px 12px;font-size:12px;font-weight:700;color:#0071e3;cursor:pointer;margin-bottom:6px;')
+    }, t('msUseSuggestion')), splitRow('spending', t('msSpending')), s.goals.map(function (g) {
+      return splitRow('g' + g.id, g.name);
+    }), s.investments.map(function (i) {
+      return splitRow('i' + i.id, i.name);
+    }), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12px;color:' + (remaining < 0 ? '#ff3b30' : '#86868b') + ';margin:12px 0;')
+    }, fmt(Math.max(remaining, 0)) + ' ' + t('msLeftToAssign') + (remaining < 0 ? ' — ' + t('msOverAssigned') : '')), /*#__PURE__*/React.createElement("button", {
+      onClick: confirmSplit,
+      style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:13px;border-radius:12px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:8px;')
+    }, t('msConfirm')), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: function () {
+        applyLeftoverAllocation(suggestion.spending, suggestion.byGoal, suggestion.byInv);
+        setMsSplits({});
+        setTab('inicio');
+      },
+      style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;padding:11px;border-radius:11px;font-size:12.5px;font-weight:700;cursor:pointer;')
+    }, t('msSaveAll')), /*#__PURE__*/React.createElement("button", {
+      onClick: function () {
+        applyLeftoverAllocation(leftover, {}, {});
+        setMsSplits({});
+        setTab('inicio');
+      },
+      style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;padding:11px;border-radius:11px;font-size:12.5px;font-weight:600;cursor:pointer;')
+    }, t('msKeepSpending')))) : /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:13px;color:#86868b;text-align:center;padding:20px;')
+    }, t('msNoLeftover')));
+  })(), s.tab === 'budgetPlan' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement('div', { style: css('display:flex;align-items:center;gap:10px;margin-bottom:6px;') }, /*#__PURE__*/React.createElement('button', { onClick: function(){ setTab('gastos'); }, style: css('background:#f5f5f7;border:none;width:34px;height:34px;border-radius:10px;cursor:pointer;font-size:20px;color:#1d1d1f;display:flex;align-items:center;justify-content:center;line-height:1;') }, '\u2039'), /*#__PURE__*/React.createElement('div', { style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;') }, s.language==='es'?'Plan de presupuesto':'Budget Plan')), /*#__PURE__*/React.createElement('div', { style: css('font-size:13px;color:#86868b;margin-bottom:16px;line-height:1.4;') }, s.language==='es'?'Esta es la base de tus gastos. Def\u00EDnelo primero y aj\u00FAstalo con el tiempo.':'This is the base for your expenses. Set it up first, then adjust it over time.'), /*#__PURE__*/React.createElement('div', { style: css('background:linear-gradient(135deg,#0071e3,#5ac8fa);border-radius:16px;padding:16px;margin-bottom:14px;color:#fff;') }, /*#__PURE__*/React.createElement('div', { style: css('font-size:11.5px;opacity:0.85;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:8px;') }, s.language==='es'?'Resumen del plan':'Plan summary'), /*#__PURE__*/React.createElement('div', { style: css('display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px;') }, /*#__PURE__*/React.createElement('span', { style: css('opacity:0.9;') }, s.language==='es'?'Ingreso mensual':'Monthly income'), /*#__PURE__*/React.createElement('b', null, fmt(ctx.monthlyIncome))), /*#__PURE__*/React.createElement('div', { style: css('display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px;') }, /*#__PURE__*/React.createElement('span', { style: css('opacity:0.9;') }, s.language==='es'?'Presupuesto planeado':'Planned budget'), /*#__PURE__*/React.createElement('b', null, fmt(monthlyTotal))), /*#__PURE__*/React.createElement('div', { style: css('display:flex;justify-content:space-between;font-size:14px;font-weight:700;margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.25);') }, /*#__PURE__*/React.createElement('span', null, s.language==='es'?'Te queda para ahorrar':'Left to save'), /*#__PURE__*/React.createElement('span', null, fmt(Math.max(ctx.monthlyIncome - monthlyTotal, 0))))), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:16px;padding:16px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
