@@ -578,10 +578,13 @@ function computeCtx(s) {
     }
     return i.percent || 0;
   };
-  const manualGoalTotal = s.goals.filter(g => g.mode === 'manual').reduce((a, g) => a + (g.percent || 0), 0);
+  // A completed goal (fully funded) stops taking a share of the split, so the
+  // freed-up % flows to the remaining active goals/investments automatically.
+  const goalActive = g => !(g.target > 0 && (g.current || 0) >= g.target);
+  const manualGoalTotal = s.goals.filter(g => g.mode === 'manual' && goalActive(g)).reduce((a, g) => a + (g.percent || 0), 0);
   const manualInvTotal = invs.filter(i => effInvMode(i) === 'manual').reduce((a, i) => a + (effInvPercent(i) || 0), 0);
   const manualPercentTotal = manualGoalTotal + manualInvTotal;
-  const autoGoalCount = s.goals.filter(g => g.mode !== 'manual').length;
+  const autoGoalCount = s.goals.filter(g => g.mode !== 'manual' && goalActive(g)).length;
   const autoInvCount = invs.filter(i => effInvMode(i) === 'auto').length;
   const autoCount = Math.max(autoGoalCount + autoInvCount, 1);
   const autoPercentEach = Math.max(100 - manualPercentTotal, 0) / autoCount;
@@ -754,6 +757,11 @@ const STRINGS = {
     coachAllGood: "You're on track — no tips right now.",
     guideTitle: 'Guide',
     guideIntro: 'General rules of thumb based on your setup — not personalized advice. Apply or edit anything.',
+    retireGoalName: 'Retirement',
+    tipRetireTitle: 'Give your Roth IRA a retirement target',
+    tipRetireBody: 'A Roth IRA is for retirement. I can add a “Retirement” goal with a target estimated by the 25× rule — save about 25× a year of your spending. Then withdrawing ~4%/yr from it would cover your costs without running out. Fully editable.',
+    retireCreate: 'Create goal',
+    retireNote: 'Target estimated with the 25× rule (25 × a year of your spending). Withdrawing ~4%/yr from it would roughly cover your expenses — it’s a general guide, so adjust it to your case.',
     settings: 'Settings',
     welcome: 'Welcome',
     getStarted: 'Get started',
@@ -898,6 +906,11 @@ const STRINGS = {
     coachAllGood: 'Todo en orden — nada que sugerir ahora.',
     guideTitle: 'Guía',
     guideIntro: 'Reglas generales según tu configuración — no es asesoría personalizada. Aplica o edita lo que quieras.',
+    retireGoalName: 'Retiro',
+    tipRetireTitle: 'Ponle meta a tu Roth IRA',
+    tipRetireBody: 'Un Roth IRA es para el retiro. Puedo crear una meta “Retiro” con un objetivo estimado con la regla del 25×: guardar ~25 veces tus gastos de un año. Así, retirar ~4% al año de ahí te cubriría sin quedarte sin dinero. Es totalmente editable.',
+    retireCreate: 'Crear meta',
+    retireNote: 'Objetivo estimado con la regla del 25× (25 × un año de tus gastos). Retirar ~4%/año de ahí cubriría más o menos tus gastos — es una guía general, ajústalo a tu caso.',
     settings: 'Ajustes',
     welcome: 'Bienvenida',
     getStarted: 'Comenzar',
@@ -1749,16 +1762,27 @@ function App() {
   };
   const dismissLeftover = () => {
     patch(s => {
-      if (!s.pendingLeftover || s.pendingLeftover.amount <= 0) return {
+      if (!s.pendingLeftover) return {
         pendingLeftover: null
       };
-      const amount = s.pendingLeftover.amount;
+      // Recompute live from that month's actual expenses (edits after month rollover).
+      const p = parseMonthYearLabel(s.pendingLeftover.label);
+      const spent = s.expenseLog.filter(e => {
+        const d = new Date(entryDateStr(e) + 'T00:00:00');
+        return d.getFullYear() === p.year && d.getMonth() === p.month;
+      }).reduce((a, e) => a + e.amount, 0);
+      const budget = sum(s.expenseCategories) + (s.nonRecurringBudget || 0);
+      const amount = Math.max(Math.round(budget - spent), 0);
+      if (amount <= 0) return {
+        pendingLeftover: null
+      };
       const label = s.pendingLeftover.label + ' leftover';
-      const manualPercentTotal = s.goals.filter(g => g.mode === 'manual').reduce((a, g) => a + (g.percent || 0), 0);
-      const autoCount = Math.max(s.goals.filter(g => g.mode !== 'manual').length, 1);
+      const active = g => !(g.target > 0 && (g.current || 0) >= g.target);
+      const manualPercentTotal = s.goals.filter(g => g.mode === 'manual' && active(g)).reduce((a, g) => a + (g.percent || 0), 0);
+      const autoCount = Math.max(s.goals.filter(g => g.mode !== 'manual' && active(g)).length, 1);
       const autoPercentEach = Math.max(100 - manualPercentTotal, 0) / autoCount;
       const goals = s.goals.map(g => {
-        const percent = g.mode === 'manual' ? g.percent || 0 : autoPercentEach;
+        const percent = !active(g) ? 0 : g.mode === 'manual' ? g.percent || 0 : autoPercentEach;
         const share = Math.round(amount * (percent / 100));
         if (share <= 0) return g;
         return {
@@ -1940,6 +1964,49 @@ function App() {
         selectedGoalId: id
       };
     });
+  };
+  const createRetirementGoal = investmentId => {
+    if (state.goals.length >= 6) return;
+    patch(s => {
+      if (s.goals.length >= 6) return {};
+      const id = Date.now();
+      const now = new Date();
+      const monthlyExp = sum(s.expenseCategories) + (s.nonRecurringBudget || 0) || monthlyIncomeOf(s) * 0.6;
+      // 25× rule (a.k.a. 4% rule): target ≈ 25 years of annual spending.
+      const target = Math.max(Math.round(monthlyExp * 12 * 25), 0);
+      const inv = s.investments.find(i => i.id === investmentId);
+      const newGoal = {
+        id,
+        name: s.language === 'es' ? 'Retiro' : 'Retirement',
+        icon: 'star',
+        color: PALETTE[s.goals.length % PALETTE.length],
+        target,
+        current: Math.round(inv && inv.currentValue || 0),
+        mode: 'auto',
+        percent: 0,
+        customDate: '',
+        horizon: 'long',
+        isRetirementGoal: true,
+        reminderOn: false,
+        reminderDay: 1,
+        savingsLog: [],
+        skippedMonths: [],
+        createdMonth: now.getMonth(),
+        createdYear: now.getFullYear()
+      };
+      const investments = s.investments.map(i => i.id === investmentId ? {
+        ...i,
+        goalId: id,
+        syncWithGoal: true
+      } : i);
+      return {
+        goals: s.goals.concat([newGoal]),
+        investments,
+        selectedGoalId: id
+      };
+    });
+    setShowGoalDetail(true);
+    setTab('metas');
   };
   const removeGoal = id => {
     askConfirm('Delete this goal? Its saved progress and history will be lost.', () => patch(s => {
@@ -2771,9 +2838,24 @@ function App() {
   }
   const hideInvestTab = s.incomeProfile === 'allowance' && s.studentAge && s.studentAge < 18 && s.investsWithParents === false;
   const ctx = computeCtx(s);
+  // The month-end leftover is recomputed live from that month's actual expenses,
+  // so editing past-month expenses updates the "Leftover from …" card and the summary.
+  const pendingLeftoverLive = (() => {
+    if (!s.pendingLeftover) return 0;
+    const p = parseMonthYearLabel(s.pendingLeftover.label);
+    if (p.month == null || isNaN(p.year)) return Math.max(Math.round(s.pendingLeftover.amount || 0), 0);
+    const spent = s.expenseLog.filter(e => {
+      const d = new Date(entryDateStr(e) + 'T00:00:00');
+      return d.getFullYear() === p.year && d.getMonth() === p.month;
+    }).reduce((a, e) => a + e.amount, 0);
+    const budget = sum(s.expenseCategories) + (s.nonRecurringBudget || 0);
+    return Math.max(Math.round(budget - spent), 0);
+  })();
   function buildGoalView(goal, isDetail) {
-    const percent = goal.mode === 'manual' ? goal.percent || 0 : ctx.autoPercentEach;
-    const monthlyBoosted = ctx.boostedAvailable * (percent / 100) + (ctx.assignedByGoal[goal.id] || 0);
+    // A fully-funded goal no longer receives a share of monthly savings.
+    const goalDone = goal.target > 0 && (goal.current || 0) >= goal.target;
+    const percent = goalDone ? 0 : goal.mode === 'manual' ? goal.percent || 0 : ctx.autoPercentEach;
+    const monthlyBoosted = goalDone ? 0 : ctx.boostedAvailable * (percent / 100) + (ctx.assignedByGoal[goal.id] || 0);
     const remaining = Math.max(goal.target - goal.current, 0);
     const monthsToGoal = monthlyBoosted > 0 ? Math.ceil(remaining / monthlyBoosted) : Infinity;
     const estDate = isFinite(monthsToGoal) ? addMonths(ctx.today, monthsToGoal) : null;
@@ -2987,6 +3069,22 @@ function App() {
         action: () => setTab('metas')
       });
     }
+    // 2b. Roth IRA / retirement account with no retirement goal yet
+    var retireGoal = s.goals.find(function (g) {
+      return g.isRetirementGoal;
+    });
+    var retireInv = s.investments.find(function (i) {
+      return i.isRetirement === true && !i.goalId;
+    });
+    if (retireInv && !retireGoal && s.goals.length < 6) {
+      tips.push({
+        id: 'retire-goal',
+        title: t('tipRetireTitle'),
+        body: t('tipRetireBody'),
+        actionLabel: t('retireCreate'),
+        action: () => createRetirementGoal(retireInv.id)
+      });
+    }
     // 3. Horizon / risk mismatch
     var mismatch = s.investments.find(function (i) {
       if (guessAssetType(i) !== 'equity' || !i.goalId) return false;
@@ -3038,9 +3136,9 @@ function App() {
         action: () => setTab('invest')
       });
     }
-    // 6. Investment with no goal
+    // 6. Investment with no goal (retirement accounts are self-evidently for retirement)
     var unlinked = s.investments.find(function (i) {
-      return !i.goalId;
+      return !i.goalId && !i.isRetirement;
     });
     if (unlinked) {
       tips.push({
@@ -3941,13 +4039,13 @@ function App() {
       zIndex: 1,
       minHeight: 'calc(100vh - ' + Math.max(homeHeroH - 26, 0) + 'px)'
     }
-  }, !!s.pendingLeftover && /*#__PURE__*/React.createElement("div", {
+  }, !!s.pendingLeftover && pendingLeftoverLive > 0 && /*#__PURE__*/React.createElement("div", {
     style: css('background:linear-gradient(135deg,#0071e3,#34c759);border-radius:18px;padding:18px;color:#fff;margin-bottom:16px;box-shadow:0 12px 30px rgba(0,113,227,0.25);')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;opacity:0.9;')
   }, (s.language === 'es' ? 'Sobrante de ' : 'Leftover from ') + s.pendingLeftover.label), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:28px;font-weight:800;margin:4px 0 8px;')
-  }, fmt(s.pendingLeftover.amount)), !allocatingLeftover ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, fmt(pendingLeftoverLive)), !allocatingLeftover ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;opacity:0.95;margin-bottom:12px;')
   }, s.language === 'es' ? 'Te sobró esto — revísalo y asígnalo, o lo mandamos todo a ahorro por ti.' : "You had this left over — review and assign it, or we'll add it all to savings for you."), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:8px;')
@@ -5276,7 +5374,9 @@ function App() {
   }))), /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowReminderPopup(false),
     style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:8px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;')
-  }, t('done'))))), /*#__PURE__*/React.createElement("div", {
+  }, t('done'))))), sgSource.isRetirementGoal && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;color:#6e6e73;background:#f7faff;border:1px solid #e4eefb;border-radius:12px;padding:10px 12px;margin-bottom:12px;line-height:1.4;')
+  }, t('retireNote')), /*#__PURE__*/React.createElement("div", {
     style: css('display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:12px;')
@@ -6280,19 +6380,20 @@ function App() {
       return a + e.amount;
     }, 0);
     var pmIncome = ctx.monthlyIncome;
-    var leftover = pl ? pl.amount : Math.max(pmIncome - pmSpent, 0);
+    var leftover = pl ? pendingLeftoverLive : Math.max(pmIncome - pmSpent, 0);
     var suggestion = (function () {
       if (!pl) return {
         spending: 0,
         byGoal: {},
         byInv: {}
       };
-      var L = pl.amount,
+      var L = pendingLeftoverLive,
         byGoal = {},
         byInv = {},
         assigned = 0;
       s.goals.forEach(function (g) {
-        var p = g.mode === 'manual' ? g.percent || 0 : ctx.autoPercentEach;
+        var done = g.target > 0 && (g.current || 0) >= g.target;
+        var p = done ? 0 : g.mode === 'manual' ? g.percent || 0 : ctx.autoPercentEach;
         var sh = Math.round(L * p / 100);
         if (sh > 0) {
           byGoal[g.id] = sh;
