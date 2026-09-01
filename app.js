@@ -1147,6 +1147,8 @@ function App() {
   const [newFundName, setNewFundName] = useState('');
   const [newFundRetirement, setNewFundRetirement] = useState(null);
   const [editingInvestmentName, setEditingInvestmentName] = useState(false);
+  const [editingRetirement, setEditingRetirement] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [investLogAmount, setInvestLogAmount] = useState('');
   const [investValueEdit, setInvestValueEdit] = useState('');
   const [editingLogId, setEditingLogId] = useState(null);
@@ -1373,6 +1375,69 @@ function App() {
     } catch (e) {}
   }, [state && state.pendingLeftover && state.pendingLeftover.label + state.pendingLeftover.amount, state && state.notificationsEnabled]);
   const donutCanvasRef = useRef(null);
+  const cardPressRef = useRef({
+    id: null,
+    fired: false
+  });
+  // Long-press (hold) a card to delete it. Returns pointer handlers; pair with
+  // cardTapGuard so the normal tap (open detail) is skipped after a long-press.
+  const cardPressProps = onLong => ({
+    onPointerDown: () => {
+      cardPressRef.current.fired = false;
+      clearTimeout(cardPressRef.current.id);
+      cardPressRef.current.id = setTimeout(() => {
+        cardPressRef.current.fired = true;
+        onLong();
+      }, 550);
+    },
+    onPointerUp: () => clearTimeout(cardPressRef.current.id),
+    onPointerCancel: () => clearTimeout(cardPressRef.current.id),
+    onPointerLeave: () => clearTimeout(cardPressRef.current.id)
+  });
+  const cardTapGuard = onTap => () => {
+    if (cardPressRef.current.fired) {
+      cardPressRef.current.fired = false;
+      return;
+    }
+    onTap();
+  };
+  // In-card delete confirmation (an overlay inside the card, not a modal).
+  const deleteOverlay = onDelete => /*#__PURE__*/React.createElement("div", {
+    onClick: e => {
+      e.stopPropagation();
+      setDeleteConfirm(null);
+    },
+    style: css('position:absolute;inset:0;background:rgba(255,255,255,0.97);border-radius:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:12px;z-index:3;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12.5px;font-weight:700;color:#1d1d1f;text-align:center;')
+  }, state.language === 'es' ? '¿Eliminar?' : 'Delete?'), /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;gap:8px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "button",
+    onClick: e => {
+      e.stopPropagation();
+      setDeleteConfirm(null);
+    },
+    style: css('background:#f5f5f7;color:#1d1d1f;border-radius:9px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;')
+  }, state.language === 'es' ? 'Cancelar' : 'Cancel'), /*#__PURE__*/React.createElement("div", {
+    role: "button",
+    onClick: e => {
+      e.stopPropagation();
+      onDelete();
+      setDeleteConfirm(null);
+    },
+    style: css('background:#ff3b30;color:#fff;border-radius:9px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;')
+  }, state.language === 'es' ? 'Eliminar' : 'Delete')));
+  const deleteGoalNow = id => patch(st => {
+    const goals = st.goals.filter(g => g.id !== id);
+    return {
+      goals,
+      selectedGoalId: st.selectedGoalId === id ? goals[0] ? goals[0].id : null : st.selectedGoalId
+    };
+  });
+  const deleteInvestmentNow = id => patch(st => ({
+    investments: st.investments.filter(i => i.id !== id)
+  }));
   const saveTimer = useRef(null);
   const budgetRowRefs = useRef({});
   const dragInfo = useRef({
@@ -2009,7 +2074,7 @@ function App() {
     setTab('metas');
   };
   const removeGoal = id => {
-    askConfirm('Delete this goal? Its saved progress and history will be lost.', () => patch(s => {
+    askConfirm(state.language === 'es' ? '¿Eliminar esta meta? Se perderá su progreso e historial.' : 'Delete this goal? Its saved progress and history will be lost.', () => patch(s => {
       const goals = s.goals.filter(g => g.id !== id);
       return {
         goals,
@@ -2193,7 +2258,7 @@ function App() {
     selectedInvestmentId: id
   });
   const removeInvestment = id => {
-    askConfirm("Delete this fund from your portfolio? Its contribution history will be lost.", () => {
+    askConfirm(state.language === 'es' ? '¿Eliminar este fondo de tu portafolio? Se perderá su historial de aportes.' : "Delete this fund from your portfolio? Its contribution history will be lost.", () => {
       patch(st => ({
         investments: st.investments.filter(i => i.id !== id)
       }));
@@ -2229,7 +2294,7 @@ function App() {
     } : i)
   }));
   const setInvestmentRetirement = (id, isRetirement) => patch(s => ({
-    investments: s.investments.map(i => i.id === id && i.isRetirement == null ? {
+    investments: s.investments.map(i => i.id === id ? {
       ...i,
       isRetirement
     } : i)
@@ -3193,7 +3258,7 @@ function App() {
     }, /*#__PURE__*/React.createElement("path", {
       d: "M9 6l6 6-6 6"
     }));
-    const cardStyle = 'display:flex;flex-direction:column;justify-content:space-between;width:100%;min-width:0;text-align:left;background:#fff;border:none;border-radius:18px;padding:15px 16px;cursor:pointer;min-height:138px;box-shadow:0 1px 2px rgba(0,0,0,0.05),0 8px 20px rgba(0,0,0,0.04);';
+    const cardStyle = 'position:relative;display:flex;flex-direction:column;justify-content:space-between;width:100%;min-width:0;text-align:left;background:#fff;border:none;border-radius:18px;padding:15px 16px;cursor:pointer;min-height:138px;box-shadow:0 1px 2px rgba(0,0,0,0.05),0 8px 20px rgba(0,0,0,0.04);';
     const efInPortfolio = emergencyGoal && emergencyGoal.apy != null;
     const efMonthlyInterest = efInPortfolio ? (emergencyGoal.current || 0) * (emergencyGoal.apy / 100) / 12 : 0;
     return React.createElement(React.Fragment, null, showInvestDetail ? /*#__PURE__*/React.createElement("button", {
@@ -3300,16 +3365,19 @@ function App() {
       }
     }, emergencyGoal.apy.toFixed(2).replace(/\.?0+$/, ''), s.language === 'es' ? '% anual' : '% APY'), /*#__PURE__*/React.createElement("div", {
       style: css('font-size:11px;color:#34c759;font-weight:700;margin-top:2px;')
-    }, '+', fmt(efMonthlyInterest), s.language === 'es' ? '/mes en interés' : '/mo interest'))), investmentViews.map(inv => /*#__PURE__*/React.createElement("button", {
+    }, '+', fmt(efMonthlyInterest), s.language === 'es' ? '/mes en interés' : '/mo interest'))), investmentViews.map(inv => /*#__PURE__*/React.createElement("button", Object.assign({
       key: inv.id,
       ref: pfRevealRef,
       className: 'pf-reveal',
-      onClick: () => {
+      onClick: cardTapGuard(() => {
         selectInvestment(inv.id);
         setShowInvestDetail(true);
-      },
+      }),
       style: css(cardStyle)
-    }, /*#__PURE__*/React.createElement("div", {
+    }, cardPressProps(() => setDeleteConfirm({
+      type: 'fund',
+      id: inv.id
+    }))), deleteConfirm && deleteConfirm.type === 'fund' && deleteConfirm.id === inv.id && deleteOverlay(() => deleteInvestmentNow(inv.id)), /*#__PURE__*/React.createElement("div", {
       style: css('display:flex;align-items:center;gap:8px;')
     }, /*#__PURE__*/React.createElement("div", {
       style: css('font-size:13px;font-weight:700;color:#1d1d1f;line-height:1.25;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
@@ -3387,9 +3455,11 @@ function App() {
     }) : /*#__PURE__*/React.createElement("div", {
       onClick: () => setEditingInvestmentName(true),
       style: css('font-size:19px;font-weight:800;color:#fff;cursor:pointer;flex:1;min-width:0;letter-spacing:-0.01em;')
-    }, selectedInvestment.name), selectedInvestment.isRetirement != null && /*#__PURE__*/React.createElement("span", {
-      style: css('flex:none;background:rgba(255,255,255,0.2);color:#fff;font-size:10.5px;font-weight:700;padding:5px 10px;border-radius:999px;white-space:nowrap;')
-    }, selectedInvestment.isRetirement ? 'Roth IRA' : (s.language === 'es' ? 'Gravable' : 'Taxable'))), /*#__PURE__*/React.createElement("div", {
+    }, selectedInvestment.name), selectedInvestment.isRetirement != null && /*#__PURE__*/React.createElement("button", {
+      onClick: () => setEditingRetirement(true),
+      "aria-label": s.language === 'es' ? 'Cambiar tipo de cuenta' : 'Change account type',
+      style: css('flex:none;background:rgba(255,255,255,0.2);color:#fff;border:none;font-size:10.5px;font-weight:700;padding:5px 10px;border-radius:999px;white-space:nowrap;cursor:pointer;')
+    }, (selectedInvestment.isRetirement ? 'Roth IRA' : (s.language === 'es' ? 'Gravable' : 'Taxable')) + ' ✎')), /*#__PURE__*/React.createElement("div", {
       style: css('font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;opacity:0.85;')
     }, s.language === 'es' ? 'Valor actual' : 'Current value'), /*#__PURE__*/React.createElement("div", {
       style: css('font-size:34px;font-weight:800;letter-spacing:-0.02em;margin:4px 0 8px;font-variant-numeric:tabular-nums;')
@@ -3397,7 +3467,7 @@ function App() {
       style: css('display:flex;align-items:center;gap:8px;flex-wrap:wrap;')
     }, /*#__PURE__*/React.createElement("span", {
       style: css('display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,0.2);border-radius:999px;padding:4px 10px;font-size:12.5px;font-weight:700;')
-    }, selectedInvestment.gainAmount >= 0 ? '▲' : '▼', ' ', fmt(Math.abs(selectedInvestment.gainAmount)), ' (', Math.abs(selectedInvestment.gainPct).toFixed(1), '%)')))), selectedInvestment.isRetirement == null && /*#__PURE__*/React.createElement("div", {
+    }, selectedInvestment.gainAmount >= 0 ? '▲' : '▼', ' ', fmt(Math.abs(selectedInvestment.gainAmount)), ' (', Math.abs(selectedInvestment.gainPct).toFixed(1), '%)')))), (selectedInvestment.isRetirement == null || editingRetirement) && /*#__PURE__*/React.createElement("div", {
       style: css('background:#fff;border-radius:18px;padding:16px 18px;margin-bottom:14px;box-shadow:0 1px 2px rgba(0,0,0,0.05),0 8px 20px rgba(0,0,0,0.04);')
     }, /*#__PURE__*/React.createElement("div", {
       style: css('font-size:13.5px;font-weight:700;color:#1d1d1f;margin-bottom:10px;')
@@ -3407,14 +3477,18 @@ function App() {
         gap: 8
       }
     }, /*#__PURE__*/React.createElement("button", {
-      onClick: () => setInvestmentRetirement(selectedInvestment.id, true),
-      style: css('flex:1;background:#0071e3;color:#fff;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;')
+      onClick: () => {
+        setInvestmentRetirement(selectedInvestment.id, true);
+        setEditingRetirement(false);
+      },
+      style: css('flex:1;background:' + (selectedInvestment.isRetirement === true ? '#0071e3' : '#f5f5f7') + ';color:' + (selectedInvestment.isRetirement === true ? '#fff' : '#1d1d1f') + ';border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;')
     }, s.language === 'es' ? 'Sí' : 'Yes'), /*#__PURE__*/React.createElement("button", {
-      onClick: () => setInvestmentRetirement(selectedInvestment.id, false),
-      style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;')
-    }, s.language === 'es' ? 'No' : 'No')), /*#__PURE__*/React.createElement("div", {
-      style: css('font-size:10.5px;color:#86868b;margin-top:8px;line-height:1.3;')
-    }, s.language === 'es' ? 'Esto queda fijo para este fondo.' : "This can't be changed later for this fund.")), (function () {
+      onClick: () => {
+        setInvestmentRetirement(selectedInvestment.id, false);
+        setEditingRetirement(false);
+      },
+      style: css('flex:1;background:' + (selectedInvestment.isRetirement === false ? '#0071e3' : '#f5f5f7') + ';color:' + (selectedInvestment.isRetirement === false ? '#fff' : '#1d1d1f') + ';border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;')
+    }, s.language === 'es' ? 'No' : 'No'))), (function () {
       var iv = buildInvestView(selectedInvestment);
       var per = s.language === 'es' ? '/mes' : '/mo';
       var modeLabel = iv.mode === 'off' ? t('investShareOff') : iv.mode === 'manual' ? 'Manual' : 'Auto';
@@ -3759,6 +3833,16 @@ function App() {
   }));
 
   /* ================= RENDER ================= */
+  // Tapping a bottom-nav / sidebar item always lands on that section's root:
+  // close any open detail or sub-view so you go "back to the start" of it.
+  const goToTabRoot = name => {
+    setShowGoalDetail(false);
+    setShowInvestDetail(false);
+    setAllocatingLeftover(false);
+    setEditingRetirement(false);
+    setSettingsView('menu');
+    setTab(name);
+  };
   const TabButton = ({
     name,
     label,
@@ -3767,7 +3851,7 @@ function App() {
     const active = s.tab === name;
     const color = active ? '#0071e3' : '#86868b';
     return /*#__PURE__*/React.createElement("button", {
-      onClick: () => setTab(name),
+      onClick: () => goToTabRoot(name),
       style: css('flex:1;background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 2px 6px;cursor:pointer;color:' + color + ';')
     }, /*#__PURE__*/React.createElement("span", {
       style: css('display:flex;align-items:center;justify-content:center;width:44px;height:26px;border-radius:13px;background:' + (active ? 'rgba(0,113,227,0.12)' : 'transparent') + ';transition:background 0.18s ease;')
@@ -3792,7 +3876,7 @@ function App() {
     const active = s.tab === name;
     const color = active ? '#0071e3' : '#6e6e73';
     return /*#__PURE__*/React.createElement("button", {
-      onClick: () => setTab(name),
+      onClick: () => goToTabRoot(name),
       style: {
         width: '100%',
         background: active ? '#eef6ff' : 'none',
@@ -5084,16 +5168,19 @@ function App() {
     const loggedThisMonth = monthEntries.reduce((a, e) => a + e.amount, 0);
     const monthPct = v.monthlyBoosted > 0 ? Math.round(loggedThisMonth / v.monthlyBoosted * 100) : loggedThisMonth > 0 ? 100 : 0;
     const capColor = g.color;
-    return /*#__PURE__*/React.createElement("div", {
+    return /*#__PURE__*/React.createElement("div", Object.assign({
       key: g.id,
       ref: pfRevealRef,
       className: 'pf-reveal',
-      onClick: () => {
+      onClick: cardTapGuard(() => {
         selectGoal(g.id);
         setShowGoalDetail(true);
-      },
-      style: css('display:flex;flex-direction:column;background:#fff;border-radius:18px;padding:15px 16px;cursor:pointer;min-height:138px;min-width:0;box-shadow:0 1px 2px rgba(0,0,0,0.05),0 8px 20px rgba(0,0,0,0.04);')
-    }, /*#__PURE__*/React.createElement("div", {
+      }),
+      style: css('position:relative;display:flex;flex-direction:column;background:#fff;border-radius:18px;padding:15px 16px;cursor:pointer;min-height:138px;min-width:0;box-shadow:0 1px 2px rgba(0,0,0,0.05),0 8px 20px rgba(0,0,0,0.04);')
+    }, cardPressProps(() => setDeleteConfirm({
+      type: 'goal',
+      id: g.id
+    }))), deleteConfirm && deleteConfirm.type === 'goal' && deleteConfirm.id === g.id && deleteOverlay(() => deleteGoalNow(g.id)), /*#__PURE__*/React.createElement("div", {
       style: css('display:flex;align-items:center;gap:8px;margin-bottom:8px;')
     }, /*#__PURE__*/React.createElement("div", {
       style: {
