@@ -275,6 +275,15 @@ function guessAssetType(inv) {
   if (equity.some(k => txt.includes(k))) return 'equity';
   return null;
 }
+// Money contributed (principal, no market gain) into funds linked to a goal.
+// A goal's shown progress = its own logged savings + what's deposited in its funds.
+function linkedFundContrib(goal, investments) {
+  if (!goal || !investments) return 0;
+  return investments.filter(i => i.goalId === goal.id).reduce((a, i) => a + (i.amount || 0), 0);
+}
+function goalCurrentTotal(goal, investments) {
+  return (goal.current || 0) + linkedFundContrib(goal, investments);
+}
 function buildGoalSparkline(goal, monthlyBoosted, today) {
   const N = 6;
   const months = [];
@@ -580,7 +589,7 @@ function computeCtx(s) {
   };
   // A completed goal (fully funded) stops taking a share of the split, so the
   // freed-up % flows to the remaining active goals/investments automatically.
-  const goalActive = g => !(g.target > 0 && (g.current || 0) >= g.target);
+  const goalActive = g => !(g.target > 0 && goalCurrentTotal(g, s.investments) >= g.target);
   const manualGoalTotal = s.goals.filter(g => g.mode === 'manual' && goalActive(g)).reduce((a, g) => a + (g.percent || 0), 0);
   const manualInvTotal = invs.filter(i => effInvMode(i) === 'manual').reduce((a, i) => a + (effInvPercent(i) || 0), 0);
   const manualPercentTotal = manualGoalTotal + manualInvTotal;
@@ -1842,7 +1851,7 @@ function App() {
         pendingLeftover: null
       };
       const label = s.pendingLeftover.label + ' leftover';
-      const active = g => !(g.target > 0 && (g.current || 0) >= g.target);
+      const active = g => !(g.target > 0 && goalCurrentTotal(g, s.investments) >= g.target);
       const manualPercentTotal = s.goals.filter(g => g.mode === 'manual' && active(g)).reduce((a, g) => a + (g.percent || 0), 0);
       const autoCount = Math.max(s.goals.filter(g => g.mode !== 'manual' && active(g)).length, 1);
       const autoPercentEach = Math.max(100 - manualPercentTotal, 0) / autoCount;
@@ -2046,7 +2055,7 @@ function App() {
         icon: 'star',
         color: PALETTE[s.goals.length % PALETTE.length],
         target,
-        current: Math.round(inv && inv.currentValue || 0),
+        current: 0,
         mode: 'auto',
         percent: 0,
         customDate: '',
@@ -2490,11 +2499,12 @@ function App() {
         const p = parseMonthYearLabel(entry.label);
         return p.year === reportYear && months.includes(p.month);
       }).reduce((a, entry) => a + entry.amount, 0);
-      const pct = g.target > 0 ? Math.min(100, g.current / g.target * 100) : 0;
+      const gcur = goalCurrentTotal(g, s.investments);
+      const pct = g.target > 0 ? Math.min(100, gcur / g.target * 100) : 0;
       return {
         name: g.name,
         deposits,
-        current: g.current,
+        current: gcur,
         target: g.target,
         pct
       };
@@ -2903,6 +2913,7 @@ function App() {
   }
   const hideInvestTab = s.incomeProfile === 'allowance' && s.studentAge && s.studentAge < 18 && s.investsWithParents === false;
   const ctx = computeCtx(s);
+  const goalCur = g => goalCurrentTotal(g, s.investments);
   // The month-end leftover is recomputed live from that month's actual expenses,
   // so editing past-month expenses updates the "Leftover from …" card and the summary.
   const pendingLeftoverLive = (() => {
@@ -2917,18 +2928,21 @@ function App() {
     return Math.max(Math.round(budget - spent), 0);
   })();
   function buildGoalView(goal, isDetail) {
+    // Progress = own logged savings + contributions in linked funds (principal, no gains).
+    const cur = goalCurrentTotal(goal, s.investments);
     // A fully-funded goal no longer receives a share of monthly savings.
-    const goalDone = goal.target > 0 && (goal.current || 0) >= goal.target;
+    const goalDone = goal.target > 0 && cur >= goal.target;
     const percent = goalDone ? 0 : goal.mode === 'manual' ? goal.percent || 0 : ctx.autoPercentEach;
     const monthlyBoosted = goalDone ? 0 : ctx.boostedAvailable * (percent / 100) + (ctx.assignedByGoal[goal.id] || 0);
-    const remaining = Math.max(goal.target - goal.current, 0);
+    const remaining = Math.max(goal.target - cur, 0);
     const monthsToGoal = monthlyBoosted > 0 ? Math.ceil(remaining / monthlyBoosted) : Infinity;
     const estDate = isFinite(monthsToGoal) ? addMonths(ctx.today, monthsToGoal) : null;
     const estDateLabel = estDate ? MONTH_NAMES[estDate.getMonth()] + ' ' + estDate.getFullYear() : 'No savings assigned';
-    const progressPct = goal.target > 0 ? Math.min(100, goal.current / goal.target * 100) : 0;
-    const isCompleted = goal.target > 0 && goal.current >= goal.target;
+    const progressPct = goal.target > 0 ? Math.min(100, cur / goal.target * 100) : 0;
+    const isCompleted = goal.target > 0 && cur >= goal.target;
     const view = {
       goal,
+      current: cur,
       percent,
       monthlyBoosted,
       progressPct,
@@ -2987,7 +3001,7 @@ function App() {
   }
   const monthlyTotal = ctx.totalExpenses,
     hustleTotal = ctx.hustleTotal;
-  const totalCurrent = s.goals.reduce((a, g) => a + (g.current || 0), 0);
+  const totalCurrent = s.goals.reduce((a, g) => a + goalCur(g), 0);
   const totalTarget = s.goals.reduce((a, g) => a + (g.target || 0), 0);
   const overallPct = totalTarget > 0 ? Math.min(100, totalCurrent / totalTarget * 100) : 0;
   const globalHustleMessage = hustleTotal <= 0 ? 'Add an extra income below to see how many months you can save on your goals.' : 'Your side hustles add up to ' + fmt(hustleTotal) + '/mo extra — assign them to a specific goal or leave them general to split automatically.';
@@ -4298,7 +4312,7 @@ function App() {
       style: css('font-size:15.5px;font-weight:600;')
     }, g.name), /*#__PURE__*/React.createElement("div", {
       style: css('font-size:12.5px;color:#86868b;')
-    }, fmt(g.current), " of ", fmt(g.target))), /*#__PURE__*/React.createElement("div", {
+    }, fmt(goalCur(g)), " of ", fmt(g.target))), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: v.isCompleted ? 13 : 19,
         fontWeight: 700,
@@ -5079,7 +5093,7 @@ function App() {
     const segs = s.goals.map(g => {
       const v = buildGoalView(g, false).monthlyBoosted;
       const frac = total > 0 ? v / total : 0;
-      const isCompleted = g.target > 0 && g.current >= g.target;
+      const isCompleted = g.target > 0 && goalCur(g) >= g.target;
       const seg = {
         color: g.color,
         name: g.name,
@@ -5160,7 +5174,7 @@ function App() {
   }, s.goals.map(g => {
     const v = buildGoalView(g, false);
     const spark = buildGoalSparkline(g, v.monthlyBoosted, ctx.today);
-    const remaining = Math.max(g.target - g.current, 0);
+    const remaining = Math.max(g.target - goalCur(g), 0);
     const monthEntries = (g.savingsLog || []).filter(e => {
       const p = parseMonthYearLabel(e.label);
       return p.year === ctx.today.getFullYear() && p.month === ctx.today.getMonth();
@@ -5200,7 +5214,7 @@ function App() {
       style: css('font-size:12.5px;font-weight:700;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;')
     }, g.name)), /*#__PURE__*/React.createElement("div", {
       style: css('font-size:21px;font-weight:800;color:#1d1d1f;letter-spacing:-0.01em;font-variant-numeric:tabular-nums;')
-    }, fmt(g.current)), /*#__PURE__*/React.createElement("div", {
+    }, fmt(goalCur(g))), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 11.5,
         fontWeight: 600,
@@ -5498,10 +5512,10 @@ function App() {
     style: css('display:flex;justify-content:space-between;align-items:center;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
-  }, t('current')), /*#__PURE__*/React.createElement("button", {
+  }, t('current')), !s.investments.some(i => i.goalId === sgSource.id) && /*#__PURE__*/React.createElement("button", {
     onClick: () => setEditingCurrent(v => !v),
     style: css('background:none;border:none;color:#0071e3;font-size:10px;font-weight:700;cursor:pointer;padding:0;')
-  }, editingCurrent ? t('done') : t('edit'))), editingCurrent ? /*#__PURE__*/React.createElement("div", {
+  }, editingCurrent ? t('done') : t('edit'))), editingCurrent && !s.investments.some(i => i.goalId === sgSource.id) ? /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'relative',
       marginTop: 5
@@ -5519,7 +5533,7 @@ function App() {
     style: css('width:100%;padding:6px 8px 6px 18px;border:1px solid #e5e5ea;border-radius:8px;font-size:15px;font-weight:700;background:#fbfbfd;')
   })) : /*#__PURE__*/React.createElement("div", {
     style: css('font-size:16px;font-weight:700;color:#1d1d1f;margin-top:3px;')
-  }, fmt(sgSource.current)))), /*#__PURE__*/React.createElement("div", {
+  }, fmt(sg.current)))), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap;')
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5943,11 +5957,11 @@ function App() {
     const totalMonths = monthsElapsed + N_future;
     const actualSeries = [];
     for (let i = 0; i <= monthsElapsed; i++) {
-      actualSeries.push(monthsElapsed > 0 ? sgSource.current * i / monthsElapsed : sgSource.current);
+      actualSeries.push(monthsElapsed > 0 ? sg.current * i / monthsElapsed : sg.current);
     }
     const projSeries = [];
     for (let i = 0; i <= N_future; i++) {
-      projSeries.push(Math.min(sgSource.current + sg.monthlyBoosted * i, capVal));
+      projSeries.push(Math.min(sg.current + sg.monthlyBoosted * i, capVal));
     }
     const maxY = Math.max(capVal, Math.max(...actualSeries, 0), Math.max(...projSeries, 0), 1);
     const W = 300,
@@ -6021,7 +6035,7 @@ function App() {
       strokeLinejoin: "round"
     }), /*#__PURE__*/React.createElement("circle", {
       cx: todayX,
-      cy: yAt(sgSource.current),
+      cy: yAt(sg.current),
       r: "3.5",
       fill: sgSource.color
     })), /*#__PURE__*/React.createElement("div", {
@@ -6479,7 +6493,7 @@ function App() {
         byInv = {},
         assigned = 0;
       s.goals.forEach(function (g) {
-        var done = g.target > 0 && (g.current || 0) >= g.target;
+        var done = g.target > 0 && goalCurrentTotal(g, s.investments) >= g.target;
         var p = done ? 0 : g.mode === 'manual' ? g.percent || 0 : ctx.autoPercentEach;
         var sh = Math.round(L * p / 100);
         if (sh > 0) {
