@@ -621,12 +621,44 @@ function InfoTip({
   text
 }) {
   const [open, setOpen] = React.useState(false);
+  const [pos, setPos] = React.useState(null);
+  const btnRef = React.useRef(null);
+  // Position the tooltip in viewport (fixed) coordinates, clamped to the screen so
+  // it can never push past the right/left edge and widen the app. 8px min margin.
+  const place = React.useCallback(() => {
+    const el = btnRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const M = 8;
+    const w = Math.min(230, vw - M * 2);
+    let left = r.left; // try to align left edge with the icon
+    if (left + w > vw - M) left = vw - M - w; // would overflow right → pull left
+    if (left < M) left = M; // don't go past left edge either
+    setPos({
+      top: r.bottom + 6,
+      left,
+      width: w
+    });
+  }, []);
+  React.useEffect(() => {
+    if (!open) return;
+    place();
+    const close = () => setOpen(false);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [open, place]);
   return /*#__PURE__*/React.createElement("span", {
     style: {
       position: 'relative',
       display: 'inline-block'
     }
   }, /*#__PURE__*/React.createElement("button", {
+    ref: btnRef,
     onClick: () => setOpen(o => !o),
     style: {
       background: '#e5e5ea',
@@ -643,12 +675,13 @@ function InfoTip({
       marginLeft: 6,
       verticalAlign: 'middle'
     }
-  }, "i"), open && /*#__PURE__*/React.createElement("span", {
+  }, "i"), open && pos && /*#__PURE__*/React.createElement("span", {
+    onClick: () => setOpen(false),
     style: {
-      position: 'absolute',
-      top: 22,
-      left: 0,
-      zIndex: 20,
+      position: 'fixed',
+      top: pos.top,
+      left: pos.left,
+      zIndex: 60,
       background: '#1d1d1f',
       color: '#fff',
       fontSize: 11.5,
@@ -656,7 +689,8 @@ function InfoTip({
       lineHeight: 1.45,
       padding: '10px 12px',
       borderRadius: 10,
-      width: 230,
+      width: pos.width,
+      boxSizing: 'border-box',
       boxShadow: '0 10px 26px rgba(0,0,0,0.25)',
       display: 'block',
       textTransform: 'none',
@@ -1160,6 +1194,10 @@ function App() {
   const [editingLogId, setEditingLogId] = useState(null);
   const [editingLogAmount, setEditingLogAmount] = useState('');
   const [showDayLog, setShowDayLog] = useState(false);
+  const [showPaycheckModal, setShowPaycheckModal] = useState(false);
+  const [paycheckAmount, setPaycheckAmount] = useState('');
+  const [depositType, setDepositType] = useState('paycheck'); // 'paycheck' | 'other'
+  const [showExpenseModal, setShowExpenseModal] = useState(false);
   const expensesCalRef = useRef(null);
   const [expensesCalH, setExpensesCalH] = useState(0);
   useEffect(function () {
@@ -1758,25 +1796,32 @@ function App() {
   const onNextPaydayDate = e => patch({
     nextPaydayDate: e.target.value
   });
-  const markPaidToday = () => {
+  // Log a deposit. isPaycheck=true means it's a regular paycheck: on biweekly plans
+  // it also advances the next payday. A different-amount deposit (a gift, side money,
+  // a bonus) is recorded the same way but never touches the payday schedule.
+  const logDeposit = (amount, isPaycheck) => {
     patch(s => {
-      const amt = s.income || 0;
+      const amt = amount != null ? amount : (s.income || 0);
       const entry = {
         id: Date.now(),
         date: todayStr,
-        amount: amt
+        amount: amt,
+        kind: isPaycheck ? 'paycheck' : 'other'
       };
-      const anchor = s.nextPaydayDate ? new Date(s.nextPaydayDate + 'T00:00:00') : new Date();
-      const advanced = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() + 14);
-      let next = advanced;
-      const today = new Date();
-      while (next.getTime() < new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()) {
-        next = new Date(next.getFullYear(), next.getMonth(), next.getDate() + 14);
+      const out = {
+        paycheckLog: (s.paycheckLog || []).concat([entry]).slice(-52)
+      };
+      if (isPaycheck && s.payFrequency === 'biweekly') {
+        const anchor = s.nextPaydayDate ? new Date(s.nextPaydayDate + 'T00:00:00') : new Date();
+        const advanced = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() + 14);
+        let next = advanced;
+        const today = new Date();
+        while (next.getTime() < new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()) {
+          next = new Date(next.getFullYear(), next.getMonth(), next.getDate() + 14);
+        }
+        out.nextPaydayDate = toDateStr(next.getFullYear(), next.getMonth(), next.getDate());
       }
-      return {
-        paycheckLog: (s.paycheckLog || []).concat([entry]).slice(-52),
-        nextPaydayDate: toDateStr(next.getFullYear(), next.getMonth(), next.getDate())
-      };
+      return out;
     });
   };
   const applyLeftoverAllocation = (spendingAmt, goalAmts, invAmts) => {
@@ -1935,6 +1980,31 @@ function App() {
         expenseLog: s.expenseLog.concat([{
           id: Date.now(),
           date: selectedDate || todayStr,
+          year: d.getFullYear(),
+          month: d.getMonth(),
+          day: d.getDate(),
+          amount: amt,
+          name,
+          recurring
+        }])
+      };
+    });
+    setLogAmount('');
+    setLogName('');
+  };
+  // Quick-add from Home: always logs to today, regardless of the calendar's selected day.
+  const addLogEntryToday = () => {
+    const amt = parseFloat(logAmount) || 0;
+    if (amt <= 0) return;
+    const recurring = logType === 'recurring';
+    const d = new Date(todayStr + 'T00:00:00');
+    patch(s => {
+      const recurringCats = s.expenseCategories.map(c => c.name);
+      const name = recurring ? logCategory || recurringCats[0] || 'Expense' : logName.trim() || 'Expense';
+      return {
+        expenseLog: s.expenseLog.concat([{
+          id: Date.now(),
+          date: todayStr,
           year: d.getFullYear(),
           month: d.getMonth(),
           day: d.getDate(),
@@ -3949,8 +4019,121 @@ function App() {
     });
   }
   return /*#__PURE__*/React.createElement("div", {
-    style: css('min-height:100vh;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",Inter,system-ui,sans-serif;color:#1d1d1f;')
-  }, confirmDialog && /*#__PURE__*/React.createElement("div", {
+    style: css('min-height:100vh;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",Inter,system-ui,sans-serif;color:#1d1d1f;overflow-x:hidden;')
+  }, showPaycheckModal && (function () {
+    var es = s.language === 'es';
+    var closeIt = function () { setShowPaycheckModal(false); };
+    var isPay = depositType === 'paycheck';
+    var pickPaycheck = function () { setDepositType('paycheck'); setPaycheckAmount(String(s.income || '')); };
+    var pickOther = function () { setDepositType('other'); setPaycheckAmount(''); };
+    var submit = function () { var a = parseFloat(paycheckAmount) || 0; if (a > 0) { logDeposit(a, isPay); closeIt(); } };
+    var chip = function (active, label, sub, onClick) {
+      return /*#__PURE__*/React.createElement('button', {
+        onClick: onClick,
+        style: {
+          flex: 1, textAlign: 'left', cursor: 'pointer',
+          background: active ? '#eef6ff' : '#f5f5f7',
+          border: active ? '2px solid #0071e3' : '2px solid transparent',
+          borderRadius: 13, padding: '12px 13px'
+        }
+      }, /*#__PURE__*/React.createElement('div', {
+        style: { fontSize: 14, fontWeight: 700, color: active ? '#0071e3' : '#1d1d1f' }
+      }, label), /*#__PURE__*/React.createElement('div', {
+        style: css('font-size:11px;color:#86868b;margin-top:2px;')
+      }, sub));
+    };
+    return /*#__PURE__*/React.createElement('div', {
+      onClick: closeIt,
+      className: 'pf-overlay-in',
+      style: css('position:fixed;inset:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;padding:0;')
+    }, /*#__PURE__*/React.createElement('div', {
+      onClick: function (e) { e.stopPropagation(); },
+      className: 'pf-modal-in',
+      style: css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));width:100%;max-width:480px;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);')
+    }, /*#__PURE__*/React.createElement('div', {
+      style: css('font-size:18px;font-weight:800;letter-spacing:-0.01em;margin-bottom:4px;')
+    }, es ? 'Registrar depósito' : 'Log deposit'), /*#__PURE__*/React.createElement('div', {
+      style: css('font-size:12.5px;color:#86868b;margin-bottom:14px;')
+    }, es ? '¿Qué recibiste hoy?' : 'What did you receive today?'), /*#__PURE__*/React.createElement('div', {
+      style: { display: 'flex', gap: 8, marginBottom: 14 }
+    }, chip(isPay, es ? 'Mi pago' : 'My paycheck', es ? 'Monto fijo' : 'Fixed amount', pickPaycheck), chip(!isPay, es ? 'Otro monto' : 'Other amount', es ? 'Regalo, extra…' : 'Gift, extra…', pickOther)), /*#__PURE__*/React.createElement('div', {
+      style: { position: 'relative', marginBottom: 16 }
+    }, /*#__PURE__*/React.createElement('span', {
+      style: css('position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:19px;color:#86868b;pointer-events:none;')
+    }, '$'), /*#__PURE__*/React.createElement('input', {
+      type: 'number', inputMode: 'decimal', autoFocus: true, placeholder: '0',
+      value: paycheckAmount,
+      onChange: function (e) { setPaycheckAmount(e.target.value); },
+      onKeyDown: function (e) { if (e.key === 'Enter') submit(); },
+      style: css('width:100%;padding:14px 14px 14px 30px;border:1px solid #d2d2d7;border-radius:13px;font-size:20px;font-weight:700;background:#fbfbfd;box-sizing:border-box;')
+    })), /*#__PURE__*/React.createElement('div', {
+      style: { display: 'flex', gap: 10 }
+    }, /*#__PURE__*/React.createElement('button', {
+      onClick: closeIt,
+      style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:13px;padding:14px;font-size:15px;font-weight:600;cursor:pointer;')
+    }, es ? 'Cancelar' : 'Cancel'), /*#__PURE__*/React.createElement('button', {
+      onClick: submit,
+      style: css('flex:2;background:#0071e3;color:#fff;border:none;border-radius:13px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;')
+    }, es ? 'Registrar' : 'Log it')), /*#__PURE__*/React.createElement('button', {
+      onClick: function () { closeIt(); setTab('incomeHistory'); },
+      style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#0071e3;font-size:13.5px;font-weight:700;cursor:pointer;margin-top:14px;padding:6px;')
+    }, es ? 'Ver historial de depósitos' : 'View deposit history')));
+  })(), showExpenseModal && (function () {
+    var es = s.language === 'es';
+    var closeIt = function () { setShowExpenseModal(false); };
+    return /*#__PURE__*/React.createElement('div', {
+      onClick: closeIt,
+      className: 'pf-overlay-in',
+      style: css('position:fixed;inset:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;padding:0;')
+    }, /*#__PURE__*/React.createElement('div', {
+      onClick: function (e) { e.stopPropagation(); },
+      className: 'pf-modal-in',
+      style: css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));width:100%;max-width:480px;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);')
+    }, /*#__PURE__*/React.createElement('div', {
+      style: css('display:flex;align-items:baseline;justify-content:space-between;margin-bottom:16px;')
+    }, /*#__PURE__*/React.createElement('div', {
+      style: css('font-size:18px;font-weight:800;letter-spacing:-0.01em;')
+    }, es ? 'Registrar gasto' : 'Log expense'), /*#__PURE__*/React.createElement('div', {
+      style: css('font-size:12px;color:#86868b;font-weight:600;')
+    }, es ? 'Hoy' : 'Today')), /*#__PURE__*/React.createElement('div', {
+      style: css('display:flex;gap:8px;margin-bottom:10px;')
+    }, /*#__PURE__*/React.createElement('button', {
+      onClick: function () { setLogType('recurring'); fillRecurringAmount(logCategory || (s.expenseCategories[0] && s.expenseCategories[0].name) || '', s); },
+      style: { flex: 1, background: logType === 'recurring' ? '#0071e3' : '#f5f5f7', color: logType === 'recurring' ? '#fff' : '#1d1d1f', border: 'none', padding: 11, borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }
+    }, es ? 'Recurrente' : 'Recurring'), /*#__PURE__*/React.createElement('button', {
+      onClick: function () { setLogType('nonrecurring'); },
+      style: { flex: 1, background: logType !== 'recurring' ? '#0071e3' : '#f5f5f7', color: logType !== 'recurring' ? '#fff' : '#1d1d1f', border: 'none', padding: 11, borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }
+    }, es ? 'No recurrente' : 'Non-recurring')), logType === 'recurring' ? /*#__PURE__*/React.createElement('select', {
+      value: effectiveLogCategory,
+      onChange: function (e) { setLogCategory(e.target.value); fillRecurringAmount(e.target.value, s); },
+      style: css('width:100%;padding:11px 12px;border:1px solid #e5e5ea;border-radius:11px;font-size:13.5px;background:#fbfbfd;margin-bottom:10px;box-sizing:border-box;')
+    }, recurringCategoryOptions.map(function (n, i) { return /*#__PURE__*/React.createElement('option', { key: i, value: n }, n); })) : /*#__PURE__*/React.createElement('input', {
+      type: 'text',
+      placeholder: es ? 'Nombre del gasto (ej. reparación, regalo)' : 'Expense name (e.g. repair, gift)',
+      value: logName,
+      onChange: function (e) { setLogName(e.target.value); },
+      style: css('width:100%;padding:11px 12px;border:1px solid #e5e5ea;border-radius:11px;font-size:13.5px;background:#fbfbfd;margin-bottom:10px;box-sizing:border-box;')
+    }), /*#__PURE__*/React.createElement('div', {
+      style: { position: 'relative', marginBottom: 16 }
+    }, /*#__PURE__*/React.createElement('span', {
+      style: css('position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:17px;color:#86868b;pointer-events:none;')
+    }, '$'), /*#__PURE__*/React.createElement('input', {
+      type: 'number', inputMode: 'decimal', autoFocus: true,
+      placeholder: es ? 'Monto gastado' : 'Amount spent',
+      value: logAmount,
+      onChange: function (e) { setLogAmount(e.target.value); },
+      onKeyDown: function (e) { if (e.key === 'Enter') { addLogEntryToday(); closeIt(); } },
+      style: css('width:100%;padding:14px 14px 14px 30px;border:1px solid #d2d2d7;border-radius:13px;font-size:18px;font-weight:700;background:#fbfbfd;box-sizing:border-box;')
+    })), /*#__PURE__*/React.createElement('div', {
+      style: { display: 'flex', gap: 10 }
+    }, /*#__PURE__*/React.createElement('button', {
+      onClick: closeIt,
+      style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:13px;padding:14px;font-size:15px;font-weight:600;cursor:pointer;')
+    }, es ? 'Cancelar' : 'Cancel'), /*#__PURE__*/React.createElement('button', {
+      onClick: function () { addLogEntryToday(); closeIt(); },
+      style: css('flex:2;background:#0071e3;color:#fff;border:none;border-radius:13px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;')
+    }, es ? 'Registrar' : 'Log it'))));
+  })(), confirmDialog && /*#__PURE__*/React.createElement("div", {
     className: "pf-overlay-in",
     style: css('position:fixed;inset:0;z-index:110;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:24px;')
   }, /*#__PURE__*/React.createElement("div", {
@@ -4127,11 +4310,11 @@ function App() {
     }
   }, homeSpendHeadline)), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:8px;margin-top:16px;')
-  }, s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("button", {
-    onClick: markPaidToday,
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setDepositType('paycheck'); setPaycheckAmount(String(s.income || '')); setShowPaycheckModal(true); },
     style: css('flex:1;display:flex;align-items:center;justify-content:center;gap:7px;background:rgba(255,255,255,0.2);color:#fff;border:none;border-radius:13px;padding:15px 12px;font-size:13.5px;font-weight:700;cursor:pointer;')
-  }, /*#__PURE__*/React.createElement("svg", { viewBox: "0 0 84 73", width: 16, height: 14, fill: "none", stroke: "#fff", strokeLinecap: "round", strokeLinejoin: "round" }, /*#__PURE__*/React.createElement("path", { strokeWidth: 6, d: "M57 54.864h24V14.11L67 3H3v51.864h27" }), /*#__PURE__*/React.createElement("path", { strokeWidth: 6, d: "M67 3v16h14M18 39h42M33.5 25H60" }), /*#__PURE__*/React.createElement("path", { strokeWidth: 3, d: "M22.5 31.318V19.046M18 27.909C18 30.636 20.7 32 22.5 32s4.5-1.364 4.5-4.09c0-2.728-2.7-3.41-4.5-3.41s-4.5-.682-4.5-3.41c0-2.726 2.7-4.09 4.5-4.09s4.5 1.364 4.5 4.09" }), /*#__PURE__*/React.createElement("path", { strokeWidth: 4, d: "M44 49v22m9-9-9 9-9-9" })), s.language === 'es' ? 'Registrar pago' : 'Log paycheck'), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setTab('gastos'),
+  }, /*#__PURE__*/React.createElement("svg", { viewBox: "0 0 84 73", width: 16, height: 14, fill: "none", stroke: "#fff", strokeLinecap: "round", strokeLinejoin: "round" }, /*#__PURE__*/React.createElement("path", { strokeWidth: 6, d: "M57 54.864h24V14.11L67 3H3v51.864h27" }), /*#__PURE__*/React.createElement("path", { strokeWidth: 6, d: "M67 3v16h14M18 39h42M33.5 25H60" }), /*#__PURE__*/React.createElement("path", { strokeWidth: 3, d: "M22.5 31.318V19.046M18 27.909C18 30.636 20.7 32 22.5 32s4.5-1.364 4.5-4.09c0-2.728-2.7-3.41-4.5-3.41s-4.5-.682-4.5-3.41c0-2.726 2.7-4.09 4.5-4.09s4.5 1.364 4.5 4.09" }), /*#__PURE__*/React.createElement("path", { strokeWidth: 4, d: "M44 49v22m9-9-9 9-9-9" })), s.language === 'es' ? 'Registrar depósito' : 'Log deposit'), /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setLogType('recurring'); fillRecurringAmount(logCategory || (s.expenseCategories[0] && s.expenseCategories[0].name) || '', s); setShowExpenseModal(true); },
     style: css('flex:1;display:flex;align-items:center;justify-content:center;gap:7px;background:rgba(255,255,255,0.2);color:#fff;border:none;border-radius:13px;padding:15px 12px;font-size:13.5px;font-weight:700;cursor:pointer;')
   }, /*#__PURE__*/React.createElement("svg", { viewBox: "0 0 91 73", width: 17, height: 14, fill: "none", stroke: "#fff", strokeLinecap: "round", strokeLinejoin: "round" }, /*#__PURE__*/React.createElement("path", { strokeWidth: 6, d: "M63.651 22h18.151C85.225 22 88 24.786 88 28.222v35.556C88 67.214 85.225 70 81.802 70H9.198C5.775 70 3 67.214 3 63.778V28.222C3 24.786 5.775 22 9.198 22h18.151M14 33h7.111m49.778 0h7.11M14 59h7.112m49.778 0H78" }), /*#__PURE__*/React.createElement("path", { strokeWidth: 4, d: "M45.5 60C53.508 60 60 53.732 60 46s-6.492-14-14.5-14S31 38.268 31 46s6.492 14 14.5 14" }), /*#__PURE__*/React.createElement("path", { strokeWidth: 3, d: "M45.5 38.889V53.11M50 42.444C50 39.778 48.2 38 45.5 38S41 39.778 41 42.444 42.8 46 45.5 46s4.5.889 4.5 3.556S48.2 54 45.5 54 41 52.222 41 49.556" }), /*#__PURE__*/React.createElement("path", { strokeWidth: 4, d: "M45 24V2m-9 9 9-9 9 9" })), s.language === 'es' ? 'Registrar gasto' : 'Log expense'))), /*#__PURE__*/React.createElement("div", {
     ref: pfRevealRef,
@@ -4222,7 +4405,7 @@ function App() {
   }, "Cancel")))), /*#__PURE__*/React.createElement("div", {
     style: css('display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:22px;')
   }, /*#__PURE__*/React.createElement("div", {
-    onClick: () => setTab('incomeHistory'),
+    onClick: () => { setDepositType('paycheck'); setPaycheckAmount(String(s.income || '')); setShowPaycheckModal(true); },
     style: css('background:transparent;border-radius:14px;padding:14px 2px;cursor:pointer;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;justify-content:space-between;align-items:center;')
@@ -4360,7 +4543,7 @@ function App() {
     d: "M15 18l-6-6 6-6"
   }))), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:22px;font-weight:700;letter-spacing:-0.01em;')
-  }, s.language === 'es' ? 'Historial de ingreso' : 'Income history')), /*#__PURE__*/React.createElement("div", {
+  }, s.language === 'es' ? 'Historial de depósitos' : 'Deposit history')), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:16px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;justify-content:space-between;align-items:center;margin-bottom: ' + (editingIncome ? '8' : '2') + 'px;')
@@ -4439,9 +4622,9 @@ function App() {
     style: css('background:#fff;border-radius:16px;padding:16px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:4px;')
-  }, s.language === 'es' ? 'Pagos recibidos' : 'Paychecks received'), /*#__PURE__*/React.createElement("div", {
+  }, s.language === 'es' ? 'Depósitos recibidos' : 'Deposits received'), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:11px;color:#86868b;margin-bottom:12px;line-height:1.4;')
-  }, s.language === 'es' ? 'Cada pago real que has recibido, con su fecha.' : 'Every real payment you actually received, with its date.'), (() => {
+  }, s.language === 'es' ? 'Cada depósito que has recibido, con su fecha.' : 'Every deposit you actually received, with its date.'), (() => {
     const sorted = (s.paycheckLog || []).slice().sort((a, b) => a.date.localeCompare(b.date));
     const recent = sorted.slice(-6);
     if (recent.length === 0) {
@@ -4475,7 +4658,9 @@ function App() {
   })(), (s.paycheckLog || []).slice().sort((a, b) => b.date.localeCompare(a.date)).map(p => /*#__PURE__*/React.createElement("div", {
     key: p.id,
     style: css('display:flex;justify-content:space-between;align-items:center;font-size:12.5px;color:#6e6e73;padding:8px 0;border-top:1px solid #f5f5f7;')
-  }, /*#__PURE__*/React.createElement("span", null, p.date), /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("span", null, p.date, p.kind === 'other' && /*#__PURE__*/React.createElement("span", {
+    style: css('color:#0071e3;font-size:10.5px;font-weight:600;margin-left:6px;')
+  }, s.language === 'es' ? 'otro' : 'other')), /*#__PURE__*/React.createElement("span", {
     style: css('display:flex;align-items:center;gap:8px;')
   }, fmt(p.amount), /*#__PURE__*/React.createElement("button", {
     onClick: () => removePaycheckEntry(p.id),
@@ -4522,7 +4707,7 @@ function App() {
       setShowAddPaycheck(true);
     },
     style: css('width:100%;margin-top:10px;background:#f5f5f7;color:#0071e3;border:none;padding:9px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;')
-  }, "+ ", s.language === 'es' ? 'Registrar un pago que ya recibiste' : 'Register a paycheck you already received'))), s.tab === 'savingsLog' && sgSource && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, "+ ", s.language === 'es' ? 'Registrar un depósito que ya recibiste' : 'Register a deposit you already received'))), s.tab === 'savingsLog' && sgSource && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:center;gap:10px;margin-bottom:16px;')
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => setTab('metas'),
