@@ -4097,7 +4097,7 @@ function App() {
     }, /*#__PURE__*/React.createElement('div', {
       onClick: function (e) { e.stopPropagation(); },
       className: 'pf-modal-in',
-      style: Object.assign(css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));width:100%;max-width:480px;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);'), { marginBottom: keyboardInset, transition: 'margin-bottom 0.18s ease-out' })
+      style: Object.assign(css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));width:100%;max-width:480px;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);'), { paddingBottom: 'calc(24px + env(safe-area-inset-bottom) + ' + keyboardInset + 'px)', transition: 'padding-bottom 0.18s ease-out' })
     }, /*#__PURE__*/React.createElement('div', {
       style: css('font-size:18px;font-weight:800;letter-spacing:-0.01em;margin-bottom:4px;')
     }, es ? 'Registrar depósito' : 'Log deposit'), /*#__PURE__*/React.createElement('div', {
@@ -4136,7 +4136,7 @@ function App() {
     }, /*#__PURE__*/React.createElement('div', {
       onClick: function (e) { e.stopPropagation(); },
       className: 'pf-modal-in',
-      style: Object.assign(css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));width:100%;max-width:480px;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);'), { marginBottom: keyboardInset, transition: 'margin-bottom 0.18s ease-out' })
+      style: Object.assign(css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));width:100%;max-width:480px;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);'), { paddingBottom: 'calc(24px + env(safe-area-inset-bottom) + ' + keyboardInset + 'px)', transition: 'padding-bottom 0.18s ease-out' })
     }, /*#__PURE__*/React.createElement('div', {
       style: css('display:flex;align-items:baseline;justify-content:space-between;margin-bottom:16px;')
     }, /*#__PURE__*/React.createElement('div', {
