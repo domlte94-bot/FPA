@@ -1224,8 +1224,28 @@ function App() {
   const [showPaycheckModal, setShowPaycheckModal] = useState(false);
   const [paycheckAmount, setPaycheckAmount] = useState('');
   const [depositType, setDepositType] = useState('paycheck'); // 'paycheck' | 'other'
-  const keyboardInset = useKeyboardInset();
   const [showExpenseModal, setShowExpenseModal] = useState(false);
+  const keyboardInset = useKeyboardInset();
+  // While a Home log sheet is open, lock the page so the background can't scroll
+  // (iOS otherwise auto-scrolls the page when the keyboard opens, dragging the
+  // sheet back down under the keyboard). Scrolling inside the sheet still works.
+  useEffect(() => {
+    if (!showPaycheckModal && !showExpenseModal) return;
+    const prevBody = document.body.style.overflow;
+    const prevHtml = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    const prevent = e => {
+      if (e.target && e.target.closest && e.target.closest('.pf-modal-in')) return;
+      e.preventDefault();
+    };
+    document.addEventListener('touchmove', prevent, { passive: false });
+    return () => {
+      document.body.style.overflow = prevBody;
+      document.documentElement.style.overflow = prevHtml;
+      document.removeEventListener('touchmove', prevent);
+    };
+  }, [showPaycheckModal, showExpenseModal]);
   const expensesCalRef = useRef(null);
   const [expensesCalH, setExpensesCalH] = useState(0);
   useEffect(function () {
