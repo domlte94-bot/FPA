@@ -704,6 +704,27 @@ function InfoTip({
     }
   }, text));
 }
+// Height (px) the on-screen keyboard is covering, via the visual viewport. Used to
+// lift bottom-sheet modals above the keyboard so their inputs stay visible.
+function useKeyboardInset() {
+  const [inset, setInset] = React.useState(0);
+  React.useEffect(() => {
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    if (!vv) return;
+    const onResize = () => {
+      const gap = window.innerHeight - vv.height - vv.offsetTop;
+      setInset(gap > 80 ? gap : 0);
+    };
+    vv.addEventListener('resize', onResize);
+    vv.addEventListener('scroll', onResize);
+    onResize();
+    return () => {
+      vv.removeEventListener('resize', onResize);
+      vv.removeEventListener('scroll', onResize);
+    };
+  }, []);
+  return inset;
+}
 const STRINGS = {
   en: {
     tabHome: 'Home',
@@ -1203,6 +1224,7 @@ function App() {
   const [showPaycheckModal, setShowPaycheckModal] = useState(false);
   const [paycheckAmount, setPaycheckAmount] = useState('');
   const [depositType, setDepositType] = useState('paycheck'); // 'paycheck' | 'other'
+  const keyboardInset = useKeyboardInset();
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const expensesCalRef = useRef(null);
   const [expensesCalH, setExpensesCalH] = useState(0);
@@ -4055,7 +4077,7 @@ function App() {
     }, /*#__PURE__*/React.createElement('div', {
       onClick: function (e) { e.stopPropagation(); },
       className: 'pf-modal-in',
-      style: css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));width:100%;max-width:480px;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);')
+      style: Object.assign(css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));width:100%;max-width:480px;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);'), { marginBottom: keyboardInset, transition: 'margin-bottom 0.18s ease-out' })
     }, /*#__PURE__*/React.createElement('div', {
       style: css('font-size:18px;font-weight:800;letter-spacing:-0.01em;margin-bottom:4px;')
     }, es ? 'Registrar depósito' : 'Log deposit'), /*#__PURE__*/React.createElement('div', {
@@ -4094,7 +4116,7 @@ function App() {
     }, /*#__PURE__*/React.createElement('div', {
       onClick: function (e) { e.stopPropagation(); },
       className: 'pf-modal-in',
-      style: css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));width:100%;max-width:480px;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);')
+      style: Object.assign(css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));width:100%;max-width:480px;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);'), { marginBottom: keyboardInset, transition: 'margin-bottom 0.18s ease-out' })
     }, /*#__PURE__*/React.createElement('div', {
       style: css('display:flex;align-items:baseline;justify-content:space-between;margin-bottom:16px;')
     }, /*#__PURE__*/React.createElement('div', {
