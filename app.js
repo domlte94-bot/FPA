@@ -1225,12 +1225,14 @@ function App() {
   const [paycheckAmount, setPaycheckAmount] = useState('');
   const [depositType, setDepositType] = useState('paycheck'); // 'paycheck' | 'other'
   const [showExpenseModal, setShowExpenseModal] = useState(false);
+  const [shareModal, setShareModal] = useState(null); // { type, itemId, name }
+  const [sharedDepositShare, setSharedDepositShare] = useState(null);
   const keyboardInset = useKeyboardInset();
   // While a Home log sheet is open, lock the page so the background can't scroll
   // (iOS otherwise auto-scrolls the page when the keyboard opens, dragging the
   // sheet back down under the keyboard). Scrolling inside the sheet still works.
   useEffect(() => {
-    if (!showPaycheckModal && !showExpenseModal && !quickAddGoalId) return;
+    if (!showPaycheckModal && !showExpenseModal && !quickAddGoalId && !shareModal && !sharedDepositShare) return;
     const prevBody = document.body.style.overflow;
     const prevHtml = document.documentElement.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -1245,7 +1247,7 @@ function App() {
       document.documentElement.style.overflow = prevHtml;
       document.removeEventListener('touchmove', prevent);
     };
-  }, [showPaycheckModal, showExpenseModal, quickAddGoalId]);
+  }, [showPaycheckModal, showExpenseModal, quickAddGoalId, shareModal, sharedDepositShare]);
   const expensesCalRef = useRef(null);
   const [expensesCalH, setExpensesCalH] = useState(0);
   useEffect(function () {
@@ -1357,6 +1359,111 @@ function App() {
   const [authPassword, setAuthPassword] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
   const [authInfo, setAuthInfo] = useState('');
+  // --- Shared goals & investments -------------------------------------------
+  const [sharesData, setSharesData] = useState([]); // every share row visible to me
+  const [shareEmail, setShareEmail] = useState('');
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareError, setShareError] = useState('');
+  const [seenShareIds, setSeenShareIds] = useState({}); // in-app "new share" dismissals
+  const [sharedDepositAmt, setSharedDepositAmt] = useState('');
+  const myEmail = authUser && authUser.email ? authUser.email.toLowerCase() : '';
+  const fetchShares = React.useCallback(() => {
+    if (!sbClient || !authUser) {
+      setSharesData([]);
+      return;
+    }
+    sbClient.rpc('claim_pending_shares').then(() => {
+      sbClient.from('shares').select('*').then(({ data, error }) => {
+        if (!error && data) setSharesData(data);
+      });
+    });
+  }, [authUser]);
+  useEffect(() => {
+    fetchShares();
+  }, [fetchShares]);
+  // Items other people shared WITH me, split by type.
+  const sharedGoalsIn = sharesData.filter(r => r.owner_id !== (authUser && authUser.id) && r.item_type === 'goal');
+  const sharedInvestsIn = sharesData.filter(r => r.owner_id !== (authUser && authUser.id) && r.item_type === 'investment');
+  // For badging my own items that I've shared out: itemId -> [recipient emails]
+  const sharesByItem = {};
+  sharesData.forEach(r => {
+    if (authUser && r.owner_id === authUser.id) {
+      const k = r.item_type + ':' + r.item_id;
+      (sharesByItem[k] = sharesByItem[k] || []).push(r);
+    }
+  });
+  const shareItem = (type, itemId, name, snapshot) => {
+    const email = (shareEmail || '').trim().toLowerCase();
+    setShareError('');
+    if (!sbClient || !authUser) { setShareError(s.language === 'es' ? 'Inicia sesión para compartir.' : 'Sign in to share.'); return; }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { setShareError(s.language === 'es' ? 'Correo no válido.' : 'Invalid email.'); return; }
+    if (email === myEmail) { setShareError(s.language === 'es' ? 'Ese eres tú.' : "That's you."); return; }
+    setShareBusy(true);
+    const permission = type === 'investment' ? 'view' : 'edit';
+    sbClient.from('shares').upsert({
+      owner_id: authUser.id,
+      owner_name: (authUser.user_metadata && authUser.user_metadata.full_name) || authUser.email,
+      recipient_email: email,
+      item_type: type,
+      item_id: String(itemId),
+      permission,
+      item_data: snapshot || {},
+      updated_at: new Date().toISOString(),
+      updated_by: authUser.id
+    }, { onConflict: 'owner_id,item_type,item_id,recipient_email' }).then(({ error }) => {
+      setShareBusy(false);
+      if (error) { setShareError(error.message); return; }
+      // Optional: nudge people who don't have the app yet by email. Fails silently
+      // if the 'invite-email' edge function isn't deployed — the share still works.
+      if (sbClient.functions && sbClient.functions.invoke) {
+        sbClient.functions.invoke('invite-email', {
+          body: { email, ownerName: (authUser.user_metadata && authUser.user_metadata.full_name) || authUser.email, itemName: name, itemType: type }
+        }).catch(function () {});
+      }
+      setShareEmail('');
+      setShareModal(null);
+      fetchShares();
+    });
+  };
+  const revokeShare = shareId => {
+    if (!sbClient) return;
+    sbClient.from('shares').delete().eq('id', shareId).then(() => fetchShares());
+  };
+  // Push updated item data to every share row for one of my items (keeps partners in sync).
+  const pushShareUpdate = (type, itemId, snapshot) => {
+    if (!sbClient || !authUser) return;
+    sbClient.from('shares')
+      .update({ item_data: snapshot, updated_at: new Date().toISOString(), updated_by: authUser.id })
+      .eq('owner_id', authUser.id).eq('item_type', type).eq('item_id', String(itemId));
+  };
+  // A recipient (editor) deposits into a shared goal: write straight to the share row.
+  const depositToSharedGoal = (share, amount) => {
+    if (!sbClient || !authUser || amount <= 0) return;
+    const data = Object.assign({}, share.item_data);
+    data.current = (data.current || 0) + amount;
+    data.savingsLog = [{ id: Date.now(), label: (myEmail || 'me') + ' · ' + MONTH_NAMES[new Date().getMonth()], amount }].concat(data.savingsLog || []).slice(0, 60);
+    sbClient.from('shares')
+      .update({ item_data: data, updated_at: new Date().toISOString(), updated_by: authUser.id })
+      .eq('id', share.id).then(({ error }) => { if (!error) fetchShares(); });
+  };
+  const lastPushRef = React.useRef({});
+  // Keep the shared copy of my items current whenever I edit one I've shared out.
+  useEffect(() => {
+    if (!sbClient || !authUser || sharesData.length === 0 || !state) return;
+    const seen = {};
+    sharesData.filter(r => r.owner_id === authUser.id).forEach(r => {
+      const key = r.item_type + ':' + r.item_id;
+      if (seen[key]) return; seen[key] = true;
+      const item = r.item_type === 'goal'
+        ? (state.goals || []).find(g => String(g.id) === String(r.item_id))
+        : (state.investments || []).find(i => String(i.id) === String(r.item_id));
+      if (!item) return;
+      const snap = JSON.stringify(item);
+      if (lastPushRef.current[key] === snap) return;
+      lastPushRef.current[key] = snap;
+      pushShareUpdate(r.item_type, r.item_id, item);
+    });
+  }, [state, sharesData, authUser]);
   const signInWithEmail = () => {
     if (!sbClient) {
       setAuthError('Supabase not loaded');
@@ -3574,7 +3681,29 @@ function App() {
       }
     }, "+"), /*#__PURE__*/React.createElement("span", {
       style: css('font-size:12.5px;font-weight:700;color:#0071e3;')
-    }, s.language === 'es' ? 'Agregar fondo' : 'Add fund'))), !s.seenTabIntro.invest && s.investments.length === 0 && /*#__PURE__*/React.createElement("div", {
+    }, s.language === 'es' ? 'Agregar fondo' : 'Add fund'))), sharedInvestsIn.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: css('margin-top:18px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12px;font-weight:700;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
+    }, s.language === 'es' ? 'Compartidas conmigo' : 'Shared with me'), /*#__PURE__*/React.createElement("div", {
+      style: css('display:grid;grid-template-columns:repeat(2,1fr);gap:12px;')
+    }, sharedInvestsIn.map(function (r) {
+      var d = r.item_data || {};
+      var gain = (d.currentValue || 0) - (d.amount || 0);
+      var gp = d.amount > 0 ? gain / d.amount * 100 : 0;
+      return /*#__PURE__*/React.createElement("div", {
+        key: r.id,
+        style: css('background:#fff;border-radius:18px;padding:15px;box-shadow:0 1px 3px rgba(0,0,0,0.05);')
+      }, /*#__PURE__*/React.createElement("div", {
+        style: css('font-size:13px;font-weight:700;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:6px;')
+      }, d.name || 'Fondo'), /*#__PURE__*/React.createElement("div", {
+        style: css('font-size:22px;font-weight:800;color:#1d1d1f;letter-spacing:-0.01em;font-variant-numeric:tabular-nums;')
+      }, fmt(d.currentValue || 0)), /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 12, fontWeight: 700, color: gain >= 0 ? '#34c759' : '#ff3b30', marginTop: 3 }
+      }, (gain >= 0 ? '+' : '−') + fmt(Math.abs(gain)) + ' (' + Math.abs(gp).toFixed(1) + '%)'), /*#__PURE__*/React.createElement("div", {
+        style: css('font-size:11px;color:#86868b;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
+      }, (s.language === 'es' ? 'De ' : 'From ') + (r.owner_name || 'alguien') + (s.language === 'es' ? ' · solo ver' : ' · view only')));
+    }))), !s.seenTabIntro.invest && s.investments.length === 0 && /*#__PURE__*/React.createElement("div", {
       className: "tip-banner",
       style: css('display:flex;align-items:center;gap:12px;background:#fff;border-radius:16px;padding:16px 18px;margin-top:16px;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,0.10);')
     }, /*#__PURE__*/React.createElement("div", {
@@ -3852,7 +3981,10 @@ function App() {
       style: css('flex:none;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:11px;padding:11px 18px;font-size:13.5px;font-weight:700;cursor:pointer;')
     }, t('save'))), /*#__PURE__*/React.createElement("div", {
       style: css('font-size:11px;color:#86868b;margin-top:8px;')
-    }, selectedInvestment.agoLabel)), /*#__PURE__*/React.createElement("button", {
+    }, selectedInvestment.agoLabel)), sbClient && /*#__PURE__*/React.createElement("button", {
+      onClick: () => { setShareEmail(''); setShareError(''); setShareModal({ type: 'investment', itemId: selectedInvestment.id, name: selectedInvestment.name }); },
+      style: css('width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:#eef6ff;color:#0071e3;border:none;border-radius:12px;padding:13px;font-size:13.5px;font-weight:700;cursor:pointer;margin-bottom:10px;')
+    }, /*#__PURE__*/React.createElement("svg", { viewBox: "0 0 24 24", width: 16, height: 16, fill: "none", stroke: "#0071e3", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, /*#__PURE__*/React.createElement("circle", { cx: 9, cy: 7, r: 4 }), /*#__PURE__*/React.createElement("path", { d: "M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2" }), /*#__PURE__*/React.createElement("path", { d: "M19 8v6M22 11h-6" })), (s.language === 'es' ? 'Compartir (solo ver)' : 'Share (view only)') + ((sharesByItem['investment:' + selectedInvestment.id] || []).length ? ' · ' + (sharesByItem['investment:' + selectedInvestment.id] || []).length : '')), /*#__PURE__*/React.createElement("button", {
       onClick: () => removeInvestment(selectedInvestment.id),
       style: css('display:block;margin:4px auto 8px;background:none;border:none;color:#ff3b30;font-size:13px;font-weight:700;cursor:pointer;padding:8px 16px;')
     }, s.language === 'es' ? 'Eliminar fondo' : 'Delete fund')), showAddFundModal && /*#__PURE__*/React.createElement("div", {
@@ -4191,6 +4323,94 @@ function App() {
       onClick: function () { addLogEntryToday(); closeIt(); },
       style: css('flex:2;background:#0071e3;color:#fff;border:none;border-radius:13px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;')
     }, es ? 'Registrar' : 'Log it'))));
+  })(), shareModal && (function () {
+    var es = s.language === 'es';
+    var closeIt = function () { setShareModal(null); setShareEmail(''); setShareError(''); };
+    var existing = (sharesByItem[shareModal.type + ':' + shareModal.itemId] || []);
+    var isInv = shareModal.type === 'investment';
+    var snap = isInv
+      ? (s.investments.find(function (i) { return String(i.id) === String(shareModal.itemId); }) || {})
+      : (s.goals.find(function (g) { return String(g.id) === String(shareModal.itemId); }) || {});
+    return /*#__PURE__*/React.createElement('div', {
+      onClick: closeIt, className: 'pf-overlay-in',
+      style: css('position:fixed;inset:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;padding:0;')
+    }, /*#__PURE__*/React.createElement('div', {
+      onClick: function (e) { e.stopPropagation(); }, className: 'pf-modal-in',
+      style: Object.assign(css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));max-width:480px;width:100%;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);'), { paddingBottom: keyboardInset > 0 ? keyboardInset + 24 : undefined, transition: 'padding-bottom 0.18s ease-out' })
+    }, /*#__PURE__*/React.createElement('div', {
+      style: css('font-size:18px;font-weight:800;letter-spacing:-0.01em;margin-bottom:3px;')
+    }, es ? 'Compartir' : 'Share'), /*#__PURE__*/React.createElement('div', {
+      style: css('font-size:12.5px;color:#86868b;margin-bottom:14px;')
+    }, shareModal.name + ' · ' + (isInv ? (es ? 'la otra persona solo podrá ver' : 'the other person can only view') : (es ? 'podrán verla y abonar juntos' : 'you can both view and contribute'))), /*#__PURE__*/React.createElement('input', {
+      type: 'email', inputMode: 'email', autoFocus: true, autoCapitalize: 'none', autoCorrect: 'off',
+      placeholder: es ? 'Correo de la persona' : "Person's email",
+      value: shareEmail,
+      onChange: function (e) { setShareEmail(e.target.value); setShareError(''); },
+      onKeyDown: function (e) { if (e.key === 'Enter') shareItem(shareModal.type, shareModal.itemId, shareModal.name, snap); },
+      style: css('width:100%;padding:13px 14px;border:1px solid #d2d2d7;border-radius:13px;font-size:15px;background:#fbfbfd;box-sizing:border-box;')
+    }), shareError && /*#__PURE__*/React.createElement('div', {
+      style: css('font-size:12px;color:#ff3b30;margin-top:8px;')
+    }, shareError), existing.length > 0 && /*#__PURE__*/React.createElement('div', {
+      style: css('margin-top:14px;')
+    }, /*#__PURE__*/React.createElement('div', {
+      style: css('font-size:11px;color:#86868b;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:6px;')
+    }, es ? 'Compartido con' : 'Shared with'), existing.map(function (r) {
+      return /*#__PURE__*/React.createElement('div', {
+        key: r.id,
+        style: css('display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#1d1d1f;padding:6px 0;')
+      }, /*#__PURE__*/React.createElement('span', { style: css('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;') }, r.recipient_email, r.recipient_id ? '' : (es ? ' · pendiente' : ' · pending')), /*#__PURE__*/React.createElement('button', {
+        onClick: function () { revokeShare(r.id); },
+        style: css('flex:none;background:none;border:none;color:#ff3b30;font-size:12.5px;font-weight:600;cursor:pointer;padding:0 0 0 10px;')
+      }, es ? 'Quitar' : 'Remove'));
+    })), /*#__PURE__*/React.createElement('div', {
+      style: { display: 'flex', gap: 10, marginTop: 18 }
+    }, /*#__PURE__*/React.createElement('button', {
+      onClick: closeIt,
+      style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:13px;padding:14px;font-size:15px;font-weight:600;cursor:pointer;')
+    }, es ? 'Cerrar' : 'Close'), /*#__PURE__*/React.createElement('button', {
+      onClick: function () { shareItem(shareModal.type, shareModal.itemId, shareModal.name, snap); },
+      disabled: shareBusy,
+      style: css('flex:2;background:#0071e3;color:#fff;border:none;border-radius:13px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;opacity:' + (shareBusy ? '0.6' : '1') + ';')
+    }, shareBusy ? (es ? 'Enviando…' : 'Sending…') : (es ? 'Invitar' : 'Invite')))));
+  })(), sharedDepositShare && (function () {
+    var es = s.language === 'es';
+    var d = sharedDepositShare.item_data || {};
+    var closeIt = function () { setSharedDepositShare(null); setSharedDepositAmt(''); };
+    var submit = function () { var a = parseFloat(sharedDepositAmt) || 0; if (a > 0) { depositToSharedGoal(sharedDepositShare, a); closeIt(); } };
+    return /*#__PURE__*/React.createElement('div', {
+      onClick: closeIt, className: 'pf-overlay-in',
+      style: css('position:fixed;inset:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;padding:0;')
+    }, /*#__PURE__*/React.createElement('div', {
+      onClick: function (e) { e.stopPropagation(); }, className: 'pf-modal-in',
+      style: Object.assign(css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));max-width:480px;width:100%;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);'), { paddingBottom: keyboardInset > 0 ? keyboardInset + 24 : undefined, transition: 'padding-bottom 0.18s ease-out' })
+    }, /*#__PURE__*/React.createElement('div', { style: css('font-size:18px;font-weight:800;margin-bottom:3px;') }, es ? 'Abonar a la meta' : 'Add to goal'), /*#__PURE__*/React.createElement('div', { style: css('font-size:12.5px;color:#86868b;margin-bottom:14px;') }, (d.name || 'Meta') + ' · ' + (es ? 'de ' : 'from ') + (sharedDepositShare.owner_name || '')), /*#__PURE__*/React.createElement('div', { style: { position: 'relative', marginBottom: 16 } }, /*#__PURE__*/React.createElement('span', { style: css('position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:19px;color:#86868b;pointer-events:none;') }, '$'), /*#__PURE__*/React.createElement('input', {
+      type: 'number', inputMode: 'decimal', autoFocus: true, placeholder: '0', value: sharedDepositAmt,
+      onChange: function (e) { setSharedDepositAmt(e.target.value); },
+      onKeyDown: function (e) { if (e.key === 'Enter') submit(); },
+      style: css('width:100%;padding:14px 14px 14px 30px;border:1px solid #d2d2d7;border-radius:13px;font-size:20px;font-weight:700;background:#fbfbfd;box-sizing:border-box;')
+    })), /*#__PURE__*/React.createElement('div', { style: { display: 'flex', gap: 10 } }, /*#__PURE__*/React.createElement('button', {
+      onClick: closeIt, style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:13px;padding:14px;font-size:15px;font-weight:600;cursor:pointer;')
+    }, es ? 'Cancelar' : 'Cancel'), /*#__PURE__*/React.createElement('button', {
+      onClick: submit, style: css('flex:2;background:#0071e3;color:#fff;border:none;border-radius:13px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;')
+    }, es ? 'Abonar' : 'Add'))));
+  })(), (function () {
+    var pending = sharedGoalsIn.concat(sharedInvestsIn).filter(function (r) { return !seenShareIds[r.id]; });
+    if (pending.length === 0) return null;
+    var es = s.language === 'es';
+    var r = pending[0];
+    var d = r.item_data || {};
+    var dismiss = function () { var m = Object.assign({}, seenShareIds); pending.forEach(function (x) { m[x.id] = true; }); setSeenShareIds(m); };
+    return /*#__PURE__*/React.createElement("div", {
+      style: css('position:fixed;left:12px;right:12px;top:calc(env(safe-area-inset-top) + 10px);z-index:115;background:#1d1d1f;color:#fff;border-radius:14px;padding:12px 14px;display:flex;align-items:center;gap:10px;box-shadow:0 12px 30px rgba(0,0,0,0.28);max-width:456px;margin:0 auto;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('flex:1;font-size:13px;line-height:1.35;')
+    }, /*#__PURE__*/React.createElement("b", null, r.owner_name || (es ? 'Alguien' : 'Someone')), ' ' + (es ? 'te compartió ' : 'shared ') + (d.name || '') + (pending.length > 1 ? (es ? ' y ' + (pending.length - 1) + ' más' : ' and ' + (pending.length - 1) + ' more') : '')), /*#__PURE__*/React.createElement("button", {
+      onClick: function () { setTab(r.item_type === 'investment' ? 'invest' : 'metas'); dismiss(); },
+      style: css('flex:none;background:rgba(255,255,255,0.16);color:#fff;border:none;border-radius:9px;padding:7px 12px;font-size:12.5px;font-weight:700;cursor:pointer;')
+    }, es ? 'Ver' : 'View'), /*#__PURE__*/React.createElement("button", {
+      onClick: dismiss,
+      style: css('flex:none;background:none;border:none;color:rgba(255,255,255,0.6);font-size:18px;cursor:pointer;padding:0 2px;line-height:1;')
+    }, "×"));
   })(), confirmDialog && /*#__PURE__*/React.createElement("div", {
     className: "pf-overlay-in",
     style: css('position:fixed;inset:0;z-index:110;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:24px;')
@@ -5500,7 +5720,37 @@ function App() {
     style: css('font-size:22px;color:#0071e3;line-height:1;')
   }, "+"), /*#__PURE__*/React.createElement("span", {
     style: css('font-size:11px;color:#0071e3;font-weight:600;')
-  }, "Goal")), showEmergencyFundPicker && /*#__PURE__*/React.createElement("div", {
+  }, "Goal")), sharedGoalsIn.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: css('margin-top:6px;margin-bottom:8px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12px;font-weight:700;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
+  }, s.language === 'es' ? 'Compartidas conmigo' : 'Shared with me'), sharedGoalsIn.map(function (r) {
+    var d = r.item_data || {};
+    var cur = d.current || 0, tgt = d.target || 0;
+    var pct = tgt > 0 ? Math.min(100, cur / tgt * 100) : 0;
+    var color = d.color || '#0071e3';
+    return /*#__PURE__*/React.createElement("div", {
+      key: r.id,
+      style: css('background:#fff;border-radius:16px;padding:15px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,0.05);')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;align-items:center;gap:9px;margin-bottom:8px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: { width: 30, height: 30, borderRadius: 9, background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }
+    }, /*#__PURE__*/React.createElement(GoalIconGlyph, { icon: d.icon || 'star', size: 16 })), /*#__PURE__*/React.createElement("div", {
+      style: css('flex:1;min-width:0;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:14px;font-weight:700;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
+    }, d.name || 'Meta'), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:11.5px;color:#86868b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
+    }, (s.language === 'es' ? 'De ' : 'From ') + (r.owner_name || 'alguien') + (r.permission === 'view' ? (s.language === 'es' ? ' · solo ver' : ' · view only') : '')))), /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:#1d1d1f;margin-bottom:6px;')
+    }, /*#__PURE__*/React.createElement("b", null, fmt(cur)), tgt > 0 && /*#__PURE__*/React.createElement("span", { style: css('color:#86868b;font-size:12px;') }, fmt(tgt))), /*#__PURE__*/React.createElement("div", {
+      style: css('height:7px;border-radius:4px;background:#f0f0f2;overflow:hidden;')
+    }, /*#__PURE__*/React.createElement("div", { style: { height: '100%', borderRadius: 4, background: color, width: pct + '%' } })), r.permission === 'edit' && /*#__PURE__*/React.createElement("button", {
+      onClick: function () { setSharedDepositAmt(''); setSharedDepositShare(r); },
+      style: css('margin-top:11px;width:100%;background:#eef6ff;color:#0071e3;border:none;border-radius:11px;padding:11px;font-size:13px;font-weight:700;cursor:pointer;')
+    }, s.language === 'es' ? '+ Abonar' : '+ Add savings'));
+  })), showEmergencyFundPicker && /*#__PURE__*/React.createElement("div", {
     onClick: () => setShowEmergencyFundPicker(false),
     className: 'pf-overlay-in',
     style: css('position:fixed;inset:0;z-index:130;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:24px;')
@@ -6320,7 +6570,10 @@ function App() {
       opacity: 0.3,
       marginRight: 5
     }
-  }), s.language === 'es' ? 'Proyección' : 'Projected')))), /*#__PURE__*/React.createElement("div", {
+  }), s.language === 'es' ? 'Proyección' : 'Projected')))), sbClient && /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setShareEmail(''); setShareError(''); setShareModal({ type: 'goal', itemId: sgSource.id, name: sgSource.name }); },
+    style: css('width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:#eef6ff;color:#0071e3;border:none;border-radius:12px;padding:13px;font-size:13.5px;font-weight:700;cursor:pointer;margin-top:14px;')
+  }, /*#__PURE__*/React.createElement("svg", { viewBox: "0 0 24 24", width: 16, height: 16, fill: "none", stroke: "#0071e3", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, /*#__PURE__*/React.createElement("circle", { cx: 9, cy: 7, r: 4 }), /*#__PURE__*/React.createElement("path", { d: "M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2" }), /*#__PURE__*/React.createElement("path", { d: "M19 8v6M22 11h-6" })), (s.language === 'es' ? 'Compartir meta' : 'Share goal') + ((sharesByItem['goal:' + sgSource.id] || []).length ? ' · ' + (sharesByItem['goal:' + sgSource.id] || []).length : '')), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:18px;padding:16px;margin-top:14px;')
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => askConfirm(s.language === 'es' ? '¿Eliminar esta meta? Se perderá el progreso guardado y su historial.' : "Delete this goal? Its saved progress and history will be lost.", () => {
