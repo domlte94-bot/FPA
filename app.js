@@ -4093,11 +4093,11 @@ function App() {
     return /*#__PURE__*/React.createElement('div', {
       onClick: closeIt,
       className: 'pf-overlay-in',
-      style: Object.assign(css('position:fixed;top:0;left:0;right:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;padding:0;'), { bottom: keyboardInset, transition: 'bottom 0.18s ease-out' })
+      style: css('position:fixed;inset:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;padding:0;')
     }, /*#__PURE__*/React.createElement('div', {
       onClick: function (e) { e.stopPropagation(); },
       className: 'pf-modal-in',
-      style: css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));width:100%;max-width:480px;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);')
+      style: Object.assign(css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));width:100%;max-width:480px;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);'), { paddingBottom: keyboardInset > 0 ? keyboardInset + 24 : undefined, transition: 'padding-bottom 0.18s ease-out' })
     }, /*#__PURE__*/React.createElement('div', {
       style: css('font-size:18px;font-weight:800;letter-spacing:-0.01em;margin-bottom:4px;')
     }, es ? 'Registrar depósito' : 'Log deposit'), /*#__PURE__*/React.createElement('div', {
@@ -4132,11 +4132,11 @@ function App() {
     return /*#__PURE__*/React.createElement('div', {
       onClick: closeIt,
       className: 'pf-overlay-in',
-      style: Object.assign(css('position:fixed;top:0;left:0;right:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;padding:0;'), { bottom: keyboardInset, transition: 'bottom 0.18s ease-out' })
+      style: css('position:fixed;inset:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;padding:0;')
     }, /*#__PURE__*/React.createElement('div', {
       onClick: function (e) { e.stopPropagation(); },
       className: 'pf-modal-in',
-      style: css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));width:100%;max-width:480px;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);')
+      style: Object.assign(css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));width:100%;max-width:480px;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);'), { paddingBottom: keyboardInset > 0 ? keyboardInset + 24 : undefined, transition: 'padding-bottom 0.18s ease-out' })
     }, /*#__PURE__*/React.createElement('div', {
       style: css('display:flex;align-items:baseline;justify-content:space-between;margin-bottom:16px;')
     }, /*#__PURE__*/React.createElement('div', {
