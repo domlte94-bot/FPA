@@ -557,8 +557,14 @@ function receivedThisMonth(s, today) {
 }
 function actualMonthlyIncomeOf(s, today) {
   if (s.payFrequency !== 'biweekly') return s.income || 0;
+  // Budget against the smoothed monthly income (≈2.17 paychecks/mo). A single
+  // paycheck logged mid-month is only part of the month's income, so it must NOT
+  // replace the monthly figure — otherwise "available this month" collapses to $0
+  // until every paycheck is in. Actual deposits only RAISE income above the
+  // expectation (a 3-paycheck month, a bonus, or extra "other" deposits).
   const received = receivedThisMonth(s, today);
-  return received > 0 ? received : monthlyIncomeOf(s);
+  const expected = monthlyIncomeOf(s);
+  return Math.max(received, expected);
 }
 function computeCtx(s) {
   const today = new Date();
