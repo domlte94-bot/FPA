@@ -305,6 +305,14 @@ function pastelOf(hex, amount) {
   const mix = c => Math.round(c + (255 - c) * k);
   return 'rgb(' + mix(n >> 16 & 255) + ',' + mix(n >> 8 & 255) + ',' + mix(n & 255) + ')';
 }
+// Who wrote a savings-log entry. Newer entries carry `by`; older ones only have a
+// label like "someone@mail.com · Sep". Null means it belongs to the goal's owner.
+function entryAuthor(e) {
+  if (!e) return null;
+  if (e.by) return String(e.by).toLowerCase();
+  if (typeof e.label === 'string' && e.label.indexOf('@') > -1) return e.label.split('·')[0].trim().toLowerCase();
+  return null;
+}
 function goalOthersTotal(goal) {
   return ((goal && goal.savingsLog) || []).reduce(function (a, e) {
     var who = e.by || (typeof e.label === 'string' && e.label.indexOf('@') > -1 ? e.label.split('·')[0].trim() : null);
@@ -1526,7 +1534,14 @@ function App() {
       const rowLog = (row.item_data && row.item_data.savingsLog) || [];
       const have = {};
       (g.savingsLog || []).forEach(e => { if (e && e.id != null) have[e.id] = true; });
-      const fresh = rowLog.filter(e => e && e.id != null && !have[e.id]);
+      // Only pull in entries the OTHER person wrote. Pulling back my own would undo
+      // my deletions: I remove an entry here, this effect finds it still sitting in
+      // the share row, and puts it straight back — which is why deleting looked broken.
+      const fresh = rowLog.filter(e => {
+        if (!e || e.id == null || have[e.id]) return false;
+        const who = entryAuthor(e);
+        return !!who && who !== myEmail;
+      });
       if (fresh.length === 0) return g;
       changed = true;
       const added = fresh.reduce((a, e) => a + (e.amount || 0), 0);
@@ -1629,10 +1644,17 @@ function App() {
         if (myEmail && nm) names[myEmail] = nm;
         var merged;
         if (type === 'goal') {
-          var union = {};
-          (rowData.savingsLog || []).forEach(function (e) { if (e && e.id != null) union[e.id] = e; });
-          (snapshot.savingsLog || []).forEach(function (e) { if (e && e.id != null) union[e.id] = e; });
-          var log = Object.keys(union).map(function (k) { return union[k]; });
+          // My own entries are exactly what my goal holds right now, so deleting one
+          // here deletes it for both of us. Entries written by the OTHER person are
+          // always carried over untouched — never drop someone else's contribution.
+          var mineNow = {};
+          (snapshot.savingsLog || []).forEach(function (e) { if (e && e.id != null) mineNow[e.id] = true; });
+          var theirs = (rowData.savingsLog || []).filter(function (e) {
+            if (!e || e.id == null || mineNow[e.id]) return false;
+            var who = entryAuthor(e);
+            return !!who && who !== myEmail;
+          });
+          var log = theirs.concat(snapshot.savingsLog || []);
           var base = (snapshot.current || 0) - (snapshot.savingsLog || []).reduce(function (a, e) { return a + (e.amount || 0); }, 0);
           var current = base + log.reduce(function (a, e) { return a + (e.amount || 0); }, 0);
           merged = Object.assign({}, snapshot, { savingsLog: log, baseCurrent: base, current: current, plans: rowData.plans || {}, names: names });
@@ -1789,8 +1811,17 @@ function App() {
         const have = {};
         (rd.savingsLog || []).forEach(e => { if (e && e.id != null) have[e.id] = true; });
         const missing = (item.savingsLog || []).some(e => e && e.id != null && !have[e.id]);
+        // A deletion leaves the row with MORE entries than my goal, which `missing`
+        // can't see — so without this the row keeps the entry and hands it back.
+        const mineNow = {};
+        (item.savingsLog || []).forEach(e => { if (e && e.id != null) mineNow[e.id] = true; });
+        const removed = (rd.savingsLog || []).some(e => {
+          if (!e || e.id == null || mineNow[e.id]) return false;
+          const who = entryAuthor(e);
+          return !who || who === myEmail;
+        });
         const metaChanged = rd.name !== item.name || rd.target !== item.target || rd.icon !== item.icon || rd.color !== item.color;
-        if (!missing && !metaChanged && !nameChanged) return;
+        if (!missing && !removed && !metaChanged && !nameChanged) return;
       } else {
         // Compare only the item's own fields: the row also carries `plans`/`names`,
         // which are not part of the item, so a whole-object compare would never match
