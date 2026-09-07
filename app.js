@@ -1525,7 +1525,8 @@ function App() {
         var base = (snapshot.current || 0) - (snapshot.savingsLog || []).reduce(function (a, e) { return a + (e.amount || 0); }, 0);
         var current = base + log.reduce(function (a, e) { return a + (e.amount || 0); }, 0);
         var merged = Object.assign({}, snapshot, { savingsLog: log, baseCurrent: base, current: current });
-        sbClient.from('shares').update({ item_data: merged, updated_at: new Date().toISOString(), updated_by: authUser.id }).eq('id', row.id);
+        sbClient.from('shares').update({ item_data: merged, updated_at: new Date().toISOString(), updated_by: authUser.id }).eq('id', row.id)
+          .then(function () { fetchShares(); });
       });
     });
   };
@@ -1540,7 +1541,8 @@ function App() {
       // base = the part of current not represented by any log entry (kept stable).
       const base = typeof data.baseCurrent === 'number' ? data.baseCurrent : ((data.current || 0) - prevLog.reduce((a, e) => a + (e.amount || 0), 0));
       const myName = (s.profileName || '').trim() || (authUser.user_metadata && authUser.user_metadata.full_name ? String(authUser.user_metadata.full_name).split(' ')[0] : '') || (myEmail ? myEmail.split('@')[0] : 'me');
-      const entry = { id: Date.now() + Math.floor(Math.random() * 1000), label: myName + ' · ' + MONTH_NAMES[new Date().getMonth()], amount: amount, by: myEmail };
+      const now = new Date();
+      const entry = { id: Date.now() + Math.floor(Math.random() * 1000), label: myName + ' · ' + MONTH_NAMES[now.getMonth()] + ' ' + now.getFullYear(), amount: amount, by: myEmail, ym: now.getFullYear() * 12 + now.getMonth() };
       const log = [entry].concat(prevLog).slice(0, 80);
       data.savingsLog = log;
       data.baseCurrent = base;
@@ -1550,8 +1552,9 @@ function App() {
         .eq('id', share.id).then(({ error }) => { if (!error) fetchShares(); });
     });
   };
-  const lastPushRef = React.useRef({});
-  // Keep the shared copy of my items current whenever I edit one I've shared out.
+  // Keep the shared copy of my items current. This compares against what is ACTUALLY
+  // in the share row (not a session flag), so if the row is ever missing one of my
+  // entries it gets re-pushed on the next sync instead of staying out of date forever.
   useEffect(() => {
     if (!sbClient || !authUser || sharesData.length === 0 || !state) return;
     const seen = {};
@@ -1562,9 +1565,14 @@ function App() {
         ? (state.goals || []).find(g => String(g.id) === String(r.item_id))
         : (state.investments || []).find(i => String(i.id) === String(r.item_id));
       if (!item) return;
-      const snap = JSON.stringify(item);
-      if (lastPushRef.current[key] === snap) return;
-      lastPushRef.current[key] = snap;
+      const rd = r.item_data || {};
+      if (r.item_type === 'goal') {
+        const have = {};
+        (rd.savingsLog || []).forEach(e => { if (e && e.id != null) have[e.id] = true; });
+        const missing = (item.savingsLog || []).some(e => e && e.id != null && !have[e.id]);
+        const metaChanged = rd.name !== item.name || rd.target !== item.target || rd.icon !== item.icon || rd.color !== item.color;
+        if (!missing && !metaChanged) return;
+      } else if (JSON.stringify(rd) === JSON.stringify(item)) return;
       pushShareUpdate(r.item_type, r.item_id, item);
     });
   }, [state, sharesData, authUser]);
@@ -1641,6 +1649,19 @@ function App() {
       if (input) input.focus();
     }, 350);
   }, [state && state.tab]);
+  const sharedStripRef = useRef(null);
+  useEffect(() => {
+    const c = sharedStripRef.current;
+    if (!c) return;
+    const go = () => {
+      const cur = c.querySelector('[data-current="true"]');
+      if (cur) c.scrollLeft += cur.getBoundingClientRect().left - c.getBoundingClientRect().left;
+      else c.scrollLeft = 0;
+    };
+    go();
+    const raf = requestAnimationFrame(go);
+    return () => cancelAnimationFrame(raf);
+  }, [sharedDetailShare]);
   const monthStripRef = useRef(null);
   useEffect(() => {
     const container = monthStripRef.current;
@@ -1710,6 +1731,59 @@ function App() {
     }
     onTap();
   };
+  /* ---- drag a goal card to reorder ---- */
+  const [goalDragIndex, setGoalDragIndex] = useState(null);
+  const goalDragRef = useRef({ x: 0, y: 0, moved: false });
+  const reorderGoal = (from, to) => patch(cur => {
+    const arr = (cur.goals || []).slice();
+    if (from < 0 || to < 0 || from >= arr.length || to >= arr.length || from === to) return {};
+    const moved = arr.splice(from, 1)[0];
+    arr.splice(to, 0, moved);
+    return { goals: arr };
+  });
+  // Long-press arms the card (shows the delete overlay). If you then MOVE, it turns
+  // into a reorder drag and the delete overlay is dismissed.
+  const goalCardProps = (i, g) => ({
+    'data-goal-idx': i,
+    onPointerDown: e => {
+      cardPressRef.current.fired = false;
+      goalDragRef.current = { x: e.clientX, y: e.clientY, moved: false };
+      clearTimeout(cardPressRef.current.id);
+      cardPressRef.current.id = setTimeout(() => {
+        cardPressRef.current.fired = true;
+        setGoalDragIndex(i);
+        setDeleteConfirm({ type: 'goal', id: g.id });
+      }, 550);
+    },
+    onPointerMove: e => {
+      const d = goalDragRef.current;
+      if (goalDragIndex === null) {
+        if (Math.abs(e.clientX - d.x) > 8 || Math.abs(e.clientY - d.y) > 8) {
+          clearTimeout(cardPressRef.current.id);
+        }
+        return;
+      }
+      if (!d.moved && Math.abs(e.clientX - d.x) < 8 && Math.abs(e.clientY - d.y) < 8) return;
+      if (!d.moved) { d.moved = true; setDeleteConfirm(null); }
+      // Find the card the finger is over by geometry (not hit-testing) so the
+      // lifted card / delete overlay can't block the detection.
+      var to = null;
+      var els = document.querySelectorAll('[data-goal-idx]');
+      for (var k = 0; k < els.length; k++) {
+        var rr = els[k].getBoundingClientRect();
+        if (e.clientX >= rr.left && e.clientX <= rr.right && e.clientY >= rr.top && e.clientY <= rr.bottom) {
+          to = parseInt(els[k].getAttribute('data-goal-idx'), 10);
+          break;
+        }
+      }
+      if (to === null || isNaN(to) || to === goalDragIndex) return;
+      reorderGoal(goalDragIndex, to);
+      setGoalDragIndex(to);
+    },
+    onPointerUp: () => { clearTimeout(cardPressRef.current.id); if (goalDragIndex !== null) setGoalDragIndex(null); },
+    onPointerCancel: () => { clearTimeout(cardPressRef.current.id); setGoalDragIndex(null); },
+    onPointerLeave: () => clearTimeout(cardPressRef.current.id)
+  });
   // In-card delete confirmation (an overlay inside the card, not a modal).
   const deleteOverlay = onDelete => /*#__PURE__*/React.createElement("div", {
     onClick: e => {
@@ -4570,7 +4644,15 @@ function App() {
     var base = typeof d.baseCurrent === 'number' ? d.baseCurrent : (cur - log.reduce(function (a, e) { return a + (e.amount || 0); }, 0));
     var byMap = {};
     var ownerAmt = base;
-    log.forEach(function (e) { if (e.by) { byMap[e.by] = (byMap[e.by] || 0) + (e.amount || 0); } else { ownerAmt += (e.amount || 0); } });
+    // `by` is set on newer entries; older ones only have a label like "someone@mail.com · Sep",
+    // so fall back to reading the email out of the label. No email = the owner's own entry.
+    var whoOf = function (e) {
+      if (e.by) return String(e.by).toLowerCase();
+      if (typeof e.label === 'string' && e.label.indexOf('@') > -1) return e.label.split('·')[0].trim().toLowerCase();
+      return null;
+    };
+    log.forEach(function (e) { var w = whoOf(e); if (w) { byMap[w] = (byMap[w] || 0) + (e.amount || 0); } else { ownerAmt += (e.amount || 0); } });
+    if (myEmail && byMap[myEmail] == null) byMap[myEmail] = 0; // always show my line, even at $0
     var breakdown = [{ name: row.owner_name || (es ? 'Dueño' : 'Owner'), amount: ownerAmt }];
     Object.keys(byMap).forEach(function (bk) { breakdown.push({ name: bk === myEmail ? (es ? 'Tú' : 'You') : bk.split('@')[0], amount: byMap[bk] }); });
     var closeIt = function () { setSharedDetailShare(null); };
@@ -4596,7 +4678,7 @@ function App() {
       style: css('height:9px;border-radius:5px;background:#f0f0f2;overflow:hidden;')
     }, /*#__PURE__*/React.createElement("div", { style: { height: '100%', borderRadius: 5, background: color, width: pct + '%' } })), /*#__PURE__*/React.createElement("div", {
       style: { fontSize: 12, color: '#86868b', marginTop: 6 }
-    }, pct.toFixed(0) + '% · ' + fmt(remaining) + (es ? ' por ahorrar' : ' left to save')), breakdown.length > 1 && /*#__PURE__*/React.createElement("div", {
+    }, pct.toFixed(0) + '% · ' + fmt(remaining) + (es ? ' por ahorrar' : ' left to save')), /*#__PURE__*/React.createElement("div", {
       style: css('border-top:1px solid #f0f0f2;margin-top:14px;padding-top:12px;')
     }, breakdown.map(function (b, i) {
       return /*#__PURE__*/React.createElement("div", {
@@ -4631,8 +4713,48 @@ function App() {
     }, es ? 'Escribe un monto para ver cuándo lo lograrías.' : 'Enter an amount to see when you would reach it.')), /*#__PURE__*/React.createElement("div", {
       style: css(card)
     }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:13px;font-weight:700;color:#1d1d1f;margin-bottom:12px;')
+    }, es ? 'Mes a mes' : 'Month by month'), (function () {
+      var ymOf = function (e) {
+        if (typeof e.ym === 'number') return e.ym;
+        var p = parseMonthYearLabel(e.label || '');
+        if (p && typeof p.month === 'number' && !isNaN(p.month)) {
+          var yy = (typeof p.year === 'number' && !isNaN(p.year)) ? p.year : new Date().getFullYear();
+          return yy * 12 + p.month;
+        }
+        return null;
+      };
+      var totals = {};
+      log.forEach(function (e) { var k = ymOf(e); if (k != null) totals[k] = (totals[k] || 0) + (e.amount || 0); });
+      var nowY = new Date().getFullYear(), nowM = new Date().getMonth();
+      var curYM = nowY * 12 + nowM;
+      var keys = Object.keys(totals).map(Number);
+      var startYM = keys.length ? Math.min(Math.min.apply(null, keys), curYM) : curYM;
+      var endYM = curYM + 11;
+      var cells = [];
+      for (var ym = startYM; ym <= endYM; ym++) cells.push(ym);
+      return /*#__PURE__*/React.createElement("div", {
+        ref: sharedStripRef,
+        style: css('display:flex;gap:12px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch;')
+      }, cells.map(function (ym) {
+        var yy = Math.floor(ym / 12), mm = ym % 12;
+        var got = totals[ym] || 0;
+        var pctM = planAmt > 0 ? Math.min(100, got / planAmt * 100) : (got > 0 ? 100 : 0);
+        var isCur = ym === curYM;
+        var R2 = 15, C2 = 2 * Math.PI * R2;
+        return /*#__PURE__*/React.createElement("div", {
+          key: ym,
+          "data-current": isCur ? 'true' : undefined,
+          style: { flex: '0 0 44px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }
+        }, /*#__PURE__*/React.createElement("svg", { viewBox: "0 0 36 36", width: "35", height: "35" }, /*#__PURE__*/React.createElement("circle", { cx: "18", cy: "18", r: R2, fill: "none", stroke: "#f0f0f2", strokeWidth: "3.5" }), pctM > 0 && /*#__PURE__*/React.createElement("circle", { cx: "18", cy: "18", r: R2, fill: "none", stroke: color, strokeWidth: "3.5", strokeLinecap: "round", strokeDasharray: C2, strokeDashoffset: C2 * (1 - pctM / 100), transform: "rotate(-90 18 18)" }), pctM >= 100 && /*#__PURE__*/React.createElement("path", { d: "M11.5 18.5l4 4 9-9", fill: "none", stroke: color, strokeWidth: "3", strokeLinecap: "round", strokeLinejoin: "round" })), /*#__PURE__*/React.createElement("span", {
+          style: css('font-size:9px;white-space:nowrap;color:' + (isCur ? '#0071e3' : '#86868b') + (isCur ? ';font-weight:700' : '') + ';')
+        }, MONTH_NAMES[mm] + (yy !== nowY ? " '" + String(yy).slice(-2) : '')));
+      }));
+    })()), /*#__PURE__*/React.createElement("div", {
+      style: css(card)
+    }, /*#__PURE__*/React.createElement("div", {
       style: css('font-size:13px;font-weight:700;color:#1d1d1f;margin-bottom:10px;')
-    }, es ? 'Aportes' : 'Contributions'), log.length === 0 && /*#__PURE__*/React.createElement("div", { style: css('font-size:12.5px;color:#86868b;') }, es ? 'Aún no hay aportes.' : 'No contributions yet.'), log.map(function (entry, i) {
+    }, (es ? 'Aportes' : 'Contributions') + ' · ' + log.length), log.length === 0 && /*#__PURE__*/React.createElement("div", { style: css('font-size:12.5px;color:#86868b;') }, es ? 'Aún no hay aportes.' : 'No contributions yet.'), log.map(function (entry, i) {
       return /*#__PURE__*/React.createElement("div", {
         key: entry.id || i,
         style: css('display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:8px 0;border-top:' + (i === 0 ? 'none' : '1px solid #f0f0f2') + ';')
@@ -5923,7 +6045,7 @@ function App() {
     style: css('background:#fff2ef;border-radius:12px;padding:12px 14px;font-size:13px;color:#ff3b30;margin-bottom:14px;')
   }, overAllocatedWarning), /*#__PURE__*/React.createElement("div", {
     style: css('display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:16px;')
-  }, s.goals.map(g => {
+  }, s.goals.map((g, gi) => {
     const v = buildGoalView(g, false);
     const spark = buildGoalSparkline(g, v.monthlyBoosted, ctx.today);
     const remaining = Math.max(g.target - goalCur(g), 0);
@@ -5934,6 +6056,7 @@ function App() {
     const loggedThisMonth = monthEntries.reduce((a, e) => a + e.amount, 0);
     const monthPct = v.monthlyBoosted > 0 ? Math.round(loggedThisMonth / v.monthlyBoosted * 100) : loggedThisMonth > 0 ? 100 : 0;
     const capColor = g.color;
+    const isDragging = goalDragIndex === gi;
     return /*#__PURE__*/React.createElement("div", Object.assign({
       key: g.id,
       ref: pfRevealRef,
@@ -5942,11 +6065,8 @@ function App() {
         selectGoal(g.id);
         setShowGoalDetail(true);
       }),
-      style: css('position:relative;display:flex;flex-direction:column;background:#fff;border-radius:18px;padding:15px 16px;cursor:pointer;min-height:138px;min-width:0;box-shadow:0 1px 2px rgba(0,0,0,0.05),0 8px 20px rgba(0,0,0,0.04);')
-    }, cardPressProps(() => setDeleteConfirm({
-      type: 'goal',
-      id: g.id
-    }))), deleteConfirm && deleteConfirm.type === 'goal' && deleteConfirm.id === g.id && deleteOverlay(() => deleteGoalNow(g.id)), /*#__PURE__*/React.createElement("div", {
+      style: Object.assign(css('position:relative;display:flex;flex-direction:column;background:#fff;border-radius:18px;padding:15px 16px;cursor:pointer;min-height:138px;min-width:0;box-shadow:0 1px 2px rgba(0,0,0,0.05),0 8px 20px rgba(0,0,0,0.04);'), isDragging ? { transform: 'scale(1.04)', boxShadow: '0 12px 30px rgba(0,0,0,0.18)', touchAction: 'none', zIndex: 5 } : {})
+    }, goalCardProps(gi, g)), deleteConfirm && deleteConfirm.type === 'goal' && deleteConfirm.id === g.id && deleteOverlay(() => deleteGoalNow(g.id)), /*#__PURE__*/React.createElement("div", {
       style: css('display:flex;align-items:center;gap:8px;margin-bottom:8px;')
     }, /*#__PURE__*/React.createElement("div", {
       style: {
@@ -5998,43 +6118,32 @@ function App() {
     style: css('font-size:22px;color:#0071e3;line-height:1;')
   }, "+"), /*#__PURE__*/React.createElement("span", {
     style: css('font-size:11px;color:#0071e3;font-weight:600;')
-  }, "Goal")), sharedGoalsIn.length > 0 && /*#__PURE__*/React.createElement("div", {
-    style: css('margin-top:6px;margin-bottom:8px;')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:12px;font-weight:700;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
-  }, s.language === 'es' ? 'Compartidas conmigo' : 'Shared with me'), sharedGoalsIn.map(function (r) {
+  }, "Goal")), sharedGoalsIn.map(function (r) {
     var d = r.item_data || {};
     var cur = d.current || 0, tgt = d.target || 0;
     var pct = tgt > 0 ? Math.min(100, cur / tgt * 100) : 0;
     var color = d.color || '#0071e3';
+    var rem = Math.max(tgt - cur, 0);
     return /*#__PURE__*/React.createElement("div", {
-      key: r.id,
-      onClick: function () { setSharedPlanAmt(''); setSharedDetailShare(r); },
-      style: css('background:#fff;border-radius:16px;padding:15px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,0.05);cursor:pointer;')
+      key: 'sg' + r.id,
+      onClick: function () { setSharedDetailShare(r); },
+      style: css('background:#fff;border-radius:18px;padding:14px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.05);min-height:138px;display:flex;flex-direction:column;')
     }, /*#__PURE__*/React.createElement("div", {
-      style: css('display:flex;align-items:center;gap:9px;margin-bottom:8px;')
+      style: css('display:flex;align-items:center;gap:8px;margin-bottom:8px;')
     }, /*#__PURE__*/React.createElement("div", {
-      style: { width: 30, height: 30, borderRadius: 9, background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }
-    }, /*#__PURE__*/React.createElement(GoalIconGlyph, { icon: d.icon || 'star', size: 16 })), /*#__PURE__*/React.createElement("div", {
-      style: css('flex:1;min-width:0;')
-    }, /*#__PURE__*/React.createElement("div", {
-      style: css('font-size:14px;font-weight:700;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
-    }, d.name || 'Meta'), /*#__PURE__*/React.createElement("div", {
-      style: css('font-size:11.5px;color:#86868b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
-    }, (s.language === 'es' ? 'De ' : 'From ') + (r.owner_name || 'alguien') + (r.permission === 'view' ? (s.language === 'es' ? ' · solo ver' : ' · view only') : '')))), /*#__PURE__*/React.createElement("div", {
-      style: css('display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:#1d1d1f;margin-bottom:6px;')
-    }, /*#__PURE__*/React.createElement("b", null, fmt(cur)), tgt > 0 && /*#__PURE__*/React.createElement("span", { style: css('color:#86868b;font-size:12px;') }, fmt(tgt))), /*#__PURE__*/React.createElement("div", {
-      style: css('height:7px;border-radius:4px;background:#f0f0f2;overflow:hidden;')
-    }, /*#__PURE__*/React.createElement("div", { style: { height: '100%', borderRadius: 4, background: color, width: pct + '%' } })), (function () {
-      var pv = parseFloat(s.sharedPlans && s.sharedPlans[r.id]) || 0;
-      return /*#__PURE__*/React.createElement("div", {
-        style: css('display:flex;justify-content:space-between;align-items:center;font-size:11.5px;margin-top:9px;color:#6e6e73;')
-      }, /*#__PURE__*/React.createElement("span", null, s.language === 'es' ? 'Tu aporte acordado' : 'Your agreed contribution'), /*#__PURE__*/React.createElement("b", { style: { color: pv > 0 ? '#0071e3' : '#c7c7cc' } }, pv > 0 ? fmt(pv) + (s.language === 'es' ? '/mes' : '/mo') : (s.language === 'es' ? 'Toca para fijar' : 'Tap to set')));
-    })(), r.permission === 'edit' && /*#__PURE__*/React.createElement("button", {
-      onClick: function (e) { e.stopPropagation(); setSharedDepositAmt(''); setSharedDepositShare(r); },
-      style: css('margin-top:11px;width:100%;background:#eef6ff;color:#0071e3;border:none;border-radius:11px;padding:11px;font-size:13px;font-weight:700;cursor:pointer;')
-    }, s.language === 'es' ? '+ Abonar' : '+ Add savings'));
-  })), showEmergencyFundPicker && /*#__PURE__*/React.createElement("div", {
+      style: { width: 26, height: 26, borderRadius: 8, background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }
+    }, /*#__PURE__*/React.createElement(GoalIconGlyph, { icon: d.icon || 'star', size: 14 })), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12.5px;font-weight:700;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;')
+    }, d.name || 'Meta'), /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 24 24", width: 13, height: 13, fill: "none", stroke: "#86868b", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", style: { flex: 'none' }
+    }, /*#__PURE__*/React.createElement("path", { d: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" }), /*#__PURE__*/React.createElement("path", { d: "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" }))), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:21px;font-weight:800;color:#1d1d1f;letter-spacing:-0.01em;font-variant-numeric:tabular-nums;')
+    }, fmt(cur)), /*#__PURE__*/React.createElement("div", {
+      style: { fontSize: 11.5, fontWeight: 600, color: color, marginTop: 3, marginBottom: 6 }
+    }, fmt(rem) + (s.language === 'es' ? ' por ahorrar' : ' left to save')), /*#__PURE__*/React.createElement("div", {
+      style: css('height:8px;border-radius:4px;background:#f0f0f2;overflow:hidden;margin-top:auto;')
+    }, /*#__PURE__*/React.createElement("div", { style: { height: '100%', borderRadius: 4, background: color, width: pct + '%' } })));
+  }), showEmergencyFundPicker && /*#__PURE__*/React.createElement("div", {
     onClick: () => setShowEmergencyFundPicker(false),
     className: 'pf-overlay-in',
     style: css('position:fixed;inset:0;z-index:130;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:24px;')
