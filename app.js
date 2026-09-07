@@ -106,13 +106,19 @@ function entryDateStr(e) {
   return e.date || toDateStr(e.year, e.month, e.day || 1);
 }
 function parseMonthYearLabel(label) {
-  const parts = (label || '').split(' ');
-  const mi = MONTH_NAMES.indexOf(parts[0]);
-  const yr = parseInt(parts[1], 10);
-  return {
-    month: mi,
-    year: yr
-  };
+  // Labels aren't always "Sep 2026" — extras read "Freelance — Sep 2026" and a
+  // partner's deposit reads "Ana · Sep 2026", so scan for the month anywhere in the
+  // text instead of only looking at the first word (otherwise those entries fall out
+  // of every monthly view: streaks, extras count, "logged this month").
+  const parts = String(label || '').split(/\s+/);
+  for (let i = 0; i < parts.length; i++) {
+    const mi = MONTH_NAMES.indexOf(parts[i]);
+    if (mi >= 0) {
+      const yr = parseInt(parts[i + 1], 10);
+      return { month: mi, year: isNaN(yr) ? new Date().getFullYear() : yr };
+    }
+  }
+  return { month: -1, year: NaN };
 }
 function buildPersistPayload(state) {
   return {
@@ -1600,7 +1606,8 @@ function App() {
         var log = Object.keys(union).map(function (k) { return union[k]; });
         var base = (snapshot.current || 0) - (snapshot.savingsLog || []).reduce(function (a, e) { return a + (e.amount || 0); }, 0);
         var current = base + log.reduce(function (a, e) { return a + (e.amount || 0); }, 0);
-        var merged = Object.assign({}, snapshot, { savingsLog: log, baseCurrent: base, current: current });
+        // `plans` is written by the recipients — carry it through so my push doesn't wipe it.
+        var merged = Object.assign({}, snapshot, { savingsLog: log, baseCurrent: base, current: current, plans: rowData.plans || {} });
         // Keep the display name current — if I change my profile name, everyone I've
         // shared with sees the new one instead of whatever it was when I shared.
         var nm = (s.profileName || '').trim() || (authUser.user_metadata && authUser.user_metadata.full_name ? String(authUser.user_metadata.full_name).split(' ')[0] : '') || (myEmail ? myEmail.split('@')[0] : '');
@@ -1629,6 +1636,20 @@ function App() {
       sbClient.from('shares')
         .update({ item_data: data, updated_at: new Date().toISOString(), updated_by: authUser.id })
         .eq('id', share.id).then(({ error }) => { if (!error) fetchShares(); });
+    });
+  };
+  // Publish my agreed monthly contribution onto the share row so the OWNER can see
+  // what each person is putting in (and use it for their streak ring).
+  const pushSharedPlan = (share, amount) => {
+    if (!sbClient || !authUser || !share) return;
+    sbClient.from('shares').select('*').eq('id', share.id).maybeSingle().then(({ data: fresh }) => {
+      const data = Object.assign({}, (fresh && fresh.item_data) || share.item_data || {});
+      const plans = Object.assign({}, data.plans || {});
+      plans[myEmail] = amount;
+      data.plans = plans;
+      sbClient.from('shares')
+        .update({ item_data: data, updated_at: new Date().toISOString(), updated_by: authUser.id })
+        .eq('id', share.id).then(function () { fetchShares(); });
     });
   };
   // Keep the shared copy of my items current. This compares against what is ACTUALLY
@@ -4804,6 +4825,7 @@ function App() {
     }, /*#__PURE__*/React.createElement("span", { style: css('position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:16px;color:#86868b;pointer-events:none;') }, '$'), /*#__PURE__*/React.createElement("input", {
       type: 'number', inputMode: 'decimal', placeholder: avail > 0 ? String(Math.round(Math.min(avail, remaining))) : '0', value: savedPlan,
       onChange: function (e) { var v = e.target.value; patch(function (cur) { var np = Object.assign({}, cur.sharedPlans); np[row.id] = v; return { sharedPlans: np }; }); },
+      onBlur: function () { pushSharedPlan(row, parseFloat(savedPlan) || 0); },
       style: css('width:100%;padding:12px 12px 12px 26px;border:1px solid #d2d2d7;border-radius:12px;font-size:16px;font-weight:700;background:#fbfbfd;box-sizing:border-box;')
     })), monthsToGoal != null ? /*#__PURE__*/React.createElement("div", {
       style: css('font-size:13px;color:#1d1d1f;')
@@ -6631,12 +6653,10 @@ function App() {
       minWidth: 120,
       order: 2
     }
-  }, /*#__PURE__*/React.createElement("label", {
-    style: css('display:block;font-size:10.5px;color:#86868b;font-weight:600;margin-bottom:5px;')
-  }, t('logSavings')), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("button", {
     onClick: () => { setDepositAmount(''); setQuickAddGoalId(sgSource.id); },
     style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:12px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;')
-  }, t('log')), (() => {
+  }, t('logSavings')), (() => {
     const now = new Date();
     const skipped = (sgSource.skippedMonths || []).some(sm => sm.year === now.getFullYear() && sm.month === now.getMonth());
     return /*#__PURE__*/React.createElement("button", {
@@ -6649,8 +6669,13 @@ function App() {
       const p = parseMonthYearLabel(entry.label);
       return p.year === now.getFullYear() && p.month === now.getMonth();
     });
-    const extrasLogged = monthEntries.filter(e => e.label.includes(' — ')).reduce((a, e) => a + e.amount, 0);
-    const salaryLogged = monthEntries.filter(e => !e.label.includes(' — ')).reduce((a, e) => a + e.amount, 0);
+    // Someone else's contribution isn't my streak — keep partner deposits out of both rings.
+    const isPartnerEntry = e => !!(e.by || (typeof e.label === 'string' && e.label.indexOf('@') > -1));
+    const mine = monthEntries.filter(e => !isPartnerEntry(e));
+    const extrasEntries = mine.filter(e => e.label.includes(' — '));
+    const extrasCount = extrasEntries.length;
+    const extrasLogged = extrasEntries.reduce((a, e) => a + e.amount, 0);
+    const salaryLogged = mine.filter(e => !e.label.includes(' — ')).reduce((a, e) => a + e.amount, 0);
     const salaryMonthlyTarget = Math.max(ctx.baseAvailable, 0) * (sg.percent / 100);
     const extrasMonthlyTarget = ctx.assignedByGoal[sgSource.id] || 0;
     const hasExtras = extrasMonthlyTarget > 0;
@@ -6684,13 +6709,6 @@ function App() {
       fill: "none",
       stroke: "#f0f0f2",
       strokeWidth: "5"
-    }), hasExtras && /*#__PURE__*/React.createElement("circle", {
-      cx: "32",
-      cy: "32",
-      r: R2,
-      fill: "none",
-      stroke: "#f0f0f2",
-      strokeWidth: "5"
     }), /*#__PURE__*/React.createElement("circle", {
       cx: "32",
       cy: "32",
@@ -6702,18 +6720,30 @@ function App() {
       strokeDasharray: C1,
       strokeDashoffset: C1 * (1 - salaryPct / 100),
       transform: "rotate(-90 32 32)"
-    }), hasExtras && /*#__PURE__*/React.createElement("circle", {
-      cx: "32",
-      cy: "32",
-      r: R2,
-      fill: "none",
-      stroke: "#34c759",
-      strokeWidth: "5",
-      strokeLinecap: "round",
-      strokeDasharray: C2,
-      strokeDashoffset: C2 * (1 - extrasPct / 100),
-      transform: "rotate(-90 32 32)"
-    })), /*#__PURE__*/React.createElement("div", {
+    }), (function () {
+      // Outer ring = extras (side hustles) as separate notches: 4 to start, one more
+      // notch per extra beyond that, and each extra logged this month fills one in.
+      var segN = Math.max(4, extrasCount);
+      var step = C2 / segN;
+      var segLen = Math.max(step - 6, 2);
+      var arr = [];
+      for (var i = 0; i < segN; i++) {
+        arr.push( /*#__PURE__*/React.createElement("circle", {
+          key: 'xseg' + i,
+          cx: "32",
+          cy: "32",
+          r: R2,
+          fill: "none",
+          stroke: i < extrasCount ? '#34c759' : '#e9e9ec',
+          strokeWidth: "5",
+          strokeLinecap: "round",
+          strokeDasharray: segLen + ' ' + (C2 - segLen),
+          strokeDashoffset: -i * step,
+          transform: "rotate(-90 32 32)"
+        }));
+      }
+      return arr;
+    })()), /*#__PURE__*/React.createElement("div", {
       style: css('font-size:10px;color:#86868b;line-height:1.4;text-align:center;')
     }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
       style: {
@@ -6721,13 +6751,15 @@ function App() {
         fontWeight: 800,
         color: sgSource.color
       }
-    }, salaryPct.toFixed(0), "%"), " savings monthly"), hasExtras && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
+    }, salaryPct.toFixed(0), "%"), " savings monthly"), /*#__PURE__*/React.createElement("div", {
+      style: { marginTop: 2 }
+    }, /*#__PURE__*/React.createElement("span", {
       style: {
         fontSize: 14,
         fontWeight: 800,
-        color: '#34c759'
+        color: extrasCount > 0 ? '#34c759' : '#c7c7cc'
       }
-    }, extrasPct.toFixed(0), "%"), " extras")));
+    }, extrasCount), ' ' + (s.language === 'es' ? (extrasCount === 1 ? 'extra este mes' : 'extras este mes') : (extrasCount === 1 ? 'extra this month' : 'extras this month')))));
   })()), /*#__PURE__*/React.createElement("button", {
     onClick: () => setTab('savingsLog'),
     style: css('display:flex;align-items:center;justify-content:space-between;background:none;border:none;border-top:1px solid #eef0f2;border-bottom:1px solid #eef0f2;border-radius:0;padding:16px 2px;cursor:pointer;width:100%;margin-top:16px;')
@@ -6777,10 +6809,25 @@ function App() {
       ref: monthStripRef,
       style: css('display:flex;gap:12px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch;scroll-snap-type:x mandatory;')
     }, monthsList.map((mo, idx) => {
-      const monthActual = (sgSource.savingsLog || []).filter(e => {
+      const monthEntriesAll = (sgSource.savingsLog || []).filter(e => {
         const p = parseMonthYearLabel(e.label);
         return p.year === mo.year && p.month === mo.month;
-      }).reduce((a, e) => a + e.amount, 0);
+      });
+      const whoOfE = e => e.by ? String(e.by).toLowerCase() : (typeof e.label === 'string' && e.label.indexOf('@') > -1 ? e.label.split('·')[0].trim().toLowerCase() : null);
+      // Outer ring = my own streak; one inner ring per person I share the goal with.
+      const monthActual = monthEntriesAll.filter(e => !whoOfE(e)).reduce((a, e) => a + e.amount, 0);
+      const shareRows = sharesByItem['goal:' + sgSource.id] || [];
+      const partnerRings = shareRows.map((r, ri) => {
+        const em = (r.recipient_email || '').toLowerCase();
+        const got = monthEntriesAll.filter(e => whoOfE(e) === em).reduce((a, e) => a + e.amount, 0);
+        const plans = (r.item_data && r.item_data.plans) || {};
+        const tgt = parseFloat(plans[em]) || 0;
+        return {
+          color: ['#34c759', '#ff9500', '#5856d6'][ri % 3],
+          r: 11 - ri * 4,
+          pct: tgt > 0 ? Math.min(100, got / tgt * 100) : (got > 0 ? 100 : 0)
+        };
+      }).filter(x => x.r >= 4);
       const skipped = (sgSource.skippedMonths || []).some(sm => sm.year === mo.year && sm.month === mo.month);
       const target = sg.monthlyBoosted;
       const pct = target > 0 ? Math.min(100, monthActual / target * 100) : monthActual > 0 ? 100 : 0;
@@ -6834,7 +6881,17 @@ function App() {
         strokeWidth: "3",
         strokeLinecap: "round",
         strokeLinejoin: "round"
-      }))), /*#__PURE__*/React.createElement("span", {
+      })), partnerRings.map(function (pr, pi) {
+        var pc = 2 * Math.PI * pr.r;
+        return /*#__PURE__*/React.createElement(React.Fragment, { key: 'pr' + pi }, /*#__PURE__*/React.createElement("circle", {
+          cx: "18", cy: "18", r: pr.r, fill: "none", stroke: "#f0f0f2", strokeWidth: "2.5"
+        }), !mo.inactive && pr.pct > 0 && /*#__PURE__*/React.createElement("circle", {
+          cx: "18", cy: "18", r: pr.r, fill: "none",
+          stroke: pr.color, strokeWidth: "2.5", strokeLinecap: "round",
+          strokeDasharray: pc, strokeDashoffset: pc * (1 - pr.pct / 100),
+          transform: "rotate(-90 18 18)"
+        }));
+      })), /*#__PURE__*/React.createElement("span", {
         style: css('font-size:9px;white-space:nowrap;color:' + (mo.inactive ? '#c7c7cc' : isCurrent ? '#0071e3' : '#86868b') + (isCurrent ? ';font-weight:700' : '') + ';')
       }, MONTH_NAMES[mo.month] + (mo.year !== curY ? " '" + String(mo.year).slice(-2) : '')));
     }));
@@ -6864,7 +6921,31 @@ function App() {
     style: css('font-size:11.5px;color:#6e6e73;margin-top:10px;padding-top:10px;border-top:1px solid #f5f5f7;')
   }, "You'll reach your goal in ", /*#__PURE__*/React.createElement("b", {
     style: css('color:#1d1d1f;')
-  }, sg.estDateLabel), " (", sg.monthsLabel, ")")), /*#__PURE__*/React.createElement("div", {
+  }, sg.estDateLabel), " (", sg.monthsLabel, ")"), (function () {
+    // What each person I share this goal with has committed per month.
+    var rows = sharesByItem['goal:' + sgSource.id] || [];
+    if (!rows.length) return null;
+    var esP = s.language === 'es';
+    var lines = rows.map(function (r) {
+      var plans = (r.item_data && r.item_data.plans) || {};
+      var em = (r.recipient_email || '').toLowerCase();
+      return { name: em.split('@')[0], amount: parseFloat(plans[em]) || 0 };
+    });
+    return /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:11.5px;color:#6e6e73;margin-top:10px;padding-top:10px;border-top:1px solid #f5f5f7;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:10.5px;color:#86868b;font-weight:600;margin-bottom:5px;')
+    }, esP ? 'Aportan cada mes' : 'Contributing each month'), lines.map(function (l, i) {
+      return /*#__PURE__*/React.createElement("div", {
+        key: i,
+        style: css('display:flex;justify-content:space-between;align-items:center;gap:8px;padding:2px 0;')
+      }, /*#__PURE__*/React.createElement("span", {
+        style: css('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;')
+      }, l.name), /*#__PURE__*/React.createElement("b", {
+        style: { color: l.amount > 0 ? '#1d1d1f' : '#c7c7cc', flex: 'none' }
+      }, l.amount > 0 ? fmt(l.amount) + (esP ? '/mes' : '/mo') : (esP ? 'sin fijar' : 'not set')));
+    }));
+  })()), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12.5px;font-weight:700;color:#1d1d1f;margin-bottom:10px;')
