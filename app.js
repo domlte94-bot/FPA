@@ -1366,6 +1366,9 @@ function App() {
   const [shareError, setShareError] = useState('');
   const [seenShareIds, setSeenShareIds] = useState({}); // in-app "new share" dismissals
   const [sharedDepositAmt, setSharedDepositAmt] = useState('');
+  const [sharedDetailShare, setSharedDetailShare] = useState(null); // full-screen view of a shared goal
+  const [sharedPlanAmt, setSharedPlanAmt] = useState('');
+  const [revokeConfirm, setRevokeConfirm] = useState(null); // the share row being revoked
   const myEmail = authUser && authUser.email ? authUser.email.toLowerCase() : '';
   const fetchShares = React.useCallback(() => {
     if (!sbClient || !authUser) {
@@ -1380,7 +1383,40 @@ function App() {
   }, [authUser]);
   useEffect(() => {
     fetchShares();
+    if (!sbClient || !authUser) return;
+    // Live-ish sync: poll while open and refresh when the app regains focus, so
+    // both people see each other's updates without reloading.
+    const iv = setInterval(fetchShares, 15000);
+    const onFocus = () => fetchShares();
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      clearInterval(iv);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
   }, [fetchShares]);
+  // Owner side: pull any deposits an invitee made (they live in the share row) back
+  // into my own goal, matching entries by id so nothing is counted twice.
+  useEffect(() => {
+    if (!sbClient || !authUser || !state || !state.goals || sharesData.length === 0) return;
+    const rows = sharesData.filter(r => r.owner_id === authUser.id && r.item_type === 'goal' && r.updated_by && r.updated_by !== authUser.id);
+    if (rows.length === 0) return;
+    let changed = false;
+    const goals = state.goals.map(g => {
+      const row = rows.find(r => String(r.item_id) === String(g.id));
+      if (!row) return g;
+      const rowLog = (row.item_data && row.item_data.savingsLog) || [];
+      const have = {};
+      (g.savingsLog || []).forEach(e => { if (e && e.id != null) have[e.id] = true; });
+      const fresh = rowLog.filter(e => e && e.id != null && !have[e.id]);
+      if (fresh.length === 0) return g;
+      changed = true;
+      const added = fresh.reduce((a, e) => a + (e.amount || 0), 0);
+      return Object.assign({}, g, { current: (g.current || 0) + added, savingsLog: fresh.concat(g.savingsLog || []).slice(0, 60) });
+    });
+    if (changed) patch({ goals });
+  }, [sharesData, authUser, state]);
   // Items other people shared WITH me, split by type.
   const sharedGoalsIn = sharesData.filter(r => r.owner_id !== (authUser && authUser.id) && r.item_type === 'goal');
   const sharedInvestsIn = sharesData.filter(r => r.owner_id !== (authUser && authUser.id) && r.item_type === 'investment');
@@ -1429,6 +1465,25 @@ function App() {
     if (!sbClient) return;
     sbClient.from('shares').delete().eq('id', shareId).then(() => fetchShares());
   };
+  // Stop sharing with one recipient. If removeContrib, also subtract what they put in
+  // (their savingsLog entries are tagged with `by`); otherwise their money stays.
+  const doRevoke = (share, removeContrib) => {
+    if (!sbClient) return;
+    if (removeContrib && share.item_type === 'goal') {
+      var email = (share.recipient_email || '').toLowerCase();
+      patch(cur => {
+        var goals = (cur.goals || []).map(g => {
+          if (String(g.id) !== String(share.item_id)) return g;
+          var toRemove = (g.savingsLog || []).filter(e => e.by === email);
+          if (!toRemove.length) return g;
+          var amt = toRemove.reduce((a, e) => a + (e.amount || 0), 0);
+          return Object.assign({}, g, { current: Math.max((g.current || 0) - amt, 0), savingsLog: (g.savingsLog || []).filter(e => e.by !== email) });
+        });
+        return { goals };
+      });
+    }
+    sbClient.from('shares').delete().eq('id', share.id).then(() => fetchShares());
+  };
   // Push updated item data to every share row for one of my items (keeps partners in sync).
   const pushShareUpdate = (type, itemId, snapshot) => {
     if (!sbClient || !authUser) return;
@@ -1441,7 +1496,7 @@ function App() {
     if (!sbClient || !authUser || amount <= 0) return;
     const data = Object.assign({}, share.item_data);
     data.current = (data.current || 0) + amount;
-    data.savingsLog = [{ id: Date.now(), label: (myEmail || 'me') + ' · ' + MONTH_NAMES[new Date().getMonth()], amount }].concat(data.savingsLog || []).slice(0, 60);
+    data.savingsLog = [{ id: Date.now() + Math.floor(Math.random() * 1000), label: (myEmail || 'me') + ' · ' + MONTH_NAMES[new Date().getMonth()], amount: amount, by: myEmail }].concat(data.savingsLog || []).slice(0, 60);
     sbClient.from('shares')
       .update({ item_data: data, updated_at: new Date().toISOString(), updated_by: authUser.id })
       .eq('id', share.id).then(({ error }) => { if (!error) fetchShares(); });
@@ -4359,7 +4414,7 @@ function App() {
         key: r.id,
         style: css('display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#1d1d1f;padding:6px 0;')
       }, /*#__PURE__*/React.createElement('span', { style: css('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;') }, r.recipient_email, r.recipient_id ? '' : (es ? ' · pendiente' : ' · pending')), /*#__PURE__*/React.createElement('button', {
-        onClick: function () { revokeShare(r.id); },
+        onClick: function () { setRevokeConfirm(r); },
         style: css('flex:none;background:none;border:none;color:#ff3b30;font-size:12.5px;font-weight:600;cursor:pointer;padding:0 0 0 10px;')
       }, es ? 'Quitar' : 'Remove'));
     })), /*#__PURE__*/React.createElement('div', {
@@ -4411,6 +4466,105 @@ function App() {
       onClick: dismiss,
       style: css('flex:none;background:none;border:none;color:rgba(255,255,255,0.6);font-size:18px;cursor:pointer;padding:0 2px;line-height:1;')
     }, "×"));
+  })(), sharedDetailShare && (function () {
+    var es = s.language === 'es';
+    var row = sharesData.find(function (r) { return r.id === sharedDetailShare.id; }) || sharedDetailShare;
+    var d = row.item_data || {};
+    var cur = d.current || 0, tgt = d.target || 0;
+    var remaining = Math.max(tgt - cur, 0);
+    var pct = tgt > 0 ? Math.min(100, cur / tgt * 100) : 0;
+    var color = d.color || '#0071e3';
+    var avail = Math.max(ctx.boostedAvailable, 0);
+    var planAmt = parseFloat(sharedPlanAmt) || 0;
+    var monthsToGoal = planAmt > 0 && remaining > 0 ? Math.ceil(remaining / planAmt) : null;
+    var dateLabel = '';
+    if (monthsToGoal != null) { var dd = new Date(); dd.setMonth(dd.getMonth() + monthsToGoal); dateLabel = MONTH_NAMES[dd.getMonth()] + ' ' + dd.getFullYear(); }
+    var log = d.savingsLog || [];
+    var closeIt = function () { setSharedDetailShare(null); };
+    var card = 'background:#fff;border-radius:18px;padding:18px;margin-bottom:14px;';
+    return /*#__PURE__*/React.createElement("div", {
+      style: css('position:fixed;inset:0;z-index:118;background:#f5f5f7;overflow-y:auto;padding:calc(env(safe-area-inset-top) + 14px) 16px calc(env(safe-area-inset-bottom) + 24px);')
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: closeIt,
+      style: css('display:flex;align-items:center;gap:6px;background:none;border:none;color:#0071e3;font-size:15px;font-weight:600;cursor:pointer;padding:6px 0;margin-bottom:8px;')
+    }, /*#__PURE__*/React.createElement("svg", { viewBox: "0 0 24 24", width: 18, height: 18, fill: "none", stroke: "#0071e3", strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round" }, /*#__PURE__*/React.createElement("path", { d: "M15 18l-6-6 6-6" })), es ? 'Metas' : 'Goals'), /*#__PURE__*/React.createElement("div", {
+      style: css(card)
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;align-items:center;gap:11px;margin-bottom:16px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: { width: 42, height: 42, borderRadius: 12, background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }
+    }, /*#__PURE__*/React.createElement(GoalIconGlyph, { icon: d.icon || 'star', size: 22 })), /*#__PURE__*/React.createElement("div", { style: css('min-width:0;') }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:18px;font-weight:800;letter-spacing:-0.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
+    }, d.name || 'Meta'), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12px;color:#86868b;')
+    }, (es ? 'Compartida por ' : 'Shared by ') + (row.owner_name || 'alguien') + (row.permission === 'view' ? (es ? ' · solo ver' : ' · view only') : '')))), /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;')
+    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", { style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;') }, es ? 'Actual' : 'Current'), /*#__PURE__*/React.createElement("div", { style: css('font-size:24px;font-weight:800;letter-spacing:-0.01em;') }, fmt(cur))), /*#__PURE__*/React.createElement("div", { style: css('text-align:right;') }, /*#__PURE__*/React.createElement("div", { style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;') }, es ? 'Meta' : 'Target'), /*#__PURE__*/React.createElement("div", { style: css('font-size:16px;font-weight:700;color:#86868b;') }, fmt(tgt)))), /*#__PURE__*/React.createElement("div", {
+      style: css('height:9px;border-radius:5px;background:#f0f0f2;overflow:hidden;')
+    }, /*#__PURE__*/React.createElement("div", { style: { height: '100%', borderRadius: 5, background: color, width: pct + '%' } })), /*#__PURE__*/React.createElement("div", {
+      style: { fontSize: 12, color: '#86868b', marginTop: 6 }
+    }, pct.toFixed(0) + '% · ' + fmt(remaining) + (es ? ' por ahorrar' : ' left to save'))), row.permission === 'edit' && /*#__PURE__*/React.createElement("button", {
+      onClick: function () { setSharedDepositAmt(''); setSharedDepositShare(row); },
+      style: css('width:100%;background:#0071e3;color:#fff;border:none;border-radius:13px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:14px;')
+    }, es ? '+ Abonar a esta meta' : '+ Add savings'), /*#__PURE__*/React.createElement("div", {
+      style: css(card)
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:13px;font-weight:700;color:#1d1d1f;margin-bottom:4px;')
+    }, es ? 'Tu plan' : 'Your plan'), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12.5px;color:#86868b;margin-bottom:12px;')
+    }, es ? 'Planea esta meta con tus propios números — sin afectar lo que aporta la otra persona.' : "Plan this goal with your own numbers — separate from what the other person contributes."), /*#__PURE__*/React.createElement("div", {
+      style: css('background:#f5f5f7;border-radius:12px;padding:11px 13px;display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;')
+    }, /*#__PURE__*/React.createElement("span", { style: css('font-size:12.5px;color:#6e6e73;') }, es ? 'Tu disponible al mes' : 'Your money available/mo'), /*#__PURE__*/React.createElement("b", { style: css('font-size:14px;') }, fmt(avail))), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:6px;')
+    }, es ? '¿Cuánto quieres aportar al mes?' : 'How much do you want to put in per month?'), /*#__PURE__*/React.createElement("div", {
+      style: { position: 'relative', marginBottom: 12 }
+    }, /*#__PURE__*/React.createElement("span", { style: css('position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:16px;color:#86868b;pointer-events:none;') }, '$'), /*#__PURE__*/React.createElement("input", {
+      type: 'number', inputMode: 'decimal', placeholder: avail > 0 ? String(Math.round(Math.min(avail, remaining))) : '0', value: sharedPlanAmt,
+      onChange: function (e) { setSharedPlanAmt(e.target.value); },
+      style: css('width:100%;padding:12px 12px 12px 26px;border:1px solid #d2d2d7;border-radius:12px;font-size:16px;font-weight:700;background:#fbfbfd;box-sizing:border-box;')
+    })), monthsToGoal != null ? /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:13px;color:#1d1d1f;')
+    }, (es ? 'A ese ritmo lo alcanzas en ' : 'At that pace you reach it in ') + monthsToGoal + (es ? (monthsToGoal === 1 ? ' mes' : ' meses') : (monthsToGoal === 1 ? ' month' : ' months')) + ' · ' + dateLabel) : /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12.5px;color:#86868b;')
+    }, es ? 'Escribe un monto para ver cuándo lo lograrías.' : 'Enter an amount to see when you would reach it.')), /*#__PURE__*/React.createElement("div", {
+      style: css(card)
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:13px;font-weight:700;color:#1d1d1f;margin-bottom:10px;')
+    }, es ? 'Aportes' : 'Contributions'), log.length === 0 && /*#__PURE__*/React.createElement("div", { style: css('font-size:12.5px;color:#86868b;') }, es ? 'Aún no hay aportes.' : 'No contributions yet.'), log.map(function (entry, i) {
+      return /*#__PURE__*/React.createElement("div", {
+        key: entry.id || i,
+        style: css('display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:8px 0;border-top:' + (i === 0 ? 'none' : '1px solid #f0f0f2') + ';')
+      }, /*#__PURE__*/React.createElement("span", { style: css('color:#6e6e73;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;') }, entry.label || (es ? 'Aporte' : 'Contribution')), /*#__PURE__*/React.createElement("b", null, fmt(entry.amount || 0)));
+    })));
+  })(), revokeConfirm && (function () {
+    var es = s.language === 'es';
+    var r = revokeConfirm;
+    var email = (r.recipient_email || '').toLowerCase();
+    var contrib = 0;
+    if (r.item_type === 'goal') { var g = (s.goals || []).find(function (x) { return String(x.id) === String(r.item_id); }); if (g) { contrib = (g.savingsLog || []).filter(function (e) { return e.by === email; }).reduce(function (a, e) { return a + (e.amount || 0); }, 0); } }
+    var close = function () { setRevokeConfirm(null); };
+    var btn = 'width:100%;border:none;border-radius:12px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:9px;';
+    return /*#__PURE__*/React.createElement("div", {
+      onClick: close, className: 'pf-overlay-in',
+      style: css('position:fixed;inset:0;z-index:125;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:24px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      onClick: function (e) { e.stopPropagation(); }, className: 'pf-modal-in',
+      style: css('background:#fff;border-radius:18px;padding:22px;max-width:340px;width:100%;box-shadow:0 30px 70px rgba(0,0,0,0.25);')
+    }, /*#__PURE__*/React.createElement("div", { style: css('font-size:17px;font-weight:800;margin-bottom:6px;') }, es ? 'Dejar de compartir' : 'Stop sharing'), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:13.5px;color:#6e6e73;line-height:1.45;margin-bottom:18px;')
+    }, email + (contrib > 0 ? (es ? ' aportó ' + fmt(contrib) + ' a esta meta. ¿Qué hago con eso?' : ' contributed ' + fmt(contrib) + ' to this goal. What should happen to it?') : (es ? ' ya no verá esta meta.' : ' will no longer see this.'))), contrib > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+      onClick: function () { doRevoke(r, false); close(); },
+      style: css(btn + 'background:#0071e3;color:#fff;')
+    }, es ? 'Quitar acceso · conservar sus aportes' : 'Remove access · keep their money'), /*#__PURE__*/React.createElement("button", {
+      onClick: function () { doRevoke(r, true); close(); },
+      style: css(btn + 'background:#fff2ef;color:#ff3b30;')
+    }, (es ? 'Quitar y borrar sus aportes' : 'Remove and delete their money') + ' (' + fmt(contrib) + ')')) : /*#__PURE__*/React.createElement("button", {
+      onClick: function () { doRevoke(r, false); close(); },
+      style: css(btn + 'background:#0071e3;color:#fff;')
+    }, es ? 'Quitar acceso' : 'Remove access'), /*#__PURE__*/React.createElement("button", {
+      onClick: close,
+      style: css('width:100%;background:none;border:none;color:#86868b;font-size:13.5px;font-weight:600;cursor:pointer;padding:6px;')
+    }, es ? 'Cancelar' : 'Cancel')));
   })(), confirmDialog && /*#__PURE__*/React.createElement("div", {
     className: "pf-overlay-in",
     style: css('position:fixed;inset:0;z-index:110;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:24px;')
@@ -5731,7 +5885,8 @@ function App() {
     var color = d.color || '#0071e3';
     return /*#__PURE__*/React.createElement("div", {
       key: r.id,
-      style: css('background:#fff;border-radius:16px;padding:15px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,0.05);')
+      onClick: function () { setSharedPlanAmt(''); setSharedDetailShare(r); },
+      style: css('background:#fff;border-radius:16px;padding:15px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,0.05);cursor:pointer;')
     }, /*#__PURE__*/React.createElement("div", {
       style: css('display:flex;align-items:center;gap:9px;margin-bottom:8px;')
     }, /*#__PURE__*/React.createElement("div", {
@@ -5747,7 +5902,7 @@ function App() {
     }, /*#__PURE__*/React.createElement("b", null, fmt(cur)), tgt > 0 && /*#__PURE__*/React.createElement("span", { style: css('color:#86868b;font-size:12px;') }, fmt(tgt))), /*#__PURE__*/React.createElement("div", {
       style: css('height:7px;border-radius:4px;background:#f0f0f2;overflow:hidden;')
     }, /*#__PURE__*/React.createElement("div", { style: { height: '100%', borderRadius: 4, background: color, width: pct + '%' } })), r.permission === 'edit' && /*#__PURE__*/React.createElement("button", {
-      onClick: function () { setSharedDepositAmt(''); setSharedDepositShare(r); },
+      onClick: function (e) { e.stopPropagation(); setSharedDepositAmt(''); setSharedDepositShare(r); },
       style: css('margin-top:11px;width:100%;background:#eef6ff;color:#0071e3;border:none;border-radius:11px;padding:11px;font-size:13px;font-weight:700;cursor:pointer;')
     }, s.language === 'es' ? '+ Abonar' : '+ Add savings'));
   })), showEmergencyFundPicker && /*#__PURE__*/React.createElement("div", {
