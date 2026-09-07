@@ -295,6 +295,16 @@ function goalCurrentTotal(goal, investments) {
 }
 // How much of a shared goal was put in by OTHER people (their savings-log entries are
 // tagged with `by`; older ones only carry the email in the label).
+// Lighter, pastel version of a hex colour (mixed toward white) — used so a shared
+// goal's partner rings read as the same colour family as the goal's icon.
+function pastelOf(hex, amount) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+  if (!m) return '#c7c7cc';
+  const n = parseInt(m[1], 16);
+  const k = amount == null ? 0.55 : amount;
+  const mix = c => Math.round(c + (255 - c) * k);
+  return 'rgb(' + mix(n >> 16 & 255) + ',' + mix(n >> 8 & 255) + ',' + mix(n & 255) + ')';
+}
 function goalOthersTotal(goal) {
   return ((goal && goal.savingsLog) || []).reduce(function (a, e) {
     var who = e.by || (typeof e.label === 'string' && e.label.indexOf('@') > -1 ? e.label.split('·')[0].trim() : null);
@@ -1304,6 +1314,7 @@ function App() {
   const [investLogAmount, setInvestLogAmount] = useState('');
   const [editingFundSettings, setEditingFundSettings] = useState(false);
   const [horizonOpen, setHorizonOpen] = useState(false);
+  const planSaveRef = useRef(null);
   const [investValueEdit, setInvestValueEdit] = useState('');
   const [editingLogId, setEditingLogId] = useState(null);
   const [editingLogAmount, setEditingLogAmount] = useState('');
@@ -1465,7 +1476,16 @@ function App() {
   const [sharedDetailShare, setSharedDetailShare] = useState(null); // full-screen view of a shared goal
   const [sharedPlanAmt, setSharedPlanAmt] = useState('');
   const [revokeConfirm, setRevokeConfirm] = useState(null); // the share row being revoked
+  const [shareSyncError, setShareSyncError] = useState('');
   const myEmail = authUser && authUser.email ? authUser.email.toLowerCase() : '';
+  // Supabase refuses a write by returning an error object, not by throwing — so a
+  // rejected save used to look exactly like a successful one. Surface it instead.
+  const noteShareError = (where, error) => {
+    if (!error) return false;
+    console.error('[share] ' + where, error);
+    setShareSyncError((error.message || String(error)) + ' (' + where + ')');
+    return true;
+  };
   const fetchShares = React.useCallback(() => {
     if (!sbClient || !authUser) {
       setSharesData([]);
@@ -1473,7 +1493,8 @@ function App() {
     }
     sbClient.rpc('claim_pending_shares').then(() => {
       sbClient.from('shares').select('*').then(({ data, error }) => {
-        if (!error && data) setSharesData(data);
+        if (error) { console.error('[share] read', error); return; }
+        if (data) setSharesData(data);
       });
     });
   }, [authUser]);
@@ -1607,12 +1628,13 @@ function App() {
         var base = (snapshot.current || 0) - (snapshot.savingsLog || []).reduce(function (a, e) { return a + (e.amount || 0); }, 0);
         var current = base + log.reduce(function (a, e) { return a + (e.amount || 0); }, 0);
         // `plans` is written by the recipients — carry it through so my push doesn't wipe it.
-        var merged = Object.assign({}, snapshot, { savingsLog: log, baseCurrent: base, current: current, plans: rowData.plans || {} });
+        // `plans` and `names` are written by the recipients — carry them through.
+        var merged = Object.assign({}, snapshot, { savingsLog: log, baseCurrent: base, current: current, plans: rowData.plans || {}, names: rowData.names || {} });
         // Keep the display name current — if I change my profile name, everyone I've
         // shared with sees the new one instead of whatever it was when I shared.
         var nm = (s.profileName || '').trim() || (authUser.user_metadata && authUser.user_metadata.full_name ? String(authUser.user_metadata.full_name).split(' ')[0] : '') || (myEmail ? myEmail.split('@')[0] : '');
         sbClient.from('shares').update({ item_data: merged, owner_name: nm, updated_at: new Date().toISOString(), updated_by: authUser.id }).eq('id', row.id)
-          .then(function () { fetchShares(); });
+          .then(function (res) { if (!noteShareError('sync', res.error)) fetchShares(); });
       });
     });
   };
@@ -1635,23 +1657,110 @@ function App() {
       data.current = base + log.reduce((a, e) => a + (e.amount || 0), 0);
       sbClient.from('shares')
         .update({ item_data: data, updated_at: new Date().toISOString(), updated_by: authUser.id })
-        .eq('id', share.id).then(({ error }) => { if (!error) fetchShares(); });
+        .eq('id', share.id).select('id').then(res => {
+          if (noteShareError('deposit', res.error)) return;
+          if (!res.data || res.data.length === 0) { noteShareError('deposit', { message: 'No permission to save on this shared item.' }); return; }
+          setShareSyncError('');
+          fetchShares();
+        });
     });
   };
   // Publish my agreed monthly contribution onto the share row so the OWNER can see
   // what each person is putting in (and use it for their streak ring).
-  const pushSharedPlan = (share, amount) => {
-    if (!sbClient || !authUser || !share) return;
-    sbClient.from('shares').select('*').eq('id', share.id).maybeSingle().then(({ data: fresh }) => {
-      const data = Object.assign({}, (fresh && fresh.item_data) || share.item_data || {});
-      const plans = Object.assign({}, data.plans || {});
-      plans[myEmail] = amount;
-      data.plans = plans;
+  const myDisplayName = () => (s.profileName || '').trim() || (authUser && authUser.user_metadata && authUser.user_metadata.full_name ? String(authUser.user_metadata.full_name).split(' ')[0] : '') || (myEmail ? myEmail.split('@')[0] : '');
+  // Look up a person's chosen name from any share row that carries it.
+  const nameForEmail = email => {
+    const e = String(email || '').toLowerCase();
+    for (let i = 0; i < sharesData.length; i++) {
+      const nm = sharesData[i].item_data && sharesData[i].item_data.names && sharesData[i].item_data.names[e];
+      if (nm) return nm;
+    }
+    return e.split('@')[0];
+  };
+  // My agreed monthly contribution to a shared goal. It lives on the share row, so it
+  // shows up on any device I sign in from and the owner sees it too. The local copy is
+  // only the draft I'm currently typing.
+  // What the person a row was shared WITH has committed per month (owner's view).
+  // The invite email and the address they actually signed up with don't always match
+  // exactly, so fall back to the single plan entry on the row when it doesn't.
+  const recipientPlanOf = row => {
+    const plans = (row && row.item_data && row.item_data.plans) || {};
+    const em = String((row && row.recipient_email) || '').toLowerCase();
+    if (plans[em] != null) return parseFloat(plans[em]) || 0;
+    const keys = Object.keys(plans);
+    if (keys.length === 1) return parseFloat(plans[keys[0]]) || 0;
+    return 0;
+  };
+  // The name that person chose for themselves, with the same email-mismatch fallback.
+  const recipientNameOf = row => {
+    const names = (row && row.item_data && row.item_data.names) || {};
+    const em = String((row && row.recipient_email) || '').toLowerCase();
+    if (names[em]) return names[em];
+    const keys = Object.keys(names).filter(k => k !== myEmail);
+    if (keys.length === 1 && names[keys[0]]) return names[keys[0]];
+    return nameForEmail(em);
+  };
+  const planForShare = row => {
+    if (!row) return 0;
+    const remote = row.item_data && row.item_data.plans ? row.item_data.plans[myEmail] : null;
+    if (remote != null) return parseFloat(remote) || 0;
+    const local = state && state.sharedPlans ? state.sharedPlans[row.id] : null;
+    return parseFloat(local) || 0;
+  };
+  // Every write to a share row goes through here: re-read the row first, change only
+  // my own fields, then save. Writing from a locally-cached copy is what let one
+  // person's save wipe the other's (their plan/name silently reverting to "not set").
+  const updateShareRow = (shareId, mutate) => {
+    if (!sbClient || !authUser || !shareId) return;
+    sbClient.from('shares').select('*').eq('id', shareId).maybeSingle().then(({ data: fresh, error: readErr }) => {
+      if (noteShareError('read row', readErr) || !fresh) return;
+      const next = mutate(Object.assign({}, fresh.item_data || {}));
+      if (!next) return; // nothing to change
       sbClient.from('shares')
-        .update({ item_data: data, updated_at: new Date().toISOString(), updated_by: authUser.id })
-        .eq('id', share.id).then(function () { fetchShares(); });
+        .update({ item_data: next, updated_at: new Date().toISOString(), updated_by: authUser.id })
+        .eq('id', shareId).select('id').then(function (res) {
+          if (noteShareError('save', res.error)) return;
+          // An UPDATE blocked by RLS succeeds with zero rows touched — catch that too.
+          if (!res.data || res.data.length === 0) {
+            noteShareError('save', { message: 'No permission to save on this shared item.' });
+            return;
+          }
+          setShareSyncError('');
+          fetchShares();
+        });
     });
   };
+  const pushSharedPlan = (share, amount) => {
+    if (!share) return;
+    updateShareRow(share.id, function (d) {
+      d.plans = Object.assign({}, d.plans || {}, { [myEmail]: amount });
+      d.names = Object.assign({}, d.names || {}, { [myEmail]: myDisplayName() });
+      return d;
+    });
+  };
+  // Opening a goal (mine or one shared with me) pulls the latest right away, so you
+  // don't sit looking at stale numbers waiting for the next sync tick.
+  useEffect(() => {
+    if (showGoalDetail || sharedDetailShare) fetchShares();
+  }, [showGoalDetail, sharedDetailShare]);
+  // As a recipient, publish my chosen name onto the rows shared with me so the owner
+  // sees my name instead of my email address.
+  useEffect(() => {
+    if (!sbClient || !authUser || !myEmail || !state) return;
+    const nm = myDisplayName();
+    if (!nm) return;
+    sharesData.forEach(r => {
+      if (r.owner_id === authUser.id) return;
+      // View-only rows (shared investments) reject any write by design — don't try.
+      if (r.permission !== 'edit') return;
+      if (((r.item_data && r.item_data.names) || {})[myEmail] === nm) return;
+      updateShareRow(r.id, function (d) {
+        if (((d.names || {})[myEmail]) === nm) return null;
+        d.names = Object.assign({}, d.names || {}, { [myEmail]: nm });
+        return d;
+      });
+    });
+  }, [sharesData, authUser, state && state.profileName]);
   // Keep the shared copy of my items current. This compares against what is ACTUALLY
   // in the share row (not a session flag), so if the row is ever missing one of my
   // entries it gets re-pushed on the next sync instead of staying out of date forever.
@@ -1671,7 +1780,9 @@ function App() {
         (rd.savingsLog || []).forEach(e => { if (e && e.id != null) have[e.id] = true; });
         const missing = (item.savingsLog || []).some(e => e && e.id != null && !have[e.id]);
         const metaChanged = rd.name !== item.name || rd.target !== item.target || rd.icon !== item.icon || rd.color !== item.color;
-        if (!missing && !metaChanged) return;
+        // Also re-push when I've changed my display name, so partners see the new one.
+        const nameChanged = r.owner_name !== myDisplayName();
+        if (!missing && !metaChanged && !nameChanged) return;
       } else if (JSON.stringify(rd) === JSON.stringify(item)) return;
       pushShareUpdate(r.item_type, r.item_id, item);
     });
@@ -2794,7 +2905,9 @@ function App() {
           savingsLog: [{
             id: Date.now() + Math.random(),
             label,
-            amount: h.amount
+            amount: h.amount,
+            kind: 'extra',
+            hustleId: h.id
           }].concat(g.savingsLog || []).slice(0, 12)
         } : g);
       }
@@ -3297,7 +3410,7 @@ function App() {
   }
   const s = state;
   // What I've committed monthly to shared goals (my agreed fixed contribution).
-  const sharedPlanTotal = sharedGoalsIn.reduce((a, r) => a + (parseFloat(s.sharedPlans && s.sharedPlans[r.id]) || 0), 0);
+  const sharedPlanTotal = sharedGoalsIn.reduce((a, r) => a + planForShare(r), 0);
   const t = key => STRINGS[s.language] && STRINGS[s.language][key] || STRINGS.en[key] || key;
   if (sbClient && (s.hasSeenWelcome || showLoginFromWelcome) && !authUser && !authLoading && !bypassAuthGate) {
     const isSignup = authMode === 'signup';
@@ -4753,7 +4866,12 @@ function App() {
     var pct = tgt > 0 ? Math.min(100, cur / tgt * 100) : 0;
     var color = d.color || '#0071e3';
     var avail = Math.max(ctx.boostedAvailable, 0);
-    var savedPlan = (s.sharedPlans && s.sharedPlans[row.id] != null) ? s.sharedPlans[row.id] : '';
+    // The share row is the shared source of truth, so the amount shows on any device
+    // and to the other person. Local state only wins while you're actively typing.
+    var rowPlan = row.item_data && row.item_data.plans ? row.item_data.plans[myEmail] : null;
+    var savedPlan = (s.sharedPlans && s.sharedPlans[row.id] != null && s.sharedPlans[row.id] !== '')
+      ? s.sharedPlans[row.id]
+      : (rowPlan != null ? String(rowPlan) : '');
     var planAmt = parseFloat(savedPlan) || 0;
     var monthsToGoal = planAmt > 0 && remaining > 0 ? Math.ceil(remaining / planAmt) : null;
     var dateLabel = '';
@@ -4774,15 +4892,24 @@ function App() {
     log.forEach(function (e) { var w = whoOf(e); if (w) { byMap[w] = (byMap[w] || 0) + (e.amount || 0); } else { ownerAmt += (e.amount || 0); } });
     if (myEmail && byMap[myEmail] == null) byMap[myEmail] = 0; // always show my line, even at $0
     var breakdown = [{ name: row.owner_name || (es ? 'Dueño' : 'Owner'), amount: ownerAmt }];
-    Object.keys(byMap).forEach(function (bk) { breakdown.push({ name: bk === myEmail ? (es ? 'Tú' : 'You') : bk.split('@')[0], amount: byMap[bk] }); });
-    var closeIt = function () { setSharedDetailShare(null); };
+    Object.keys(byMap).forEach(function (bk) { breakdown.push({ name: bk === myEmail ? (es ? 'Tú' : 'You') : nameForEmail(bk), amount: byMap[bk] }); });
+    var closeIt = function () {
+      // Flush anything still in the debounce, then drop the local draft: from here on
+      // the share row is what everyone reads, on this device and the other person's.
+      clearTimeout(planSaveRef.current);
+      if (String(savedPlan) !== String(rowPlan == null ? '' : rowPlan)) pushSharedPlan(row, parseFloat(savedPlan) || 0);
+      patch(function (cur) { var np = Object.assign({}, cur.sharedPlans); delete np[row.id]; return { sharedPlans: np }; });
+      setSharedDetailShare(null);
+    };
     var card = 'background:#fff;border-radius:18px;padding:18px;margin-bottom:14px;';
     return /*#__PURE__*/React.createElement("div", {
       style: Object.assign(css('position:fixed;top:0;right:0;bottom:0;z-index:118;background:#f5f5f7;overflow-y:auto;padding:calc(env(safe-area-inset-top) + 14px) 16px calc(env(safe-area-inset-bottom) + 24px);'), { left: isDesktop ? 220 : 0 })
     }, /*#__PURE__*/React.createElement("button", {
       onClick: closeIt,
       style: css('display:flex;align-items:center;gap:6px;background:none;border:none;color:#0071e3;font-size:15px;font-weight:600;cursor:pointer;padding:6px 0;margin-bottom:8px;')
-    }, /*#__PURE__*/React.createElement("svg", { viewBox: "0 0 24 24", width: 18, height: 18, fill: "none", stroke: "#0071e3", strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round" }, /*#__PURE__*/React.createElement("path", { d: "M15 18l-6-6 6-6" })), es ? 'Metas' : 'Goals'), /*#__PURE__*/React.createElement("div", {
+    }, /*#__PURE__*/React.createElement("svg", { viewBox: "0 0 24 24", width: 18, height: 18, fill: "none", stroke: "#0071e3", strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round" }, /*#__PURE__*/React.createElement("path", { d: "M15 18l-6-6 6-6" })), es ? 'Metas' : 'Goals'), shareSyncError && /*#__PURE__*/React.createElement("div", {
+      style: css('background:#fff4f4;border:1px solid #ffd4d4;color:#c62828;border-radius:12px;padding:10px 12px;margin-bottom:12px;font-size:12px;line-height:1.35;')
+    }, (es ? 'No se pudo guardar: ' : "Couldn't save: ") + shareSyncError), /*#__PURE__*/React.createElement("div", {
       style: css(card)
     }, /*#__PURE__*/React.createElement("div", {
       style: css('display:flex;align-items:center;gap:11px;margin-bottom:16px;')
@@ -4824,8 +4951,15 @@ function App() {
       style: { position: 'relative', marginBottom: 12 }
     }, /*#__PURE__*/React.createElement("span", { style: css('position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:16px;color:#86868b;pointer-events:none;') }, '$'), /*#__PURE__*/React.createElement("input", {
       type: 'number', inputMode: 'decimal', placeholder: avail > 0 ? String(Math.round(Math.min(avail, remaining))) : '0', value: savedPlan,
-      onChange: function (e) { var v = e.target.value; patch(function (cur) { var np = Object.assign({}, cur.sharedPlans); np[row.id] = v; return { sharedPlans: np }; }); },
-      onBlur: function () { pushSharedPlan(row, parseFloat(savedPlan) || 0); },
+      onChange: function (e) {
+        var v = e.target.value;
+        patch(function (cur) { var np = Object.assign({}, cur.sharedPlans); np[row.id] = v; return { sharedPlans: np }; });
+        // Save as soon as you type (settling briefly), not only when the field loses
+        // focus — closing the screen mid-edit used to lose the change entirely.
+        clearTimeout(planSaveRef.current);
+        planSaveRef.current = setTimeout(function () { pushSharedPlan(row, parseFloat(v) || 0); }, 500);
+      },
+      onBlur: function () { clearTimeout(planSaveRef.current); pushSharedPlan(row, parseFloat(savedPlan) || 0); },
       style: css('width:100%;padding:12px 12px 12px 26px;border:1px solid #d2d2d7;border-radius:12px;font-size:16px;font-weight:700;background:#fbfbfd;box-sizing:border-box;')
     })), monthsToGoal != null ? /*#__PURE__*/React.createElement("div", {
       style: css('font-size:13px;color:#1d1d1f;')
@@ -5320,7 +5454,7 @@ function App() {
     var cur = d.current || 0, tgt = d.target || 0;
     var pct = tgt > 0 ? Math.min(100, cur / tgt * 100) : 0;
     var color = d.color || '#0071e3';
-    var pv = parseFloat(s.sharedPlans && s.sharedPlans[r.id]) || 0;
+    var pv = planForShare(r);
     return /*#__PURE__*/React.createElement("div", {
       key: 'sh' + r.id,
       onClick: function () { setSharedDetailShare(r); },
@@ -6641,7 +6775,7 @@ function App() {
     }, /*#__PURE__*/React.createElement("span", null, es2 ? 'Tú' : 'You'), /*#__PURE__*/React.createElement("b", { style: { color: '#1d1d1f', fontSize: 14 } }, fmt(mine))), others.map(function (k) {
       return /*#__PURE__*/React.createElement("div", {
         key: k, style: css(rowS)
-      }, /*#__PURE__*/React.createElement("span", { style: css('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;') }, k.split('@')[0]), /*#__PURE__*/React.createElement("b", { style: { color: '#1d1d1f', fontSize: 14, flex: 'none' } }, fmt(byMap[k])));
+      }, /*#__PURE__*/React.createElement("span", { style: css('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;') }, nameForEmail(k)), /*#__PURE__*/React.createElement("b", { style: { color: '#1d1d1f', fontSize: 14, flex: 'none' } }, fmt(byMap[k])));
     }), /*#__PURE__*/React.createElement("div", {
       style: css('display:flex;justify-content:space-between;align-items:baseline;font-size:12px;font-weight:700;color:#1d1d1f;border-top:1px solid #f0f0f2;margin-top:6px;padding-top:6px;')
     }, /*#__PURE__*/React.createElement("span", null, "Total"), /*#__PURE__*/React.createElement("span", { style: { fontSize: 15 } }, fmt(sg.current))));
@@ -6672,10 +6806,14 @@ function App() {
     // Someone else's contribution isn't my streak — keep partner deposits out of both rings.
     const isPartnerEntry = e => !!(e.by || (typeof e.label === 'string' && e.label.indexOf('@') > -1));
     const mine = monthEntries.filter(e => !isPartnerEntry(e));
-    const extrasEntries = mine.filter(e => e.label.includes(' — '));
+    // An extra is tagged explicitly. Older entries only carry the generated label
+    // "Sep 2026 — <hustle>", so match that exact shape — a loose "contains a dash"
+    // test counted unrelated entries and showed extras that don't exist.
+    const isExtraEntry = e => e.kind === 'extra' || /^[A-Z][a-z]{2}\s+\d{4}\s+—\s+\S/.test(e.label || '');
+    const extrasEntries = mine.filter(isExtraEntry);
     const extrasCount = extrasEntries.length;
     const extrasLogged = extrasEntries.reduce((a, e) => a + e.amount, 0);
-    const salaryLogged = mine.filter(e => !e.label.includes(' — ')).reduce((a, e) => a + e.amount, 0);
+    const salaryLogged = mine.filter(e => !isExtraEntry(e)).reduce((a, e) => a + e.amount, 0);
     const salaryMonthlyTarget = Math.max(ctx.baseAvailable, 0) * (sg.percent / 100);
     const extrasMonthlyTarget = ctx.assignedByGoal[sgSource.id] || 0;
     const hasExtras = extrasMonthlyTarget > 0;
@@ -6820,10 +6958,10 @@ function App() {
       const partnerRings = shareRows.map((r, ri) => {
         const em = (r.recipient_email || '').toLowerCase();
         const got = monthEntriesAll.filter(e => whoOfE(e) === em).reduce((a, e) => a + e.amount, 0);
-        const plans = (r.item_data && r.item_data.plans) || {};
-        const tgt = parseFloat(plans[em]) || 0;
+        const tgt = recipientPlanOf(r);
         return {
-          color: ['#34c759', '#ff9500', '#5856d6'][ri % 3],
+          // Same colour family as the goal's icon, progressively lighter per person.
+          color: pastelOf(sgSource.color, 0.45 + ri * 0.18),
           r: 11 - ri * 4,
           pct: tgt > 0 ? Math.min(100, got / tgt * 100) : (got > 0 ? 100 : 0)
         };
@@ -6927,9 +7065,7 @@ function App() {
     if (!rows.length) return null;
     var esP = s.language === 'es';
     var lines = rows.map(function (r) {
-      var plans = (r.item_data && r.item_data.plans) || {};
-      var em = (r.recipient_email || '').toLowerCase();
-      return { name: em.split('@')[0], amount: parseFloat(plans[em]) || 0 };
+      return { name: recipientNameOf(r), amount: recipientPlanOf(r) };
     });
     return /*#__PURE__*/React.createElement("div", {
       style: css('font-size:11.5px;color:#6e6e73;margin-top:10px;padding-top:10px;border-top:1px solid #f5f5f7;')
