@@ -26,6 +26,13 @@
   *{box-sizing:border-box;}
   html,body{margin:0;touch-action:manipulation;}
   body{-webkit-font-smoothing:antialiased;}
+
+  /* No text selection / iOS long-press callout anywhere in the UI — long-pressing a
+     card should drag or open its actions, not pop up selection handles. Editable
+     fields opt back in below. */
+  body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
+  input,textarea,select,[contenteditable="true"]{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default;}
+
   ::placeholder{color:#a1a1a6;}
   input:focus, select:focus{outline:2px solid #0071e3; outline-offset:1px;}
   input[type=date]{font-family:inherit;}
@@ -60,7 +67,7 @@
 </head>
 <body>
 <div id="root"></div>
-<script src="./app.js"></script>
+<script src="./app.js?v=30"></script>
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {

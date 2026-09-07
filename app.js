@@ -1182,6 +1182,68 @@ function SecuritySettings(props) {
     msg && React.createElement('div', { style: css('font-size:12.5px;color:#0071e3;font-weight:600;margin-top:12px;text-align:center;') }, msg)
   );
 }
+function TabButton({
+  name, label, icon, active, onTap
+}) {
+    const color = active ? '#0071e3' : '#86868b';
+    return /*#__PURE__*/React.createElement("button", {
+      onClick: () => onTap(name),
+      style: css('flex:1;background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 2px 6px;cursor:pointer;color:' + color + ';')
+    }, /*#__PURE__*/React.createElement("span", {
+      style: css('display:flex;align-items:center;justify-content:center;width:44px;height:26px;border-radius:13px;background:' + (active ? 'rgba(0,113,227,0.12)' : 'transparent') + ';transition:background 0.18s ease;')
+    }, /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 24 24",
+      width: "21",
+      height: "21",
+      fill: "none",
+      stroke: color,
+      strokeWidth: active ? "2.3" : "2",
+      strokeLinecap: "round",
+      strokeLinejoin: "round"
+    }, icon(color))), /*#__PURE__*/React.createElement("span", {
+      style: css('font-size:10px;font-weight:' + (active ? '700' : '600') + ';')
+    }, label));
+  }
+
+function SidebarButton({
+  name, label, icon, active, onTap
+}) {
+    const color = active ? '#0071e3' : '#6e6e73';
+    return /*#__PURE__*/React.createElement("button", {
+      onClick: () => onTap(name),
+      style: {
+        width: '100%',
+        background: active ? '#eef6ff' : 'none',
+        border: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '10px 14px',
+        borderRadius: 10,
+        cursor: 'pointer',
+        color,
+        textAlign: 'left'
+      }
+    }, /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 24 24",
+      width: "19",
+      height: "19",
+      fill: "none",
+      stroke: color,
+      strokeWidth: "2",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      style: {
+        flex: 'none'
+      }
+    }, icon(color)), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 14,
+        fontWeight: active ? 700 : 600
+      }
+    }, label));
+  }
+
 function App() {
   const [state, setState] = useState(null);
   const [storageWarning, setStorageWarning] = useState('');
@@ -4436,72 +4498,6 @@ function App() {
     setSettingsView('menu');
     setTab(name);
   };
-  const TabButton = ({
-    name,
-    label,
-    icon
-  }) => {
-    const active = s.tab === name;
-    const color = active ? '#0071e3' : '#86868b';
-    return /*#__PURE__*/React.createElement("button", {
-      onClick: () => goToTabRoot(name),
-      style: css('flex:1;background:none;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 2px 6px;cursor:pointer;color:' + color + ';')
-    }, /*#__PURE__*/React.createElement("span", {
-      style: css('display:flex;align-items:center;justify-content:center;width:44px;height:26px;border-radius:13px;background:' + (active ? 'rgba(0,113,227,0.12)' : 'transparent') + ';transition:background 0.18s ease;')
-    }, /*#__PURE__*/React.createElement("svg", {
-      viewBox: "0 0 24 24",
-      width: "21",
-      height: "21",
-      fill: "none",
-      stroke: color,
-      strokeWidth: active ? "2.3" : "2",
-      strokeLinecap: "round",
-      strokeLinejoin: "round"
-    }, icon(color))), /*#__PURE__*/React.createElement("span", {
-      style: css('font-size:10px;font-weight:' + (active ? '700' : '600') + ';')
-    }, label));
-  };
-  const SidebarButton = ({
-    name,
-    label,
-    icon
-  }) => {
-    const active = s.tab === name;
-    const color = active ? '#0071e3' : '#6e6e73';
-    return /*#__PURE__*/React.createElement("button", {
-      onClick: () => goToTabRoot(name),
-      style: {
-        width: '100%',
-        background: active ? '#eef6ff' : 'none',
-        border: 'none',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        padding: '10px 14px',
-        borderRadius: 10,
-        cursor: 'pointer',
-        color,
-        textAlign: 'left'
-      }
-    }, /*#__PURE__*/React.createElement("svg", {
-      viewBox: "0 0 24 24",
-      width: "19",
-      height: "19",
-      fill: "none",
-      stroke: color,
-      strokeWidth: "2",
-      strokeLinecap: "round",
-      strokeLinejoin: "round",
-      style: {
-        flex: 'none'
-      }
-    }, icon(color)), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 14,
-        fontWeight: active ? 700 : 600
-      }
-    }, label));
-  };
   if (locked && lockCfg && lockCfg.pinHash) {
     return /*#__PURE__*/React.createElement(LockScreen, {
       lang: s.language,
@@ -4937,6 +4933,8 @@ function App() {
     }
   }, /*#__PURE__*/React.createElement(SidebarButton, {
     name: "inicio",
+    active: s.tab === "inicio",
+    onTap: goToTabRoot,
     label: t('tabHome'),
     icon: () => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
       d: "M3 11.5L12 4l9 7.5"
@@ -4945,6 +4943,8 @@ function App() {
     }))
   }), /*#__PURE__*/React.createElement(SidebarButton, {
     name: "metas",
+    active: s.tab === "metas",
+    onTap: goToTabRoot,
     label: t('tabGoals'),
     icon: color => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("circle", {
       cx: "12",
@@ -4962,6 +4962,8 @@ function App() {
     }))
   }), /*#__PURE__*/React.createElement(SidebarButton, {
     name: "gastos",
+    active: s.tab === "gastos",
+    onTap: goToTabRoot,
     label: t('tabExpenses'),
     icon: () => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("rect", {
       x: "3",
@@ -4974,6 +4976,8 @@ function App() {
     }))
   }), /*#__PURE__*/React.createElement(SidebarButton, {
     name: "extra",
+    active: s.tab === "extra",
+    onTap: goToTabRoot,
     label: t('tabExtra'),
     icon: () => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
       d: "M3 17l6-6 4 4 8-8"
@@ -4982,6 +4986,8 @@ function App() {
     }))
   }), !hideInvestTab && /*#__PURE__*/React.createElement(SidebarButton, {
     name: "invest",
+    active: s.tab === "invest",
+    onTap: goToTabRoot,
     label: t('tabInvest'),
     icon: () => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
       d: "M3 3v18h18"
@@ -4999,6 +5005,8 @@ function App() {
     }
   }, /*#__PURE__*/React.createElement(SidebarButton, {
     name: "settings",
+    active: s.tab === "settings",
+    onTap: goToTabRoot,
     label: t('settings'),
     icon: color => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("circle", {
       cx: "12",
@@ -8010,6 +8018,8 @@ function App() {
     style: css('position:fixed;bottom:0;left:0;right:0;z-index:30;background:rgba(255,255,255,0.94);backdrop-filter:blur(14px);border-top:1px solid rgba(0,0,0,0.08);display:flex;padding:8px 4px calc(8px + env(safe-area-inset-bottom));')
   }, /*#__PURE__*/React.createElement(TabButton, {
     name: "inicio",
+    active: s.tab === "inicio",
+    onTap: goToTabRoot,
     label: t('tabHome'),
     icon: () => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
       d: "M3 11.5L12 4l9 7.5"
@@ -8018,6 +8028,8 @@ function App() {
     }))
   }), /*#__PURE__*/React.createElement(TabButton, {
     name: "metas",
+    active: s.tab === "metas",
+    onTap: goToTabRoot,
     label: t('tabGoals'),
     icon: color => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("circle", {
       cx: "12",
@@ -8035,6 +8047,8 @@ function App() {
     }))
   }), /*#__PURE__*/React.createElement(TabButton, {
     name: "gastos",
+    active: s.tab === "gastos",
+    onTap: goToTabRoot,
     label: t('tabExpenses'),
     icon: () => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("rect", {
       x: "3",
@@ -8047,6 +8061,8 @@ function App() {
     }))
   }), /*#__PURE__*/React.createElement(TabButton, {
     name: "extra",
+    active: s.tab === "extra",
+    onTap: goToTabRoot,
     label: t('tabExtra'),
     icon: () => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
       d: "M3 17l6-6 4 4 8-8"
@@ -8055,6 +8071,8 @@ function App() {
     }))
   }), !hideInvestTab && /*#__PURE__*/React.createElement(TabButton, {
     name: "invest",
+    active: s.tab === "invest",
+    onTap: goToTabRoot,
     label: t('tabInvest'),
     icon: () => /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("path", {
       d: "M3 3v18h18"
