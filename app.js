@@ -1613,26 +1613,32 @@ function App() {
   // person's contributions; the total is derived as base + sum(all entries).
   const pushShareUpdate = (type, itemId, snapshot) => {
     if (!sbClient || !authUser) return;
-    if (type !== 'goal') {
-      sbClient.from('shares').update({ item_data: snapshot, updated_at: new Date().toISOString(), updated_by: authUser.id })
-        .eq('owner_id', authUser.id).eq('item_type', type).eq('item_id', String(itemId));
-      return;
-    }
-    sbClient.from('shares').select('*').eq('owner_id', authUser.id).eq('item_type', 'goal').eq('item_id', String(itemId)).then(({ data: rows }) => {
+    // Keep the display name current — if I change my profile name, everyone I've
+    // shared with sees the new one instead of whatever it was when I shared. This
+    // runs for investments too, not just goals: a view-only recipient can't write
+    // anything, so the owner's push is the ONLY way my name ever reaches them.
+    var nm = myDisplayName();
+    sbClient.from('shares').select('*').eq('owner_id', authUser.id).eq('item_type', type).eq('item_id', String(itemId)).then(({ data: rows, error }) => {
+      if (noteShareError('sync read', error)) return;
       (rows || []).forEach(function (row) {
         var rowData = row.item_data || {};
-        var union = {};
-        (rowData.savingsLog || []).forEach(function (e) { if (e && e.id != null) union[e.id] = e; });
-        (snapshot.savingsLog || []).forEach(function (e) { if (e && e.id != null) union[e.id] = e; });
-        var log = Object.keys(union).map(function (k) { return union[k]; });
-        var base = (snapshot.current || 0) - (snapshot.savingsLog || []).reduce(function (a, e) { return a + (e.amount || 0); }, 0);
-        var current = base + log.reduce(function (a, e) { return a + (e.amount || 0); }, 0);
-        // `plans` is written by the recipients — carry it through so my push doesn't wipe it.
-        // `plans` and `names` are written by the recipients — carry them through.
-        var merged = Object.assign({}, snapshot, { savingsLog: log, baseCurrent: base, current: current, plans: rowData.plans || {}, names: rowData.names || {} });
-        // Keep the display name current — if I change my profile name, everyone I've
-        // shared with sees the new one instead of whatever it was when I shared.
-        var nm = (s.profileName || '').trim() || (authUser.user_metadata && authUser.user_metadata.full_name ? String(authUser.user_metadata.full_name).split(' ')[0] : '') || (myEmail ? myEmail.split('@')[0] : '');
+        // `plans` is written by the recipients — carry it through so my push doesn't
+        // wipe it. Stamp my own name into `names` as well, so a lookup by email
+        // resolves me on every screen instead of falling back to my email prefix.
+        var names = Object.assign({}, rowData.names || {});
+        if (myEmail && nm) names[myEmail] = nm;
+        var merged;
+        if (type === 'goal') {
+          var union = {};
+          (rowData.savingsLog || []).forEach(function (e) { if (e && e.id != null) union[e.id] = e; });
+          (snapshot.savingsLog || []).forEach(function (e) { if (e && e.id != null) union[e.id] = e; });
+          var log = Object.keys(union).map(function (k) { return union[k]; });
+          var base = (snapshot.current || 0) - (snapshot.savingsLog || []).reduce(function (a, e) { return a + (e.amount || 0); }, 0);
+          var current = base + log.reduce(function (a, e) { return a + (e.amount || 0); }, 0);
+          merged = Object.assign({}, snapshot, { savingsLog: log, baseCurrent: base, current: current, plans: rowData.plans || {}, names: names });
+        } else {
+          merged = Object.assign({}, snapshot, { plans: rowData.plans || {}, names: names });
+        }
         sbClient.from('shares').update({ item_data: merged, owner_name: nm, updated_at: new Date().toISOString(), updated_by: authUser.id }).eq('id', row.id)
           .then(function (res) { if (!noteShareError('sync', res.error)) fetchShares(); });
       });
@@ -1775,15 +1781,23 @@ function App() {
         : (state.investments || []).find(i => String(i.id) === String(r.item_id));
       if (!item) return;
       const rd = r.item_data || {};
+      // Re-push whenever I've changed my display name, so partners see the new one.
+      // This applies to shared investments too — the recipient can't write there, so
+      // if I skip the push my old name is what they keep seeing forever.
+      const nameChanged = r.owner_name !== myDisplayName();
       if (r.item_type === 'goal') {
         const have = {};
         (rd.savingsLog || []).forEach(e => { if (e && e.id != null) have[e.id] = true; });
         const missing = (item.savingsLog || []).some(e => e && e.id != null && !have[e.id]);
         const metaChanged = rd.name !== item.name || rd.target !== item.target || rd.icon !== item.icon || rd.color !== item.color;
-        // Also re-push when I've changed my display name, so partners see the new one.
-        const nameChanged = r.owner_name !== myDisplayName();
         if (!missing && !metaChanged && !nameChanged) return;
-      } else if (JSON.stringify(rd) === JSON.stringify(item)) return;
+      } else {
+        // Compare only the item's own fields: the row also carries `plans`/`names`,
+        // which are not part of the item, so a whole-object compare would never match
+        // and would re-push on every single render.
+        const sameData = Object.keys(item).every(k => JSON.stringify(rd[k]) === JSON.stringify(item[k]));
+        if (sameData && !nameChanged) return;
+      }
       pushShareUpdate(r.item_type, r.item_id, item);
     });
   }, [state, sharesData, authUser]);
@@ -2347,6 +2361,30 @@ function App() {
     ...(typeof fn === 'function' ? fn(s) : fn)
   }));
 
+  // One-time repair: older builds deleted a side hustle without removing what its
+  // check-ins had already written into a goal, so the goal went on reporting an extra
+  // that no longer exists. Drop those orphans and give the money back.
+  const orphanFixRef = React.useRef(false);
+  useEffect(() => {
+    if (!state || orphanFixRef.current) return;
+    const liveHustle = {};
+    (state.hustles || []).forEach(h => { liveHustle[String(h.id)] = true; });
+    const isOrphan = e => e && e.hustleId != null && !liveHustle[String(e.hustleId)];
+    if (!(state.goals || []).some(g => (g.savingsLog || []).some(isOrphan))) return;
+    orphanFixRef.current = true;
+    patch(cur => ({
+      goals: (cur.goals || []).map(g => {
+        const drop = (g.savingsLog || []).filter(isOrphan);
+        if (!drop.length) return g;
+        const back = drop.reduce((a, e) => a + (e.amount || 0), 0);
+        return Object.assign({}, g, {
+          current: Math.max((g.current || 0) - back, 0),
+          savingsLog: (g.savingsLog || []).filter(e => !isOrphan(e))
+        });
+      })
+    }));
+  }, [state]);
+
   /* ---- handlers ---- */
   const setTab = name => patch({
     tab: name
@@ -2870,8 +2908,20 @@ function App() {
     }])
   }));
   const removeHustle = id => {
-    askConfirm('Delete this side hustle? Its streak history will be lost.', () => patch(s => ({
-      hustles: s.hustles.filter(h => h.id !== id)
+    // Checking in a hustle writes an entry into its linked goal. Deleting the hustle
+    // has to take those entries (and the money they added) back out — otherwise the
+    // goal keeps counting an extra that no longer exists.
+    askConfirm('Delete this side hustle? Its streak history and anything it added to a goal will be removed.', () => patch(s => ({
+      hustles: s.hustles.filter(h => h.id !== id),
+      goals: (s.goals || []).map(g => {
+        const drop = (g.savingsLog || []).filter(e => String(e.hustleId) === String(id));
+        if (!drop.length) return g;
+        const back = drop.reduce((a, e) => a + (e.amount || 0), 0);
+        return Object.assign({}, g, {
+          current: Math.max((g.current || 0) - back, 0),
+          savingsLog: (g.savingsLog || []).filter(e => String(e.hustleId) !== String(id))
+        });
+      })
     })));
   };
   const updateHustle = (id, field, val) => patch(s => ({
@@ -3628,7 +3678,13 @@ function App() {
     const percent = goalDone ? 0 : goal.mode === 'manual' ? goal.percent || 0 : ctx.autoPercentEach;
     const monthlyBoosted = goalDone ? 0 : ctx.boostedAvailable * (percent / 100) + (ctx.assignedByGoal[goal.id] || 0);
     const remaining = Math.max(goal.target - cur, 0);
-    const monthsToGoal = monthlyBoosted > 0 ? Math.ceil(remaining / monthlyBoosted) : Infinity;
+    // Whoever I share this goal with has committed a fixed amount every month, and
+    // that money lands in the goal too — so the finish date has to count it. It is
+    // kept separate from monthlyBoosted, which is strictly MY savings split and must
+    // not be inflated by someone else's money.
+    const partnersMonthly = goalDone ? 0 : (sharesByItem['goal:' + goal.id] || []).reduce((a, r) => a + recipientPlanOf(r), 0);
+    const towardGoal = monthlyBoosted + partnersMonthly;
+    const monthsToGoal = towardGoal > 0 ? Math.ceil(remaining / towardGoal) : Infinity;
     const estDate = isFinite(monthsToGoal) ? addMonths(ctx.today, monthsToGoal) : null;
     const estDateLabel = estDate ? MONTH_NAMES[estDate.getMonth()] + ' ' + estDate.getFullYear() : 'No savings assigned';
     const progressPct = goal.target > 0 ? Math.min(100, cur / goal.target * 100) : 0;
@@ -3638,6 +3694,8 @@ function App() {
       current: cur,
       percent,
       monthlyBoosted,
+      partnersMonthly,
+      towardGoal,
       progressPct,
       monthsToGoal,
       isCompleted,
@@ -6711,8 +6769,25 @@ function App() {
       return null;
     };
     var byMap = {};
-    glog.forEach(function (e) { var w = whoOf(e); if (w) byMap[w] = (byMap[w] || 0) + (e.amount || 0); });
-    (sharesByItem['goal:' + sgSource.id] || []).forEach(function (r) {
+    // Their entries are tagged with the address they SIGNED UP with, which isn't
+    // always the one I invited. Fold both onto the invited address so one person is
+    // one line, and so their chosen name resolves instead of an email prefix.
+    var shareRowsHere = sharesByItem['goal:' + sgSource.id] || [];
+    var canonEmail = function (w) {
+      for (var i = 0; i < shareRowsHere.length; i++) {
+        var names = (shareRowsHere[i].item_data && shareRowsHere[i].item_data.names) || {};
+        if (names[w] != null) return (shareRowsHere[i].recipient_email || w).toLowerCase();
+      }
+      return w;
+    };
+    var nameOfContrib = function (k) {
+      for (var i = 0; i < shareRowsHere.length; i++) {
+        if ((shareRowsHere[i].recipient_email || '').toLowerCase() === k) return recipientNameOf(shareRowsHere[i]);
+      }
+      return nameForEmail(k);
+    };
+    glog.forEach(function (e) { var w = whoOf(e); if (w) { w = canonEmail(w); byMap[w] = (byMap[w] || 0) + (e.amount || 0); } });
+    shareRowsHere.forEach(function (r) {
       var k = (r.recipient_email || '').toLowerCase();
       if (k && byMap[k] == null) byMap[k] = 0;
     });
@@ -6775,7 +6850,7 @@ function App() {
     }, /*#__PURE__*/React.createElement("span", null, es2 ? 'Tú' : 'You'), /*#__PURE__*/React.createElement("b", { style: { color: '#1d1d1f', fontSize: 14 } }, fmt(mine))), others.map(function (k) {
       return /*#__PURE__*/React.createElement("div", {
         key: k, style: css(rowS)
-      }, /*#__PURE__*/React.createElement("span", { style: css('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;') }, nameForEmail(k)), /*#__PURE__*/React.createElement("b", { style: { color: '#1d1d1f', fontSize: 14, flex: 'none' } }, fmt(byMap[k])));
+      }, /*#__PURE__*/React.createElement("span", { style: css('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;') }, nameOfContrib(k)), /*#__PURE__*/React.createElement("b", { style: { color: '#1d1d1f', fontSize: 14, flex: 'none' } }, fmt(byMap[k])));
     }), /*#__PURE__*/React.createElement("div", {
       style: css('display:flex;justify-content:space-between;align-items:baseline;font-size:12px;font-weight:700;color:#1d1d1f;border-top:1px solid #f0f0f2;margin-top:6px;padding-top:6px;')
     }, /*#__PURE__*/React.createElement("span", null, "Total"), /*#__PURE__*/React.createElement("span", { style: { fontSize: 15 } }, fmt(sg.current))));
@@ -7059,7 +7134,7 @@ function App() {
     style: css('font-size:11.5px;color:#6e6e73;margin-top:10px;padding-top:10px;border-top:1px solid #f5f5f7;')
   }, "You'll reach your goal in ", /*#__PURE__*/React.createElement("b", {
     style: css('color:#1d1d1f;')
-  }, sg.estDateLabel), " (", sg.monthsLabel, ")"), (function () {
+  }, sg.estDateLabel), " (", sg.monthsLabel, ")", sg.partnersMonthly > 0 && /*#__PURE__*/React.createElement("span", null, s.language === 'es' ? ', contando ' : ', counting ', fmt(sg.partnersMonthly), s.language === 'es' ? '/mes de quien comparte la meta' : '/mo from who you share it with')), (function () {
     // What each person I share this goal with has committed per month.
     var rows = sharesByItem['goal:' + sgSource.id] || [];
     if (!rows.length) return null;
