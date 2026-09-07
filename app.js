@@ -1737,30 +1737,20 @@ function App() {
   // The ref is the source of truth for the gesture (state is only for the visual
   // lift), and a window-level listener always ends the drag — otherwise a drag that
   // finished off-card left the card "armed" and swallowed the next taps.
-  const goalDragRef = useRef({ x: 0, y: 0, moved: false, idx: null });
-  const endGoalDrag = React.useCallback(() => {
+  const goalDragRef = useRef({ x: 0, y: 0, moved: false, idx: null, el: null, pid: null });
+  // Everything here stays scoped to the goal card itself — no window-level listeners,
+  // so nothing in the rest of the app is touched. Pointer capture makes the card
+  // receive the release even if the finger ends up somewhere else.
+  const endGoalDrag = () => {
     clearTimeout(cardPressRef.current.id);
-    if (goalDragRef.current.idx !== null) {
-      goalDragRef.current.idx = null;
-      setGoalDragIndex(null);
-    }
-  }, []);
-  useEffect(() => {
-    const up = () => {
-      endGoalDrag();
-      // Safety net: `fired` is a single flag shared by every long-press card, and
-      // cardTapGuard swallows one click while it's true. If a press ends without a
-      // click (a drag, a press that moved, a canceled touch) it would stay stuck and
-      // eat the next tap ANYWHERE. Clear it just after the click has had its chance.
-      setTimeout(() => { cardPressRef.current.fired = false; }, 350);
-    };
-    window.addEventListener('pointerup', up);
-    window.addEventListener('pointercancel', up);
-    return () => {
-      window.removeEventListener('pointerup', up);
-      window.removeEventListener('pointercancel', up);
-    };
-  }, [endGoalDrag]);
+    const d = goalDragRef.current;
+    if (d.el && d.pid != null) { try { d.el.releasePointerCapture(d.pid); } catch (err) {} }
+    d.el = null; d.pid = null;
+    if (d.idx !== null) { d.idx = null; setGoalDragIndex(null); }
+    // Let the click that follows a long-press be swallowed, then clear the flag so
+    // it can never stay stuck and eat the next tap.
+    setTimeout(() => { cardPressRef.current.fired = false; }, 300);
+  };
   const reorderGoal = (from, to) => patch(cur => {
     const arr = (cur.goals || []).slice();
     if (from < 0 || to < 0 || from >= arr.length || to >= arr.length || from === to) return {};
@@ -1774,11 +1764,13 @@ function App() {
     'data-goal-idx': i,
     onPointerDown: e => {
       cardPressRef.current.fired = false;
-      goalDragRef.current = { x: e.clientX, y: e.clientY, moved: false, idx: null };
+      const el = e.currentTarget, pid = e.pointerId;
+      goalDragRef.current = { x: e.clientX, y: e.clientY, moved: false, idx: null, el: el, pid: pid };
       clearTimeout(cardPressRef.current.id);
       cardPressRef.current.id = setTimeout(() => {
         cardPressRef.current.fired = true;
         goalDragRef.current.idx = i;
+        try { el.setPointerCapture(pid); } catch (err) {}
         setGoalDragIndex(i);
         setDeleteConfirm({ type: 'goal', id: g.id });
       }, 550);
@@ -1810,7 +1802,8 @@ function App() {
       setGoalDragIndex(to);
     },
     onPointerUp: () => endGoalDrag(),
-    onPointerCancel: () => endGoalDrag()
+    onPointerCancel: () => endGoalDrag(),
+    onPointerLeave: () => { if (goalDragRef.current.idx === null) clearTimeout(cardPressRef.current.id); }
   });
   // In-card delete confirmation (an overlay inside the card, not a modal).
   const deleteOverlay = onDelete => /*#__PURE__*/React.createElement("div", {
