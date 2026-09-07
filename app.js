@@ -138,6 +138,7 @@ function buildPersistPayload(state) {
     dismissedTips: state.dismissedTips,
     profileName: state.profileName,
     sharedPlans: state.sharedPlans,
+    seenShares: state.seenShares,
     lastProcessedMonth: state.lastProcessedMonth,
     lastProcessedYear: state.lastProcessedYear,
     expenseCategories: state.expenseCategories,
@@ -526,6 +527,7 @@ function defaultState() {
     dismissedTips: {},
     profileName: '',
     sharedPlans: {},
+    seenShares: {},
     lastProcessedMonth: today.getMonth(),
     lastProcessedYear: today.getFullYear(),
     expenseCategories: [],
@@ -1378,7 +1380,6 @@ function App() {
   const [shareEmail, setShareEmail] = useState('');
   const [shareBusy, setShareBusy] = useState(false);
   const [shareError, setShareError] = useState('');
-  const [seenShareIds, setSeenShareIds] = useState({}); // in-app "new share" dismissals
   const [sharedDepositAmt, setSharedDepositAmt] = useState('');
   const [sharedDetailShare, setSharedDetailShare] = useState(null); // full-screen view of a shared goal
   const [sharedPlanAmt, setSharedPlanAmt] = useState('');
@@ -1733,7 +1734,33 @@ function App() {
   };
   /* ---- drag a goal card to reorder ---- */
   const [goalDragIndex, setGoalDragIndex] = useState(null);
-  const goalDragRef = useRef({ x: 0, y: 0, moved: false });
+  // The ref is the source of truth for the gesture (state is only for the visual
+  // lift), and a window-level listener always ends the drag — otherwise a drag that
+  // finished off-card left the card "armed" and swallowed the next taps.
+  const goalDragRef = useRef({ x: 0, y: 0, moved: false, idx: null });
+  const endGoalDrag = React.useCallback(() => {
+    clearTimeout(cardPressRef.current.id);
+    if (goalDragRef.current.idx !== null) {
+      goalDragRef.current.idx = null;
+      setGoalDragIndex(null);
+    }
+  }, []);
+  useEffect(() => {
+    const up = () => {
+      endGoalDrag();
+      // Safety net: `fired` is a single flag shared by every long-press card, and
+      // cardTapGuard swallows one click while it's true. If a press ends without a
+      // click (a drag, a press that moved, a canceled touch) it would stay stuck and
+      // eat the next tap ANYWHERE. Clear it just after the click has had its chance.
+      setTimeout(() => { cardPressRef.current.fired = false; }, 350);
+    };
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    return () => {
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+    };
+  }, [endGoalDrag]);
   const reorderGoal = (from, to) => patch(cur => {
     const arr = (cur.goals || []).slice();
     if (from < 0 || to < 0 || from >= arr.length || to >= arr.length || from === to) return {};
@@ -1747,17 +1774,18 @@ function App() {
     'data-goal-idx': i,
     onPointerDown: e => {
       cardPressRef.current.fired = false;
-      goalDragRef.current = { x: e.clientX, y: e.clientY, moved: false };
+      goalDragRef.current = { x: e.clientX, y: e.clientY, moved: false, idx: null };
       clearTimeout(cardPressRef.current.id);
       cardPressRef.current.id = setTimeout(() => {
         cardPressRef.current.fired = true;
+        goalDragRef.current.idx = i;
         setGoalDragIndex(i);
         setDeleteConfirm({ type: 'goal', id: g.id });
       }, 550);
     },
     onPointerMove: e => {
       const d = goalDragRef.current;
-      if (goalDragIndex === null) {
+      if (d.idx === null) {
         if (Math.abs(e.clientX - d.x) > 8 || Math.abs(e.clientY - d.y) > 8) {
           clearTimeout(cardPressRef.current.id);
         }
@@ -1776,13 +1804,13 @@ function App() {
           break;
         }
       }
-      if (to === null || isNaN(to) || to === goalDragIndex) return;
-      reorderGoal(goalDragIndex, to);
+      if (to === null || isNaN(to) || to === d.idx) return;
+      reorderGoal(d.idx, to);
+      d.idx = to;
       setGoalDragIndex(to);
     },
-    onPointerUp: () => { clearTimeout(cardPressRef.current.id); if (goalDragIndex !== null) setGoalDragIndex(null); },
-    onPointerCancel: () => { clearTimeout(cardPressRef.current.id); setGoalDragIndex(null); },
-    onPointerLeave: () => clearTimeout(cardPressRef.current.id)
+    onPointerUp: () => endGoalDrag(),
+    onPointerCancel: () => endGoalDrag()
   });
   // In-card delete confirmation (an overlay inside the card, not a modal).
   const deleteOverlay = onDelete => /*#__PURE__*/React.createElement("div", {
@@ -4607,12 +4635,20 @@ function App() {
       onClick: submit, style: css('flex:2;background:#0071e3;color:#fff;border:none;border-radius:13px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;')
     }, es ? 'Abonar' : 'Add'))));
   })(), (function () {
-    var pending = sharedGoalsIn.concat(sharedInvestsIn).filter(function (r) { return !seenShareIds[r.id]; });
+    var seen = s.seenShares || {};
+    var pending = sharedGoalsIn.concat(sharedInvestsIn).filter(function (r) { return !seen[r.id]; });
     if (pending.length === 0) return null;
     var es = s.language === 'es';
     var r = pending[0];
     var d = r.item_data || {};
-    var dismiss = function () { var m = Object.assign({}, seenShareIds); pending.forEach(function (x) { m[x.id] = true; }); setSeenShareIds(m); };
+    // Persist the dismissal so the notice shows once, not on every reload.
+    var dismiss = function () {
+      patch(function (cur) {
+        var m = Object.assign({}, cur.seenShares);
+        pending.forEach(function (x) { m[x.id] = true; });
+        return { seenShares: m };
+      });
+    };
     return /*#__PURE__*/React.createElement("div", {
       style: css('position:fixed;left:12px;right:12px;top:calc(env(safe-area-inset-top) + 10px);z-index:115;background:#1d1d1f;color:#fff;border-radius:14px;padding:12px 14px;display:flex;align-items:center;gap:10px;box-shadow:0 12px 30px rgba(0,0,0,0.28);max-width:456px;margin:0 auto;')
     }, /*#__PURE__*/React.createElement("div", {
@@ -4658,7 +4694,7 @@ function App() {
     var closeIt = function () { setSharedDetailShare(null); };
     var card = 'background:#fff;border-radius:18px;padding:18px;margin-bottom:14px;';
     return /*#__PURE__*/React.createElement("div", {
-      style: css('position:fixed;inset:0;z-index:118;background:#f5f5f7;overflow-y:auto;padding:calc(env(safe-area-inset-top) + 14px) 16px calc(env(safe-area-inset-bottom) + 24px);')
+      style: Object.assign(css('position:fixed;top:0;right:0;bottom:0;z-index:118;background:#f5f5f7;overflow-y:auto;padding:calc(env(safe-area-inset-top) + 14px) 16px calc(env(safe-area-inset-bottom) + 24px);'), { left: isDesktop ? 220 : 0 })
     }, /*#__PURE__*/React.createElement("button", {
       onClick: closeIt,
       style: css('display:flex;align-items:center;gap:6px;background:none;border:none;color:#0071e3;font-size:15px;font-weight:600;cursor:pointer;padding:6px 0;margin-bottom:8px;')
@@ -5137,6 +5173,7 @@ function App() {
       key: g.id,
       onClick: () => {
         selectGoal(g.id);
+        setShowGoalDetail(true);
         setTab('metas');
       },
       style: css('background:#fff;border:1px solid #eef0f2;border-radius:18px;padding:18px 18px 16px;margin-bottom:12px;cursor:pointer;')
