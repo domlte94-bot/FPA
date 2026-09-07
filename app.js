@@ -1234,6 +1234,7 @@ function App() {
   const [editingRetirement, setEditingRetirement] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [investLogAmount, setInvestLogAmount] = useState('');
+  const [editingFundSettings, setEditingFundSettings] = useState(false);
   const [investValueEdit, setInvestValueEdit] = useState('');
   const [editingLogId, setEditingLogId] = useState(null);
   const [editingLogAmount, setEditingLogAmount] = useState('');
@@ -2583,47 +2584,72 @@ function App() {
     const amt = parseFloat(depositAmount) || 0;
     if (amt <= 0) return;
     const label = MONTH_NAMES[new Date().getMonth()] + ' ' + new Date().getFullYear();
-    patch(s => ({
-      goals: s.goals.map(g => g.id === id ? {
+    patch(s => {
+      // A goal's total is `goal.current + the linked fund's amount`. So when the goal
+      // is funded through a linked investment, the money has to go INTO that fund —
+      // adding it to goal.current would leave the fund untouched (and the fund is
+      // where the money actually is).
+      const linked = (s.investments || []).find(i => i.goalId === id);
+      const goals = s.goals.map(g => g.id === id ? {
         ...g,
-        current: (g.current || 0) + amt,
+        current: linked ? (g.current || 0) : (g.current || 0) + amt,
         savingsLog: [{
           id: Date.now(),
           label,
-          amount: amt
+          amount: amt,
+          fundId: linked ? linked.id : undefined
         }].concat(g.savingsLog || []).slice(0, 60)
-      } : g)
-    }));
+      } : g);
+      if (!linked) return { goals };
+      const investments = s.investments.map(i => i.id === linked.id ? {
+        ...i,
+        amount: (i.amount || 0) + amt,
+        currentValue: (i.currentValue || 0) + amt,
+        lastUpdated: todayStr,
+        log: [{ id: Date.now() + Math.random(), amount: amt, date: todayStr }].concat(i.log || []).slice(0, 24)
+      } : i);
+      return { goals, investments };
+    });
     setDepositAmount('');
   };
-  const removeSavingsLogEntry = (goalId, entryId) => patch(s => ({
-    goals: s.goals.map(g => {
-      if (g.id !== goalId) return g;
-      const entry = (g.savingsLog || []).find(e => e.id === entryId);
-      if (!entry) return g;
-      return {
-        ...g,
-        current: Math.max((g.current || 0) - entry.amount, 0),
-        savingsLog: g.savingsLog.filter(e => e.id !== entryId)
-      };
-    })
-  }));
-  const updateSavingsLogEntryAmount = (goalId, entryId, newAmount) => patch(s => ({
-    goals: s.goals.map(g => {
-      if (g.id !== goalId) return g;
-      const entry = (g.savingsLog || []).find(e => e.id === entryId);
-      if (!entry) return g;
-      const delta = newAmount - entry.amount;
-      return {
-        ...g,
-        current: Math.max((g.current || 0) + delta, 0),
-        savingsLog: g.savingsLog.map(e => e.id === entryId ? {
-          ...e,
-          amount: newAmount
-        } : e)
-      };
-    })
-  }));
+  const removeSavingsLogEntry = (goalId, entryId) => patch(s => {
+    const goal = s.goals.find(g => g.id === goalId);
+    const entry = goal && (goal.savingsLog || []).find(e => e.id === entryId);
+    if (!entry) return {};
+    // If this entry went into a linked fund, take it back out of the fund, not the goal.
+    const fund = entry.fundId ? (s.investments || []).find(i => i.id === entry.fundId) : null;
+    const goals = s.goals.map(g => g.id !== goalId ? g : {
+      ...g,
+      current: fund ? (g.current || 0) : Math.max((g.current || 0) - entry.amount, 0),
+      savingsLog: g.savingsLog.filter(e => e.id !== entryId)
+    });
+    if (!fund) return { goals };
+    const investments = s.investments.map(i => i.id !== fund.id ? i : {
+      ...i,
+      amount: Math.max((i.amount || 0) - entry.amount, 0),
+      currentValue: Math.max((i.currentValue || 0) - entry.amount, 0)
+    });
+    return { goals, investments };
+  });
+  const updateSavingsLogEntryAmount = (goalId, entryId, newAmount) => patch(s => {
+    const goal = s.goals.find(g => g.id === goalId);
+    const entry = goal && (goal.savingsLog || []).find(e => e.id === entryId);
+    if (!entry) return {};
+    const delta = newAmount - entry.amount;
+    const fund = entry.fundId ? (s.investments || []).find(i => i.id === entry.fundId) : null;
+    const goals = s.goals.map(g => g.id !== goalId ? g : {
+      ...g,
+      current: fund ? (g.current || 0) : Math.max((g.current || 0) + delta, 0),
+      savingsLog: g.savingsLog.map(e => e.id === entryId ? { ...e, amount: newAmount } : e)
+    });
+    if (!fund) return { goals };
+    const investments = s.investments.map(i => i.id !== fund.id ? i : {
+      ...i,
+      amount: Math.max((i.amount || 0) + delta, 0),
+      currentValue: Math.max((i.currentValue || 0) + delta, 0)
+    });
+    return { goals, investments };
+  });
   const addBackdatedSavingsEntry = (goalId, label, amount) => {
     if (!label || !amount) return;
     patch(s => ({
@@ -4024,9 +4050,42 @@ function App() {
       var modeLabel = iv.mode === 'off' ? t('investShareOff') : iv.mode === 'manual' ? 'Manual' : 'Auto';
       var hzClass = iv.linkedGoal ? goalHorizonClass(iv.linkedGoal, ctx.today) : null;
       var showEquityWarn = iv.assetType === 'equity' && (hzClass === 'short' || hzClass === 'medium');
+      var esF = s.language === 'es';
+      var cardS = 'background:#fff;border-radius:18px;padding:16px 18px;margin-bottom:14px;box-shadow:0 1px 2px rgba(0,0,0,0.05),0 8px 20px rgba(0,0,0,0.04);';
+      // Collapsed by default — these settings are set once, so show a summary and
+      // only open the full controls when you tap Edit.
+      if (!editingFundSettings) {
+        var typeLabel = iv.assetType === 'equity' ? t('assetEquity') : iv.assetType === 'bonds' ? t('assetBonds') : iv.assetType === 'other' ? t('assetOther') : t('assetUnsure');
+        var rowS = 'display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:12.5px;padding:5px 0;';
+        return /*#__PURE__*/React.createElement("div", { style: css(cardS) }, /*#__PURE__*/React.createElement("div", {
+          style: css('display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;')
+        }, /*#__PURE__*/React.createElement("div", {
+          style: css('font-size:12.5px;font-weight:700;color:#1d1d1f;')
+        }, esF ? 'Ajustes del fondo' : 'Fund settings'), /*#__PURE__*/React.createElement("button", {
+          onClick: function () { setEditingFundSettings(true); },
+          style: css('background:none;border:none;color:#0071e3;font-size:11.5px;font-weight:700;cursor:pointer;padding:0;')
+        }, t('edit'))), /*#__PURE__*/React.createElement("div", {
+          style: css(rowS)
+        }, /*#__PURE__*/React.createElement("span", { style: css('color:#86868b;') }, esF ? 'Tipo' : 'Type'), /*#__PURE__*/React.createElement("b", null, typeLabel)), /*#__PURE__*/React.createElement("div", {
+          style: css(rowS)
+        }, /*#__PURE__*/React.createElement("span", { style: css('color:#86868b;flex:none;') }, esF ? 'Meta' : 'Goal'), /*#__PURE__*/React.createElement("b", {
+          style: css('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;')
+        }, iv.linkedGoal ? iv.linkedGoal.name : (esF ? 'Sin meta' : 'Not linked'))), /*#__PURE__*/React.createElement("div", {
+          style: css(rowS)
+        }, /*#__PURE__*/React.createElement("span", { style: css('color:#86868b;flex:none;') }, t('investShareTitle')), /*#__PURE__*/React.createElement("b", null, iv.mode === 'off' ? (esF ? 'Apagado' : 'Off') : Math.round(iv.percent) + '% · ' + fmt(iv.monthly) + per)), showEquityWarn && /*#__PURE__*/React.createElement("div", {
+          style: css('margin-top:10px;padding:10px 12px;background:#fff8ef;border-radius:10px;font-size:11.5px;color:#8a6d3b;line-height:1.4;')
+        }, hzClass === 'short' ? t('guideEquityShort') : t('guideEquityMedium')));
+      }
       return /*#__PURE__*/React.createElement("div", {
-        style: css('background:#fff;border-radius:18px;padding:16px 18px;margin-bottom:14px;box-shadow:0 1px 2px rgba(0,0,0,0.05),0 8px 20px rgba(0,0,0,0.04);')
+        style: css(cardS)
       }, /*#__PURE__*/React.createElement("div", {
+        style: css('display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;')
+      }, /*#__PURE__*/React.createElement("div", {
+        style: css('font-size:12.5px;font-weight:700;color:#1d1d1f;')
+      }, esF ? 'Ajustes del fondo' : 'Fund settings'), /*#__PURE__*/React.createElement("button", {
+        onClick: function () { setEditingFundSettings(false); },
+        style: css('background:none;border:none;color:#0071e3;font-size:11.5px;font-weight:700;cursor:pointer;padding:0;')
+      }, t('done'))), /*#__PURE__*/React.createElement("div", {
         style: css('font-size:12.5px;color:#1d1d1f;font-weight:700;margin-bottom:2px;')
       }, t('assetTypeLabel')), /*#__PURE__*/React.createElement("div", {
         style: css('font-size:11px;color:#86868b;margin-bottom:10px;line-height:1.35;')
