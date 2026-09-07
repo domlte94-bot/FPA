@@ -1494,12 +1494,17 @@ function App() {
   // A recipient (editor) deposits into a shared goal: write straight to the share row.
   const depositToSharedGoal = (share, amount) => {
     if (!sbClient || !authUser || amount <= 0) return;
-    const data = Object.assign({}, share.item_data);
-    data.current = (data.current || 0) + amount;
-    data.savingsLog = [{ id: Date.now() + Math.floor(Math.random() * 1000), label: (myEmail || 'me') + ' · ' + MONTH_NAMES[new Date().getMonth()], amount: amount, by: myEmail }].concat(data.savingsLog || []).slice(0, 60);
-    sbClient.from('shares')
-      .update({ item_data: data, updated_at: new Date().toISOString(), updated_by: authUser.id })
-      .eq('id', share.id).then(({ error }) => { if (!error) fetchShares(); });
+    // Read the freshest row first so we add on top of the OTHER person's latest
+    // value instead of a stale local copy (prevents lost updates / mismatched totals).
+    sbClient.from('shares').select('*').eq('id', share.id).maybeSingle().then(({ data: fresh }) => {
+      const base = fresh && fresh.item_data ? fresh.item_data : (share.item_data || {});
+      const data = Object.assign({}, base);
+      data.current = (data.current || 0) + amount;
+      data.savingsLog = [{ id: Date.now() + Math.floor(Math.random() * 1000), label: (myEmail || 'me') + ' · ' + MONTH_NAMES[new Date().getMonth()], amount: amount, by: myEmail }].concat(data.savingsLog || []).slice(0, 60);
+      sbClient.from('shares')
+        .update({ item_data: data, updated_at: new Date().toISOString(), updated_by: authUser.id })
+        .eq('id', share.id).then(({ error }) => { if (!error) fetchShares(); });
+    });
   };
   const lastPushRef = React.useRef({});
   // Keep the shared copy of my items current whenever I edit one I've shared out.
@@ -1594,13 +1599,19 @@ function App() {
   }, [state && state.tab]);
   const monthStripRef = useRef(null);
   useEffect(() => {
-    if (!monthStripRef.current) return;
-    const cur = monthStripRef.current.querySelector('[data-current="true"]');
-    if (cur && typeof cur.scrollIntoView === 'function') cur.scrollIntoView({
-      inline: 'start',
-      block: 'nearest'
-    });else monthStripRef.current.scrollLeft = monthStripRef.current.scrollWidth;
-  }, [state && state.selectedGoalId, state && state.tab]);
+    const container = monthStripRef.current;
+    if (!container) return;
+    // Align the current month to the strip's left edge (past months scroll off-left),
+    // without scrolling the whole page.
+    const doScroll = () => {
+      const cur = container.querySelector('[data-current="true"]');
+      if (cur) container.scrollLeft += cur.getBoundingClientRect().left - container.getBoundingClientRect().left;
+      else container.scrollLeft = 0;
+    };
+    doScroll();
+    const raf = requestAnimationFrame(doScroll);
+    return () => cancelAnimationFrame(raf);
+  }, [state && state.selectedGoalId, state && state.tab, showGoalDetail]);
   const notifiedLeftoverRef = useRef(null);
   useEffect(() => {
     if (!state || !state.pendingLeftover || !state.notificationsEnabled) return;
@@ -6337,16 +6348,22 @@ function App() {
       curM = ctx.today.getMonth();
     const cYear = typeof sgSource.createdYear === 'number' ? sgSource.createdYear : curY;
     const cMonth = typeof sgSource.createdMonth === 'number' ? sgSource.createdMonth : curM;
+    // Continuous strip from the goal's start through ~2 years ahead, crossing years.
+    // Default view starts at the CURRENT month (scrolled to the left); past months
+    // are to the left (scroll back), upcoming months to the right.
+    const curYM = curY * 12 + curM;
+    const createYM = cYear * 12 + cMonth;
+    const startYM = Math.min(createYM, curYM);
+    const endYM = curYM + 23;
     const monthsList = [];
-    for (let m = 0; m <= 11; m++) {
-      const isFuture = m > curM;
-      const beforeCreation = cYear < curY ? false : m < cMonth;
+    for (let ym = startYM; ym <= endYM; ym++) {
+      const yy = Math.floor(ym / 12), mm = ym % 12;
       monthsList.push({
-        year: curY,
-        month: m,
-        isFuture,
-        beforeCreation,
-        inactive: isFuture || beforeCreation
+        year: yy,
+        month: mm,
+        isFuture: ym > curYM,
+        beforeCreation: ym < createYM,
+        inactive: ym < createYM
       });
     }
     return /*#__PURE__*/React.createElement("div", {
@@ -6412,7 +6429,7 @@ function App() {
         strokeLinejoin: "round"
       }))), /*#__PURE__*/React.createElement("span", {
         style: css('font-size:9px;white-space:nowrap;color:' + (mo.inactive ? '#c7c7cc' : isCurrent ? '#0071e3' : '#86868b') + (isCurrent ? ';font-weight:700' : '') + ';')
-      }, MONTH_NAMES[mo.month]));
+      }, MONTH_NAMES[mo.month] + (mo.year !== curY ? " '" + String(mo.year).slice(-2) : '')));
     }));
   })()), /*#__PURE__*/React.createElement("div", {
     style: css('display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px;margin-bottom:16px;align-items:stretch;')
