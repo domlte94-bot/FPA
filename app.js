@@ -6460,7 +6460,38 @@ function App() {
     style: css('width:100%;padding:6px 8px 6px 18px;border:1px solid #e5e5ea;border-radius:8px;font-size:15px;font-weight:700;background:#fbfbfd;')
   })) : /*#__PURE__*/React.createElement("div", {
     style: css('font-size:16px;font-weight:700;color:#1d1d1f;margin-top:3px;')
-  }, fmt(sg.current)))), /*#__PURE__*/React.createElement("div", {
+  }, fmt(sg.current)), (function () {
+    // If this goal is shared, break the total down: my money vs each other person's.
+    var glog = sgSource.savingsLog || [];
+    var whoOf = function (e) {
+      if (e.by) return String(e.by).toLowerCase();
+      if (typeof e.label === 'string' && e.label.indexOf('@') > -1) return e.label.split('·')[0].trim().toLowerCase();
+      return null;
+    };
+    var byMap = {};
+    glog.forEach(function (e) { var w = whoOf(e); if (w) byMap[w] = (byMap[w] || 0) + (e.amount || 0); });
+    (sharesByItem['goal:' + sgSource.id] || []).forEach(function (r) {
+      var k = (r.recipient_email || '').toLowerCase();
+      if (k && byMap[k] == null) byMap[k] = 0;
+    });
+    var others = Object.keys(byMap);
+    if (others.length === 0) return null;
+    var othersTotal = others.reduce(function (a, k) { return a + byMap[k]; }, 0);
+    var mine = (sg.current || 0) - othersTotal;
+    var es2 = s.language === 'es';
+    var rowS = 'display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:#6e6e73;padding:2px 0;';
+    return /*#__PURE__*/React.createElement("div", {
+      style: css('border-top:1px solid #f0f0f2;margin-top:8px;padding-top:7px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css(rowS)
+    }, /*#__PURE__*/React.createElement("span", null, es2 ? 'Tú' : 'You'), /*#__PURE__*/React.createElement("b", { style: { color: '#1d1d1f' } }, fmt(mine))), others.map(function (k) {
+      return /*#__PURE__*/React.createElement("div", {
+        key: k, style: css(rowS)
+      }, /*#__PURE__*/React.createElement("span", { style: css('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;') }, k.split('@')[0]), /*#__PURE__*/React.createElement("b", { style: { color: '#1d1d1f' } }, fmt(byMap[k])));
+    }), /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:700;color:#1d1d1f;border-top:1px solid #f0f0f2;margin-top:5px;padding-top:5px;')
+    }, /*#__PURE__*/React.createElement("span", null, "Total"), /*#__PURE__*/React.createElement("span", null, fmt(sg.current))));
+  })())), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap;')
   }, /*#__PURE__*/React.createElement("div", {
     style: {
