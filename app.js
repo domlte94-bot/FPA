@@ -287,6 +287,14 @@ function linkedFundContrib(goal, investments) {
 function goalCurrentTotal(goal, investments) {
   return (goal.current || 0) + linkedFundContrib(goal, investments);
 }
+// How much of a shared goal was put in by OTHER people (their savings-log entries are
+// tagged with `by`; older ones only carry the email in the label).
+function goalOthersTotal(goal) {
+  return ((goal && goal.savingsLog) || []).reduce(function (a, e) {
+    var who = e.by || (typeof e.label === 'string' && e.label.indexOf('@') > -1 ? e.label.split('·')[0].trim() : null);
+    return a + (who ? (e.amount || 0) : 0);
+  }, 0);
+}
 function buildGoalSparkline(goal, monthlyBoosted, today) {
   const N = 6;
   const months = [];
@@ -1526,7 +1534,10 @@ function App() {
         var base = (snapshot.current || 0) - (snapshot.savingsLog || []).reduce(function (a, e) { return a + (e.amount || 0); }, 0);
         var current = base + log.reduce(function (a, e) { return a + (e.amount || 0); }, 0);
         var merged = Object.assign({}, snapshot, { savingsLog: log, baseCurrent: base, current: current });
-        sbClient.from('shares').update({ item_data: merged, updated_at: new Date().toISOString(), updated_by: authUser.id }).eq('id', row.id)
+        // Keep the display name current — if I change my profile name, everyone I've
+        // shared with sees the new one instead of whatever it was when I shared.
+        var nm = (s.profileName || '').trim() || (authUser.user_metadata && authUser.user_metadata.full_name ? String(authUser.user_metadata.full_name).split(' ')[0] : '') || (myEmail ? myEmail.split('@')[0] : '');
+        sbClient.from('shares').update({ item_data: merged, owner_name: nm, updated_at: new Date().toISOString(), updated_by: authUser.id }).eq('id', row.id)
           .then(function () { fetchShares(); });
       });
     });
@@ -6113,8 +6124,10 @@ function App() {
       icon: g.icon,
       size: 14
     })), /*#__PURE__*/React.createElement("div", {
-      style: css('font-size:12.5px;font-weight:700;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;')
-    }, g.name)), /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:12.5px;font-weight:700;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;')
+    }, g.name), (sharesByItem['goal:' + g.id] || []).length > 0 && /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 24 24", width: 13, height: 13, fill: "none", stroke: "#86868b", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", style: { flex: 'none' }
+    }, /*#__PURE__*/React.createElement("path", { d: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" }), /*#__PURE__*/React.createElement("path", { d: "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" }))), /*#__PURE__*/React.createElement("div", {
       style: css('font-size:21px;font-weight:800;color:#1d1d1f;letter-spacing:-0.01em;font-variant-numeric:tabular-nums;')
     }, fmt(goalCur(g))), /*#__PURE__*/React.createElement("div", {
       style: {
@@ -6433,7 +6446,20 @@ function App() {
     style: css('width:100%;padding:6px 8px 6px 18px;border:1px solid #e5e5ea;border-radius:8px;font-size:15px;font-weight:700;background:#fbfbfd;')
   })) : /*#__PURE__*/React.createElement("div", {
     style: css('font-size:16px;font-weight:700;color:#1d1d1f;margin-top:3px;')
-  }, fmt(sgSource.target))), /*#__PURE__*/React.createElement("div", {
+  }, fmt(sgSource.target)), !editingTarget && (function () {
+    // Fill the card with something useful instead of dead space: progress + what's left.
+    var tg = sgSource.target || 0;
+    var cu = sg.current || 0;
+    var p = tg > 0 ? Math.min(100, cu / tg * 100) : 0;
+    var left = Math.max(tg - cu, 0);
+    return /*#__PURE__*/React.createElement("div", {
+      style: css('margin-top:9px;')
+    }, /*#__PURE__*/React.createElement("div", {
+      style: css('height:6px;border-radius:3px;background:#f0f0f2;overflow:hidden;')
+    }, /*#__PURE__*/React.createElement("div", { style: { height: '100%', borderRadius: 3, background: sgSource.color, width: p + '%' } })), /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;justify-content:space-between;align-items:center;font-size:10.5px;color:#86868b;margin-top:6px;')
+    }, /*#__PURE__*/React.createElement("span", { style: { fontWeight: 700, color: sgSource.color } }, p.toFixed(0) + '%'), /*#__PURE__*/React.createElement("span", { style: css('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;') }, fmt(left) + (s.language === 'es' ? ' faltan' : ' left'))));
+  })()), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:12px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;justify-content:space-between;align-items:center;')
@@ -6452,13 +6478,20 @@ function App() {
   }, "$"), /*#__PURE__*/React.createElement("input", {
     type: "number", inputMode: "decimal",
     autoFocus: true,
-    value: sgSource.current || '',
-    onChange: e => updateGoal(sgSource.id, 'current', parseFloat(e.target.value) || 0),
+    // Edit MY contribution, never the shared total: the other person's money stays untouched.
+    value: Math.max(Math.round((sg.current || 0) - goalOthersTotal(sgSource)), 0) || '',
+    onChange: e => {
+      const others = goalOthersTotal(sgSource);
+      const linked = (sg.current || 0) - (sgSource.current || 0);
+      updateGoal(sgSource.id, 'current', (parseFloat(e.target.value) || 0) + others - linked);
+    },
     onKeyDown: e => {
       if (e.key === 'Enter') setEditingCurrent(false);
     },
     style: css('width:100%;padding:6px 8px 6px 18px;border:1px solid #e5e5ea;border-radius:8px;font-size:15px;font-weight:700;background:#fbfbfd;')
-  })) : /*#__PURE__*/React.createElement("div", {
+  }), goalOthersTotal(sgSource) > 0 && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:10px;color:#86868b;margin-top:5px;line-height:1.35;')
+  }, s.language === 'es' ? 'Editas solo tu aporte. El de la otra persona no cambia.' : "You're editing only your own contribution. The other person's stays as is.")) : /*#__PURE__*/React.createElement("div", {
     style: css('font-size:16px;font-weight:700;color:#1d1d1f;margin-top:3px;')
   }, fmt(sg.current)), (function () {
     // If this goal is shared, break the total down: my money vs each other person's.
@@ -6501,28 +6534,15 @@ function App() {
     }
   }, /*#__PURE__*/React.createElement("label", {
     style: css('display:block;font-size:10.5px;color:#86868b;font-weight:600;margin-bottom:5px;')
-  }, t('logSavings')), /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'relative',
-      marginBottom: 8
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: css('position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:14px;color:#86868b;pointer-events:none;')
-  }, "$"), /*#__PURE__*/React.createElement("input", {
-    type: "number", inputMode: "decimal",
-    placeholder: "0",
-    value: depositAmount,
-    onChange: e => setDepositAmount(e.target.value),
-    style: css('width:100%;padding:10px 10px 10px 22px;border:1px solid #e5e5ea;border-radius:10px;font-size:15px;background:#fbfbfd;')
-  })), /*#__PURE__*/React.createElement("button", {
-    onClick: () => registerDeposit(sgSource.id),
+  }, t('logSavings')), /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setDepositAmount(''); setQuickAddGoalId(sgSource.id); },
     style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:12px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;')
   }, t('log')), (() => {
     const now = new Date();
     const skipped = (sgSource.skippedMonths || []).some(sm => sm.year === now.getFullYear() && sm.month === now.getMonth());
     return /*#__PURE__*/React.createElement("button", {
       onClick: () => toggleSkipMonth(sgSource.id, now.getFullYear(), now.getMonth()),
-      style: css('width:100%;background:none;border:none;color:' + (skipped ? '#ff9500' : '#86868b') + ';font-size:11px;font-weight:600;cursor:pointer;margin-top:6px;padding:4px;')
+      style: css('width:100%;background:none;border:1px solid ' + (skipped ? '#ffd9a0' : '#e5e5ea') + ';color:' + (skipped ? '#ff9500' : '#86868b') + ';font-size:11.5px;font-weight:600;cursor:pointer;margin-top:8px;padding:10px;border-radius:10px;')
     }, skipped ? s.language === 'es' ? '↩ Deshacer — sí voy a depositar' : "↩ Undo — I'll deposit after all" : s.language === 'es' ? 'No voy a depositar este mes' : "I won't deposit this month");
   })()), (() => {
     const now = new Date();
