@@ -1199,6 +1199,9 @@ function App() {
   const [editingIncome, setEditingIncome] = useState(false);
   const [editingTarget, setEditingTarget] = useState(false);
   const [editingCurrent, setEditingCurrent] = useState(false);
+  // Free-form text buffer while editing, so decimals ("1234.5") survive typing —
+  // deriving the value from state on every keystroke was eating the decimal point.
+  const [myShareEdit, setMyShareEdit] = useState('');
   const [showColorPopup, setShowColorPopup] = useState(false);
   const [showIconPopup, setShowIconPopup] = useState(false);
   const [showReminderPopup, setShowReminderPopup] = useState(false);
@@ -6466,35 +6469,17 @@ function App() {
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
   }, t('current')), !s.investments.some(i => i.goalId === sgSource.id) && /*#__PURE__*/React.createElement("button", {
-    onClick: () => setEditingCurrent(v => !v),
+    onClick: () => {
+      if (!editingCurrent) {
+        // Seed the text buffer with just MY share so typing starts from the right number.
+        const mine = (sg.current || 0) - goalOthersTotal(sgSource);
+        setMyShareEdit(mine ? String(Math.max(mine, 0)) : '');
+      }
+      setEditingCurrent(v => !v);
+    },
     style: css('background:none;border:none;color:#0071e3;font-size:10px;font-weight:700;cursor:pointer;padding:0;')
-  }, editingCurrent ? t('done') : t('edit'))), editingCurrent && !s.investments.some(i => i.goalId === sgSource.id) ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'relative',
-      marginTop: 5
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: css('position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:14px;color:#86868b;pointer-events:none;')
-  }, "$"), /*#__PURE__*/React.createElement("input", {
-    type: "number", inputMode: "decimal",
-    autoFocus: true,
-    // Edit MY contribution, never the shared total: the other person's money stays untouched.
-    value: Math.max(Math.round((sg.current || 0) - goalOthersTotal(sgSource)), 0) || '',
-    onChange: e => {
-      const others = goalOthersTotal(sgSource);
-      const linked = (sg.current || 0) - (sgSource.current || 0);
-      updateGoal(sgSource.id, 'current', (parseFloat(e.target.value) || 0) + others - linked);
-    },
-    onKeyDown: e => {
-      if (e.key === 'Enter') setEditingCurrent(false);
-    },
-    style: css('width:100%;padding:6px 8px 6px 18px;border:1px solid #e5e5ea;border-radius:8px;font-size:15px;font-weight:700;background:#fbfbfd;')
-  }), goalOthersTotal(sgSource) > 0 && /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:10px;color:#86868b;margin-top:5px;line-height:1.35;')
-  }, s.language === 'es' ? 'Editas solo tu aporte. El de la otra persona no cambia.' : "You're editing only your own contribution. The other person's stays as is.")) : /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:16px;font-weight:700;color:#1d1d1f;margin-top:3px;')
-  }, fmt(sg.current)), (function () {
-    // If this goal is shared, break the total down: my money vs each other person's.
+  }, editingCurrent ? t('done') : t('edit'))), (function () {
+    var es2 = s.language === 'es';
     var glog = sgSource.savingsLog || [];
     var whoOf = function (e) {
       if (e.by) return String(e.by).toLowerCase();
@@ -6508,22 +6493,48 @@ function App() {
       if (k && byMap[k] == null) byMap[k] = 0;
     });
     var others = Object.keys(byMap);
-    if (others.length === 0) return null;
     var othersTotal = others.reduce(function (a, k) { return a + byMap[k]; }, 0);
     var mine = (sg.current || 0) - othersTotal;
-    var es2 = s.language === 'es';
-    var rowS = 'display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:#6e6e73;padding:2px 0;';
+    var shared = others.length > 0;
+    var linkedFunds = s.investments.some(function (i) { return i.goalId === sgSource.id; });
+    if (editingCurrent && !linkedFunds) {
+      return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+        style: { position: 'relative', marginTop: 5 }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: css('position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:14px;color:#86868b;pointer-events:none;')
+      }, "$"), /*#__PURE__*/React.createElement("input", {
+        type: "text", inputMode: "decimal", autoFocus: true,
+        value: myShareEdit,
+        onChange: function (e) {
+          var raw = e.target.value.replace(/[^0-9.]/g, '');
+          setMyShareEdit(raw);
+          var linked = (sg.current || 0) - (sgSource.current || 0);
+          updateGoal(sgSource.id, 'current', (parseFloat(raw) || 0) + othersTotal - linked);
+        },
+        onKeyDown: function (e) { if (e.key === 'Enter') setEditingCurrent(false); },
+        style: css('width:100%;padding:6px 8px 6px 18px;border:1px solid #e5e5ea;border-radius:8px;font-size:15px;font-weight:700;background:#fbfbfd;')
+      })), shared && /*#__PURE__*/React.createElement("div", {
+        style: css('font-size:10px;color:#86868b;margin-top:6px;line-height:1.35;')
+      }, es2 ? 'Editas solo tu aporte. El de la otra persona no cambia.' : "You're editing only your own contribution. The other person's stays as is."));
+    }
+    if (!shared) {
+      return /*#__PURE__*/React.createElement("div", {
+        style: css('font-size:16px;font-weight:700;color:#1d1d1f;margin-top:3px;')
+      }, fmt(sg.current));
+    }
+    // Shared: show the parts, not a big total that just repeats the last row.
+    var rowS = 'display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12px;color:#6e6e73;padding:3px 0;';
     return /*#__PURE__*/React.createElement("div", {
-      style: css('border-top:1px solid #f0f0f2;margin-top:8px;padding-top:7px;')
+      style: css('margin-top:4px;')
     }, /*#__PURE__*/React.createElement("div", {
       style: css(rowS)
-    }, /*#__PURE__*/React.createElement("span", null, es2 ? 'Tú' : 'You'), /*#__PURE__*/React.createElement("b", { style: { color: '#1d1d1f' } }, fmt(mine))), others.map(function (k) {
+    }, /*#__PURE__*/React.createElement("span", null, es2 ? 'Tú' : 'You'), /*#__PURE__*/React.createElement("b", { style: { color: '#1d1d1f', fontSize: 14 } }, fmt(mine))), others.map(function (k) {
       return /*#__PURE__*/React.createElement("div", {
         key: k, style: css(rowS)
-      }, /*#__PURE__*/React.createElement("span", { style: css('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;') }, k.split('@')[0]), /*#__PURE__*/React.createElement("b", { style: { color: '#1d1d1f' } }, fmt(byMap[k])));
+      }, /*#__PURE__*/React.createElement("span", { style: css('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;') }, k.split('@')[0]), /*#__PURE__*/React.createElement("b", { style: { color: '#1d1d1f', fontSize: 14, flex: 'none' } }, fmt(byMap[k])));
     }), /*#__PURE__*/React.createElement("div", {
-      style: css('display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:700;color:#1d1d1f;border-top:1px solid #f0f0f2;margin-top:5px;padding-top:5px;')
-    }, /*#__PURE__*/React.createElement("span", null, "Total"), /*#__PURE__*/React.createElement("span", null, fmt(sg.current))));
+      style: css('display:flex;justify-content:space-between;align-items:baseline;font-size:12px;font-weight:700;color:#1d1d1f;border-top:1px solid #f0f0f2;margin-top:6px;padding-top:6px;')
+    }, /*#__PURE__*/React.createElement("span", null, "Total"), /*#__PURE__*/React.createElement("span", { style: { fontSize: 15 } }, fmt(sg.current))));
   })())), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap;')
   }, /*#__PURE__*/React.createElement("div", {
