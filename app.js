@@ -136,6 +136,8 @@ function buildPersistPayload(state) {
     spendingBoost: state.spendingBoost,
     notificationsEnabled: state.notificationsEnabled,
     dismissedTips: state.dismissedTips,
+    profileName: state.profileName,
+    sharedPlans: state.sharedPlans,
     lastProcessedMonth: state.lastProcessedMonth,
     lastProcessedYear: state.lastProcessedYear,
     expenseCategories: state.expenseCategories,
@@ -522,6 +524,8 @@ function defaultState() {
     spendingBoost: 0,
     notificationsEnabled: false,
     dismissedTips: {},
+    profileName: '',
+    sharedPlans: {},
     lastProcessedMonth: today.getMonth(),
     lastProcessedYear: today.getFullYear(),
     expenseCategories: [],
@@ -1436,14 +1440,21 @@ function App() {
     if (email === myEmail) { setShareError(s.language === 'es' ? 'Ese eres tú.' : "That's you."); return; }
     setShareBusy(true);
     const permission = type === 'investment' ? 'view' : 'edit';
+    const myName = (s.profileName || '').trim() || (authUser.user_metadata && authUser.user_metadata.full_name ? String(authUser.user_metadata.full_name).split(' ')[0] : '') || (myEmail ? myEmail.split('@')[0] : 'Alguien');
+    // For goals, stamp a stable baseCurrent so the total is always base + sum(log).
+    let initData = snapshot || {};
+    if (type === 'goal' && snapshot) {
+      const logSum = (snapshot.savingsLog || []).reduce((a, e) => a + (e.amount || 0), 0);
+      initData = Object.assign({}, snapshot, { baseCurrent: (snapshot.current || 0) - logSum });
+    }
     sbClient.from('shares').upsert({
       owner_id: authUser.id,
-      owner_name: (authUser.user_metadata && authUser.user_metadata.full_name) || authUser.email,
+      owner_name: myName,
       recipient_email: email,
       item_type: type,
       item_id: String(itemId),
       permission,
-      item_data: snapshot || {},
+      item_data: initData,
       updated_at: new Date().toISOString(),
       updated_by: authUser.id
     }, { onConflict: 'owner_id,item_type,item_id,recipient_email' }).then(({ error }) => {
@@ -1453,7 +1464,7 @@ function App() {
       // if the 'invite-email' edge function isn't deployed — the share still works.
       if (sbClient.functions && sbClient.functions.invoke) {
         sbClient.functions.invoke('invite-email', {
-          body: { email, ownerName: (authUser.user_metadata && authUser.user_metadata.full_name) || authUser.email, itemName: name, itemType: type }
+          body: { email, ownerName: myName, itemName: name, itemType: type }
         }).catch(function () {});
       }
       setShareEmail('');
@@ -1484,12 +1495,29 @@ function App() {
     }
     sbClient.from('shares').delete().eq('id', share.id).then(() => fetchShares());
   };
-  // Push updated item data to every share row for one of my items (keeps partners in sync).
+  // Push my item's data to its share rows. For goals we MERGE the savings log with
+  // whatever is already in the row (union by id) so a write never drops the other
+  // person's contributions; the total is derived as base + sum(all entries).
   const pushShareUpdate = (type, itemId, snapshot) => {
     if (!sbClient || !authUser) return;
-    sbClient.from('shares')
-      .update({ item_data: snapshot, updated_at: new Date().toISOString(), updated_by: authUser.id })
-      .eq('owner_id', authUser.id).eq('item_type', type).eq('item_id', String(itemId));
+    if (type !== 'goal') {
+      sbClient.from('shares').update({ item_data: snapshot, updated_at: new Date().toISOString(), updated_by: authUser.id })
+        .eq('owner_id', authUser.id).eq('item_type', type).eq('item_id', String(itemId));
+      return;
+    }
+    sbClient.from('shares').select('*').eq('owner_id', authUser.id).eq('item_type', 'goal').eq('item_id', String(itemId)).then(({ data: rows }) => {
+      (rows || []).forEach(function (row) {
+        var rowData = row.item_data || {};
+        var union = {};
+        (rowData.savingsLog || []).forEach(function (e) { if (e && e.id != null) union[e.id] = e; });
+        (snapshot.savingsLog || []).forEach(function (e) { if (e && e.id != null) union[e.id] = e; });
+        var log = Object.keys(union).map(function (k) { return union[k]; });
+        var base = (snapshot.current || 0) - (snapshot.savingsLog || []).reduce(function (a, e) { return a + (e.amount || 0); }, 0);
+        var current = base + log.reduce(function (a, e) { return a + (e.amount || 0); }, 0);
+        var merged = Object.assign({}, snapshot, { savingsLog: log, baseCurrent: base, current: current });
+        sbClient.from('shares').update({ item_data: merged, updated_at: new Date().toISOString(), updated_by: authUser.id }).eq('id', row.id);
+      });
+    });
   };
   // A recipient (editor) deposits into a shared goal: write straight to the share row.
   const depositToSharedGoal = (share, amount) => {
@@ -1497,10 +1525,16 @@ function App() {
     // Read the freshest row first so we add on top of the OTHER person's latest
     // value instead of a stale local copy (prevents lost updates / mismatched totals).
     sbClient.from('shares').select('*').eq('id', share.id).maybeSingle().then(({ data: fresh }) => {
-      const base = fresh && fresh.item_data ? fresh.item_data : (share.item_data || {});
-      const data = Object.assign({}, base);
-      data.current = (data.current || 0) + amount;
-      data.savingsLog = [{ id: Date.now() + Math.floor(Math.random() * 1000), label: (myEmail || 'me') + ' · ' + MONTH_NAMES[new Date().getMonth()], amount: amount, by: myEmail }].concat(data.savingsLog || []).slice(0, 60);
+      const data = Object.assign({}, fresh && fresh.item_data ? fresh.item_data : (share.item_data || {}));
+      const prevLog = data.savingsLog || [];
+      // base = the part of current not represented by any log entry (kept stable).
+      const base = typeof data.baseCurrent === 'number' ? data.baseCurrent : ((data.current || 0) - prevLog.reduce((a, e) => a + (e.amount || 0), 0));
+      const myName = (s.profileName || '').trim() || (authUser.user_metadata && authUser.user_metadata.full_name ? String(authUser.user_metadata.full_name).split(' ')[0] : '') || (myEmail ? myEmail.split('@')[0] : 'me');
+      const entry = { id: Date.now() + Math.floor(Math.random() * 1000), label: myName + ' · ' + MONTH_NAMES[new Date().getMonth()], amount: amount, by: myEmail };
+      const log = [entry].concat(prevLog).slice(0, 80);
+      data.savingsLog = log;
+      data.baseCurrent = base;
+      data.current = base + log.reduce((a, e) => a + (e.amount || 0), 0);
       sbClient.from('shares')
         .update({ item_data: data, updated_at: new Date().toISOString(), updated_by: authUser.id })
         .eq('id', share.id).then(({ error }) => { if (!error) fetchShares(); });
@@ -3006,6 +3040,8 @@ function App() {
     }, "Loading…");
   }
   const s = state;
+  // What I've committed monthly to shared goals (my agreed fixed contribution).
+  const sharedPlanTotal = sharedGoalsIn.reduce((a, r) => a + (parseFloat(s.sharedPlans && s.sharedPlans[r.id]) || 0), 0);
   const t = key => STRINGS[s.language] && STRINGS[s.language][key] || STRINGS.en[key] || key;
   if (sbClient && (s.hasSeenWelcome || showLoginFromWelcome) && !authUser && !authLoading && !bypassAuthGate) {
     const isSignup = authMode === 'signup';
@@ -4275,7 +4311,7 @@ function App() {
     });
   }
   return /*#__PURE__*/React.createElement("div", {
-    style: css('min-height:100vh;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",Inter,system-ui,sans-serif;color:#1d1d1f;overflow-x:hidden;')
+    style: css('min-height:100vh;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",Inter,system-ui,sans-serif;color:#1d1d1f;')
   }, showPaycheckModal && (function () {
     var es = s.language === 'es';
     var closeIt = function () { setShowPaycheckModal(false); };
@@ -4486,11 +4522,20 @@ function App() {
     var pct = tgt > 0 ? Math.min(100, cur / tgt * 100) : 0;
     var color = d.color || '#0071e3';
     var avail = Math.max(ctx.boostedAvailable, 0);
-    var planAmt = parseFloat(sharedPlanAmt) || 0;
+    var savedPlan = (s.sharedPlans && s.sharedPlans[row.id] != null) ? s.sharedPlans[row.id] : '';
+    var planAmt = parseFloat(savedPlan) || 0;
     var monthsToGoal = planAmt > 0 && remaining > 0 ? Math.ceil(remaining / planAmt) : null;
     var dateLabel = '';
     if (monthsToGoal != null) { var dd = new Date(); dd.setMonth(dd.getMonth() + monthsToGoal); dateLabel = MONTH_NAMES[dd.getMonth()] + ' ' + dd.getFullYear(); }
     var log = d.savingsLog || [];
+    // Break the current total down by who put it in: owner (base + un-tagged entries)
+    // vs each other contributor (entries tagged with `by`).
+    var base = typeof d.baseCurrent === 'number' ? d.baseCurrent : (cur - log.reduce(function (a, e) { return a + (e.amount || 0); }, 0));
+    var byMap = {};
+    var ownerAmt = base;
+    log.forEach(function (e) { if (e.by) { byMap[e.by] = (byMap[e.by] || 0) + (e.amount || 0); } else { ownerAmt += (e.amount || 0); } });
+    var breakdown = [{ name: row.owner_name || (es ? 'Dueño' : 'Owner'), amount: ownerAmt }];
+    Object.keys(byMap).forEach(function (bk) { breakdown.push({ name: bk === myEmail ? (es ? 'Tú' : 'You') : bk.split('@')[0], amount: byMap[bk] }); });
     var closeIt = function () { setSharedDetailShare(null); };
     var card = 'background:#fff;border-radius:18px;padding:18px;margin-bottom:14px;';
     return /*#__PURE__*/React.createElement("div", {
@@ -4514,7 +4559,16 @@ function App() {
       style: css('height:9px;border-radius:5px;background:#f0f0f2;overflow:hidden;')
     }, /*#__PURE__*/React.createElement("div", { style: { height: '100%', borderRadius: 5, background: color, width: pct + '%' } })), /*#__PURE__*/React.createElement("div", {
       style: { fontSize: 12, color: '#86868b', marginTop: 6 }
-    }, pct.toFixed(0) + '% · ' + fmt(remaining) + (es ? ' por ahorrar' : ' left to save'))), row.permission === 'edit' && /*#__PURE__*/React.createElement("button", {
+    }, pct.toFixed(0) + '% · ' + fmt(remaining) + (es ? ' por ahorrar' : ' left to save')), breakdown.length > 1 && /*#__PURE__*/React.createElement("div", {
+      style: css('border-top:1px solid #f0f0f2;margin-top:14px;padding-top:12px;')
+    }, breakdown.map(function (b, i) {
+      return /*#__PURE__*/React.createElement("div", {
+        key: i,
+        style: css('display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#6e6e73;padding:3px 0;')
+      }, /*#__PURE__*/React.createElement("span", { style: css('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;') }, b.name), /*#__PURE__*/React.createElement("span", { style: css('font-weight:600;color:#1d1d1f;') }, fmt(b.amount)));
+    }), /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;justify-content:space-between;align-items:center;font-size:13.5px;font-weight:700;color:#1d1d1f;padding:8px 0 0;margin-top:5px;border-top:1px solid #f0f0f2;')
+    }, /*#__PURE__*/React.createElement("span", null, es ? 'Total' : 'Total'), /*#__PURE__*/React.createElement("span", null, fmt(cur))))), row.permission === 'edit' && /*#__PURE__*/React.createElement("button", {
       onClick: function () { setSharedDepositAmt(''); setSharedDepositShare(row); },
       style: css('width:100%;background:#0071e3;color:#fff;border:none;border-radius:13px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:14px;')
     }, es ? '+ Abonar a esta meta' : '+ Add savings'), /*#__PURE__*/React.createElement("div", {
@@ -4527,11 +4581,11 @@ function App() {
       style: css('background:#f5f5f7;border-radius:12px;padding:11px 13px;display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;')
     }, /*#__PURE__*/React.createElement("span", { style: css('font-size:12.5px;color:#6e6e73;') }, es ? 'Tu disponible al mes' : 'Your money available/mo'), /*#__PURE__*/React.createElement("b", { style: css('font-size:14px;') }, fmt(avail))), /*#__PURE__*/React.createElement("div", {
       style: css('font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:6px;')
-    }, es ? '¿Cuánto quieres aportar al mes?' : 'How much do you want to put in per month?'), /*#__PURE__*/React.createElement("div", {
+    }, es ? 'Tu aporte mensual acordado a esta meta' : 'Your agreed monthly contribution to this goal'), /*#__PURE__*/React.createElement("div", {
       style: { position: 'relative', marginBottom: 12 }
     }, /*#__PURE__*/React.createElement("span", { style: css('position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:16px;color:#86868b;pointer-events:none;') }, '$'), /*#__PURE__*/React.createElement("input", {
-      type: 'number', inputMode: 'decimal', placeholder: avail > 0 ? String(Math.round(Math.min(avail, remaining))) : '0', value: sharedPlanAmt,
-      onChange: function (e) { setSharedPlanAmt(e.target.value); },
+      type: 'number', inputMode: 'decimal', placeholder: avail > 0 ? String(Math.round(Math.min(avail, remaining))) : '0', value: savedPlan,
+      onChange: function (e) { var v = e.target.value; patch(function (cur) { var np = Object.assign({}, cur.sharedPlans); np[row.id] = v; return { sharedPlans: np }; }); },
       style: css('width:100%;padding:12px 12px 12px 26px;border:1px solid #d2d2d7;border-radius:12px;font-size:16px;font-weight:700;background:#fbfbfd;box-sizing:border-box;')
     })), monthsToGoal != null ? /*#__PURE__*/React.createElement("div", {
       style: css('font-size:13px;color:#1d1d1f;')
@@ -4596,7 +4650,7 @@ function App() {
       fn();
     },
     style: css('flex:1;background:#ff3b30;color:#fff;border:none;padding:11px;border-radius:10px;font-size:13.5px;font-weight:600;cursor:pointer;')
-  }, s.language === 'es' ? 'Sí, continuar' : 'Yes, continue')))), quickAddGoalId && (function () { var qa = s.goals.find(function (g) { return g.id === quickAddGoalId; }); if (!qa) return null; var qaMonthly = buildGoalView(qa, false).monthlyBoosted; var qaThisLabel = MONTH_NAMES[new Date().getMonth()] + ' ' + new Date().getFullYear(); var qaAssigned = s.goals.reduce(function (a, g) { return a + (g.savingsLog || []).filter(function (e) { return e.label === qaThisLabel; }).reduce(function (x, e) { return x + (e.amount || 0); }, 0); }, 0); var qaPool = Math.max(ctx.boostedAvailable - qaAssigned, 0); var qaTyped = parseFloat(depositAmount) || 0; var qaAfter = qaPool - qaTyped; return React.createElement('div', { onClick: function () { setQuickAddGoalId(null); }, className: 'pf-overlay-in', style: css('position:fixed;inset:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;padding:0;') }, React.createElement('div', { onClick: function (e) { e.stopPropagation(); }, className: 'pf-modal-in', style: Object.assign(css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));max-width:480px;width:100%;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);'), { paddingBottom: keyboardInset > 0 ? keyboardInset + 24 : undefined, transition: 'padding-bottom 0.18s ease-out' }) }, React.createElement('div', { style: css('display:flex;align-items:center;gap:12px;margin-bottom:16px;') }, React.createElement('div', { style: { width: 40, height: 40, borderRadius: 11, background: qa.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' } }, React.createElement(GoalIconGlyph, { icon: qa.icon, size: 20 })), React.createElement('div', null, React.createElement('div', { style: css('font-size:16px;font-weight:700;') }, s.language === 'es' ? 'Asignar ahorro' : 'Assign savings'), React.createElement('div', { style: css('font-size:12.5px;color:#86868b;') }, qa.name))), React.createElement('div', { style: { position: 'relative', marginBottom: 12 } }, React.createElement('span', { style: css('position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:17px;color:#86868b;pointer-events:none;') }, '$'), React.createElement('input', { type: 'number', inputMode: 'decimal', autoFocus: true, placeholder: '0', value: depositAmount, onChange: function (e) { setDepositAmount(e.target.value); }, onKeyDown: function (e) { if (e.key === 'Enter') { registerDeposit(quickAddGoalId); setQuickAddGoalId(null); } }, style: css('width:100%;padding:13px 12px 13px 26px;border:1px solid #d2d2d7;border-radius:12px;font-size:18px;font-weight:700;background:#fbfbfd;') })), qaMonthly > 0 && React.createElement('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } }, React.createElement('button', { onClick: function () { setDepositAmount(String(Math.round(qaMonthly))); }, style: css('flex:1;background:#f5f5f7;border:none;border-radius:10px;padding:9px;font-size:12.5px;font-weight:600;color:#1d1d1f;cursor:pointer;') }, (s.language === 'es' ? 'Este mes: ' : 'This month: ') + fmt(qaMonthly)), React.createElement('button', { onClick: function () { setDepositAmount(String(Math.round(qaMonthly / 2))); }, style: css('flex:none;background:#f5f5f7;border:none;border-radius:10px;padding:9px 12px;font-size:12.5px;font-weight:600;color:#1d1d1f;cursor:pointer;') }, s.language === 'es' ? 'Mitad' : 'Half')), React.createElement('div', { style: css('background:#f5f5f7;border-radius:12px;padding:11px 12px;margin-bottom:16px;') }, React.createElement('div', { style: css('display:flex;justify-content:space-between;align-items:center;font-size:12.5px;color:#6e6e73;') }, React.createElement('span', null, s.language === 'es' ? 'Disponible para repartir' : 'Available to assign'), React.createElement('b', { style: { color: '#1d1d1f' } }, fmt(qaPool))), qaTyped > 0 && React.createElement('div', { style: { fontSize: 12, marginTop: 5, color: qaAfter < 0 ? '#ff3b30' : '#86868b' } }, (s.language === 'es' ? 'Te queda ' : "You'll have ") + fmt(qaAfter) + (s.language === 'es' ? ' para otras metas y gastos' : ' left for other goals and expenses'))), React.createElement('div', { style: { display: 'flex', gap: 10 } }, React.createElement('button', { onClick: function () { setQuickAddGoalId(null); setDepositAmount(''); }, style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;') }, s.language === 'es' ? 'Cancelar' : 'Cancel'), React.createElement('button', { onClick: function () { registerDeposit(quickAddGoalId); setQuickAddGoalId(null); }, style: css('flex:1;background:#0071e3;color:#fff;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;') }, s.language === 'es' ? 'Asignar' : 'Assign')))); })(), !s.hasSeenWelcome && React.createElement('div', { style: css('position:fixed;inset:0;z-index:100;background:#fff;display:flex;flex-direction:column;overflow-y:auto;padding:calc(env(safe-area-inset-top) + 20px) 24px calc(env(safe-area-inset-bottom) + 28px);') }, React.createElement('div', { style: css('width:100%;max-width:420px;margin:0 auto;flex:1;display:flex;flex-direction:column;') }, React.createElement('div', { style: css('display:flex;justify-content:flex-end;margin-bottom:2px;') }, React.createElement('button', { onClick: function(){ setLanguage(s.language==='es'?'en':'es'); }, style: css('background:none;border:none;color:#86868b;font-size:12.5px;font-weight:700;cursor:pointer;padding:4px;') }, s.language==='es'?'EN':'ES')), (welcomeStep < 3) && React.createElement('div', { style: css('margin-bottom:8px;') }, React.createElement('div', { style: css('text-align:center;font-size:12px;color:#86868b;font-weight:600;margin-bottom:8px;') }, welcomeStep===0 ? (s.language==='es'?'Paso 1':'Step 1') : welcomeStep===1 ? (s.language==='es'?'Paso 2 de 3':'Step 2 of 3') : (s.language==='es'?'Paso 3 de 3':'Step 3 of 3')), React.createElement('div', { style: css('display:flex;gap:8px;') }, [0,1,2].map(function(idx){ return React.createElement('div', { key: idx, style: { flex:1, height:4, borderRadius:2, background: idx<=welcomeStep ? '#1d1d1f' : '#e5e5ea' } }); }))), welcomeStep===0 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, t('profileQTitle')), ['allowance','salary','freelance'].map(function(pp){ return React.createElement('button', { key:pp, onClick: function(){ setIncomeProfile(pp); }, style: { display:'block', width:'100%', textAlign:'left', padding:'14px 16px', borderRadius:12, border: s.incomeProfile===pp ? '2px solid #2f6bff' : '1px solid #d2d2d7', background: s.incomeProfile===pp ? '#eef4ff' : '#fff', fontSize:14, fontWeight:500, color:'#1d1d1f', cursor:'pointer', marginBottom:10 } }, pp==='allowance'?t('profileAllowance'):pp==='salary'?t('profileSalary'):t('profileFreelance')); }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(1), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : welcomeStep===1 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, t('howOldQ')), React.createElement('input', { type:'number', inputMode:'numeric', autoFocus:true, placeholder: t('yourAge'), value: s.studentAge || '', onChange: function(e){ setStudentAge(parseInt(e.target.value,10)||null); }, style: css('width:100%;padding:14px 16px;border:1px solid #d2d2d7;border-radius:12px;font-size:15px;background:#fff;margin-bottom:16px;') }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(2), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : welcomeStep===2 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, s.language==='es'?'¿Inviertes?':'Do you invest?'), [ { k:true, label: s.language==='es'?'Sí, mis padres y yo invertimos juntos':'Yes, my parents and I invest together' }, { k:'own', label: s.language==='es'?'Sí, tengo mi propia cuenta':'Yes, I have my own account' }, { k:false, label: t('investNo') } ].map(function(opt,ix){ return React.createElement('button', { key:ix, onClick: function(){ setInvestsWithParents(opt.k); }, style: { display:'block', width:'100%', textAlign:'left', padding:'14px 16px', borderRadius:12, border: s.investsWithParents===opt.k ? '2px solid #2f6bff' : '1px solid #d2d2d7', background: s.investsWithParents===opt.k ? '#eef4ff' : '#fff', fontSize:14, fontWeight:500, color:'#1d1d1f', cursor:'pointer', marginBottom:10 } }, opt.label); }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(3), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'8vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;line-height:1.15;margin-bottom:26px;') }, s.language==='es'?'¡Últimos pasos! Es hora de configurar tu cuenta':"Last steps! It's time to set up your account"), [ { tt: s.language==='es'?'Ingreso':'Income', dd: s.language==='es'?'Dinos cuánto y cada cuánto te pagan.':'Tell us how much and how often you get paid.', tb:'inicio' }, { tt: s.language==='es'?'Plan de gastos':'Expenses Budget Plan', dd: s.language==='es'?'Define tu plan de gasto del mes.':'Set your spending plan for the month.', tb:'budgetPlan' }, { tt: s.language==='es'?'Metas':'Goals', dd: s.language==='es'?'Agrega metas que quieras lograr.':'Add goals you want to achieve.', tb:'metas' } ].map(function(card,ci){ return React.createElement('button', { key:ci, onClick: function(){ dismissWelcome(); setTab(card.tb); }, style: css('display:block;width:100%;text-align:left;background:#fff;border:1px solid #e5e5ea;border-radius:14px;padding:16px;margin-bottom:12px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.05);') }, React.createElement('div', { style: css('font-size:15px;font-weight:700;color:#1d1d1f;margin-bottom:3px;') }, card.tt), React.createElement('div', { style: css('font-size:12.5px;color:#86868b;') }, card.dd)); }), React.createElement('button', { onClick: function(){ dismissWelcome(); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#2f6bff;font-size:14px;font-weight:700;cursor:pointer;margin-top:8px;padding:0;') }, s.language==='es'?'Hacerlo después':'Do it later') ))), /*#__PURE__*/React.createElement("div", {
+  }, s.language === 'es' ? 'Sí, continuar' : 'Yes, continue')))), quickAddGoalId && (function () { var qa = s.goals.find(function (g) { return g.id === quickAddGoalId; }); if (!qa) return null; var qaMonthly = buildGoalView(qa, false).monthlyBoosted; var qaThisLabel = MONTH_NAMES[new Date().getMonth()] + ' ' + new Date().getFullYear(); var qaAssigned = s.goals.reduce(function (a, g) { return a + (g.savingsLog || []).filter(function (e) { return e.label === qaThisLabel; }).reduce(function (x, e) { return x + (e.amount || 0); }, 0); }, 0); var qaPool = Math.max(ctx.boostedAvailable - qaAssigned - sharedPlanTotal, 0); var qaTyped = parseFloat(depositAmount) || 0; var qaAfter = qaPool - qaTyped; return React.createElement('div', { onClick: function () { setQuickAddGoalId(null); }, className: 'pf-overlay-in', style: css('position:fixed;inset:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;padding:0;') }, React.createElement('div', { onClick: function (e) { e.stopPropagation(); }, className: 'pf-modal-in', style: Object.assign(css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));max-width:480px;width:100%;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);'), { paddingBottom: keyboardInset > 0 ? keyboardInset + 24 : undefined, transition: 'padding-bottom 0.18s ease-out' }) }, React.createElement('div', { style: css('display:flex;align-items:center;gap:12px;margin-bottom:16px;') }, React.createElement('div', { style: { width: 40, height: 40, borderRadius: 11, background: qa.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' } }, React.createElement(GoalIconGlyph, { icon: qa.icon, size: 20 })), React.createElement('div', null, React.createElement('div', { style: css('font-size:16px;font-weight:700;') }, s.language === 'es' ? 'Asignar ahorro' : 'Assign savings'), React.createElement('div', { style: css('font-size:12.5px;color:#86868b;') }, qa.name))), React.createElement('div', { style: { position: 'relative', marginBottom: 12 } }, React.createElement('span', { style: css('position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:17px;color:#86868b;pointer-events:none;') }, '$'), React.createElement('input', { type: 'number', inputMode: 'decimal', autoFocus: true, placeholder: '0', value: depositAmount, onChange: function (e) { setDepositAmount(e.target.value); }, onKeyDown: function (e) { if (e.key === 'Enter') { registerDeposit(quickAddGoalId); setQuickAddGoalId(null); } }, style: css('width:100%;padding:13px 12px 13px 26px;border:1px solid #d2d2d7;border-radius:12px;font-size:18px;font-weight:700;background:#fbfbfd;') })), qaMonthly > 0 && React.createElement('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } }, React.createElement('button', { onClick: function () { setDepositAmount(String(Math.round(qaMonthly))); }, style: css('flex:1;background:#f5f5f7;border:none;border-radius:10px;padding:9px;font-size:12.5px;font-weight:600;color:#1d1d1f;cursor:pointer;') }, (s.language === 'es' ? 'Este mes: ' : 'This month: ') + fmt(qaMonthly)), React.createElement('button', { onClick: function () { setDepositAmount(String(Math.round(qaMonthly / 2))); }, style: css('flex:none;background:#f5f5f7;border:none;border-radius:10px;padding:9px 12px;font-size:12.5px;font-weight:600;color:#1d1d1f;cursor:pointer;') }, s.language === 'es' ? 'Mitad' : 'Half')), React.createElement('div', { style: css('background:#f5f5f7;border-radius:12px;padding:11px 12px;margin-bottom:16px;') }, React.createElement('div', { style: css('display:flex;justify-content:space-between;align-items:center;font-size:12.5px;color:#6e6e73;') }, React.createElement('span', null, s.language === 'es' ? 'Disponible para repartir' : 'Available to assign'), React.createElement('b', { style: { color: '#1d1d1f' } }, fmt(qaPool))), qaTyped > 0 && React.createElement('div', { style: { fontSize: 12, marginTop: 5, color: qaAfter < 0 ? '#ff3b30' : '#86868b' } }, (s.language === 'es' ? 'Te queda ' : "You'll have ") + fmt(qaAfter) + (s.language === 'es' ? ' para otras metas y gastos' : ' left for other goals and expenses'))), React.createElement('div', { style: { display: 'flex', gap: 10 } }, React.createElement('button', { onClick: function () { setQuickAddGoalId(null); setDepositAmount(''); }, style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;') }, s.language === 'es' ? 'Cancelar' : 'Cancel'), React.createElement('button', { onClick: function () { registerDeposit(quickAddGoalId); setQuickAddGoalId(null); }, style: css('flex:1;background:#0071e3;color:#fff;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;') }, s.language === 'es' ? 'Asignar' : 'Assign')))); })(), !s.hasSeenWelcome && React.createElement('div', { style: css('position:fixed;inset:0;z-index:100;background:#fff;display:flex;flex-direction:column;overflow-y:auto;padding:calc(env(safe-area-inset-top) + 20px) 24px calc(env(safe-area-inset-bottom) + 28px);') }, React.createElement('div', { style: css('width:100%;max-width:420px;margin:0 auto;flex:1;display:flex;flex-direction:column;') }, React.createElement('div', { style: css('display:flex;justify-content:flex-end;margin-bottom:2px;') }, React.createElement('button', { onClick: function(){ setLanguage(s.language==='es'?'en':'es'); }, style: css('background:none;border:none;color:#86868b;font-size:12.5px;font-weight:700;cursor:pointer;padding:4px;') }, s.language==='es'?'EN':'ES')), (welcomeStep < 3) && React.createElement('div', { style: css('margin-bottom:8px;') }, React.createElement('div', { style: css('text-align:center;font-size:12px;color:#86868b;font-weight:600;margin-bottom:8px;') }, welcomeStep===0 ? (s.language==='es'?'Paso 1':'Step 1') : welcomeStep===1 ? (s.language==='es'?'Paso 2 de 3':'Step 2 of 3') : (s.language==='es'?'Paso 3 de 3':'Step 3 of 3')), React.createElement('div', { style: css('display:flex;gap:8px;') }, [0,1,2].map(function(idx){ return React.createElement('div', { key: idx, style: { flex:1, height:4, borderRadius:2, background: idx<=welcomeStep ? '#1d1d1f' : '#e5e5ea' } }); }))), welcomeStep===0 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, t('profileQTitle')), ['allowance','salary','freelance'].map(function(pp){ return React.createElement('button', { key:pp, onClick: function(){ setIncomeProfile(pp); }, style: { display:'block', width:'100%', textAlign:'left', padding:'14px 16px', borderRadius:12, border: s.incomeProfile===pp ? '2px solid #2f6bff' : '1px solid #d2d2d7', background: s.incomeProfile===pp ? '#eef4ff' : '#fff', fontSize:14, fontWeight:500, color:'#1d1d1f', cursor:'pointer', marginBottom:10 } }, pp==='allowance'?t('profileAllowance'):pp==='salary'?t('profileSalary'):t('profileFreelance')); }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(1), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : welcomeStep===1 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, t('howOldQ')), React.createElement('input', { type:'number', inputMode:'numeric', autoFocus:true, placeholder: t('yourAge'), value: s.studentAge || '', onChange: function(e){ setStudentAge(parseInt(e.target.value,10)||null); }, style: css('width:100%;padding:14px 16px;border:1px solid #d2d2d7;border-radius:12px;font-size:15px;background:#fff;margin-bottom:16px;') }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(2), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : welcomeStep===2 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, s.language==='es'?'¿Inviertes?':'Do you invest?'), [ { k:true, label: s.language==='es'?'Sí, mis padres y yo invertimos juntos':'Yes, my parents and I invest together' }, { k:'own', label: s.language==='es'?'Sí, tengo mi propia cuenta':'Yes, I have my own account' }, { k:false, label: t('investNo') } ].map(function(opt,ix){ return React.createElement('button', { key:ix, onClick: function(){ setInvestsWithParents(opt.k); }, style: { display:'block', width:'100%', textAlign:'left', padding:'14px 16px', borderRadius:12, border: s.investsWithParents===opt.k ? '2px solid #2f6bff' : '1px solid #d2d2d7', background: s.investsWithParents===opt.k ? '#eef4ff' : '#fff', fontSize:14, fontWeight:500, color:'#1d1d1f', cursor:'pointer', marginBottom:10 } }, opt.label); }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(3), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'8vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;line-height:1.15;margin-bottom:26px;') }, s.language==='es'?'¡Últimos pasos! Es hora de configurar tu cuenta':"Last steps! It's time to set up your account"), [ { tt: s.language==='es'?'Ingreso':'Income', dd: s.language==='es'?'Dinos cuánto y cada cuánto te pagan.':'Tell us how much and how often you get paid.', tb:'inicio' }, { tt: s.language==='es'?'Plan de gastos':'Expenses Budget Plan', dd: s.language==='es'?'Define tu plan de gasto del mes.':'Set your spending plan for the month.', tb:'budgetPlan' }, { tt: s.language==='es'?'Metas':'Goals', dd: s.language==='es'?'Agrega metas que quieras lograr.':'Add goals you want to achieve.', tb:'metas' } ].map(function(card,ci){ return React.createElement('button', { key:ci, onClick: function(){ dismissWelcome(); setTab(card.tb); }, style: css('display:block;width:100%;text-align:left;background:#fff;border:1px solid #e5e5ea;border-radius:14px;padding:16px;margin-bottom:12px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.05);') }, React.createElement('div', { style: css('font-size:15px;font-weight:700;color:#1d1d1f;margin-bottom:3px;') }, card.tt), React.createElement('div', { style: css('font-size:12.5px;color:#86868b;') }, card.dd)); }), React.createElement('button', { onClick: function(){ dismissWelcome(); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#2f6bff;font-size:14px;font-weight:700;cursor:pointer;margin-top:8px;padding:0;') }, s.language==='es'?'Hacerlo después':'Do it later') ))), /*#__PURE__*/React.createElement("div", {
     style: css('padding-bottom:' + (isDesktop ? '20' : '96') + 'px;display:flex;')
   }, isDesktop && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -4968,7 +5022,18 @@ function App() {
     })), !v.isCompleted && /*#__PURE__*/React.createElement("div", {
       style: css('display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px;margin-top:10px;font-size:12px;color:#86868b;')
     }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", { style: { color: '#1d1d1f', fontWeight: 700 } }, sharePct.toFixed(0), "%"), s.language === 'es' ? ' de tu ahorro mensual' : ' of your monthly savings'), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("b", { style: { color: monthPct >= 100 ? g.color : '#1d1d1f', fontWeight: 700 } }, monthPct.toFixed(0), "%"), s.language === 'es' ? ' cumplido este mes' : ' met this month'))), !v.isCompleted && /*#__PURE__*/React.createElement("div", { style: css('flex:none;display:flex;flex-direction:column;align-items:center;gap:5px;') }, /*#__PURE__*/React.createElement("button", { onClick: function (e) { e.stopPropagation(); setDepositAmount(''); setQuickAddGoalId(g.id); }, style: css('width:52px;height:52px;border-radius:50%;background:#f5f5f7;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;') }, /*#__PURE__*/React.createElement("svg", { viewBox: "0 0 24 24", width: 24, height: 24, fill: "none", stroke: "#0071e3", strokeWidth: 2, strokeLinecap: "round" }, /*#__PURE__*/React.createElement("path", { d: "M12 5v14" }), /*#__PURE__*/React.createElement("path", { d: "M5 12h14" }))), /*#__PURE__*/React.createElement("div", { style: css('font-size:12px;font-weight:700;color:#0071e3;text-align:center;line-height:1.15;') }, s.language === 'es' ? 'Asignar ahorro' : 'Assign savings'))));
-  }))), s.tab === 'incomeHistory' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }).concat(sharedGoalsIn.map(function (r) {
+    var d = r.item_data || {};
+    var cur = d.current || 0, tgt = d.target || 0;
+    var pct = tgt > 0 ? Math.min(100, cur / tgt * 100) : 0;
+    var color = d.color || '#0071e3';
+    var pv = parseFloat(s.sharedPlans && s.sharedPlans[r.id]) || 0;
+    return /*#__PURE__*/React.createElement("div", {
+      key: 'sh' + r.id,
+      onClick: function () { setSharedDetailShare(r); },
+      style: css('background:#fff;border-radius:18px;padding:16px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,0.05);cursor:pointer;')
+    }, /*#__PURE__*/React.createElement("div", { style: css('display:flex;align-items:center;gap:12px;') }, /*#__PURE__*/React.createElement("div", { style: { width: 44, height: 44, borderRadius: 12, background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' } }, /*#__PURE__*/React.createElement(GoalIconGlyph, { icon: d.icon || 'star', size: 22 })), /*#__PURE__*/React.createElement("div", { style: css('flex:1;min-width:0;') }, /*#__PURE__*/React.createElement("div", { style: css('font-size:16px;font-weight:700;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;') }, d.name || 'Meta'), /*#__PURE__*/React.createElement("div", { style: css('font-size:12px;color:#86868b;') }, fmt(cur) + ' / ' + fmt(tgt))), /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontWeight: 800, color: color, flex: 'none' } }, pct.toFixed(0) + '%')), /*#__PURE__*/React.createElement("div", { style: css('height:8px;border-radius:4px;background:#f0f0f2;overflow:hidden;margin-top:10px;') }, /*#__PURE__*/React.createElement("div", { style: { height: '100%', borderRadius: 4, background: color, width: pct + '%' } })), /*#__PURE__*/React.createElement("div", { style: css('display:flex;justify-content:space-between;align-items:center;margin-top:9px;font-size:12px;color:#6e6e73;') }, /*#__PURE__*/React.createElement("span", { style: css('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;') }, (s.language === 'es' ? 'Compartida · de ' : 'Shared · from ') + (r.owner_name || '')), /*#__PURE__*/React.createElement("b", { style: { color: pv > 0 ? '#0071e3' : '#c7c7cc', flex: 'none', paddingLeft: 8 } }, pv > 0 ? (fmt(pv) + (s.language === 'es' ? '/mes' : '/mo')) : (s.language === 'es' ? 'fijar aporte' : 'set contribution'))));
+  })))), s.tab === 'incomeHistory' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:center;gap:10px;margin-bottom:16px;')
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => setTab('inicio'),
@@ -5351,7 +5416,18 @@ function App() {
     style: css('font-size:15px;font-weight:700;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
   }, authUser.email), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:11.5px;color:#86868b;margin-top:1px;')
-  }, s.language === 'es' ? 'Sesión iniciada' : 'Signed in'))), /*#__PURE__*/React.createElement("button", {
+  }, s.language === 'es' ? 'Sesión iniciada' : 'Signed in'))), /*#__PURE__*/React.createElement("div", {
+    style: css('margin-bottom:16px;')
+  }, /*#__PURE__*/React.createElement("label", {
+    style: css('display:block;font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:7px;')
+  }, s.language === 'es' ? 'Tu nombre (para compartir)' : 'Your name (for sharing)'), /*#__PURE__*/React.createElement("input", {
+    type: "text", value: s.profileName || '',
+    placeholder: s.language === 'es' ? 'Ej. María' : 'e.g. Maria',
+    onChange: e => patch({ profileName: e.target.value }),
+    style: css('width:100%;padding:11px 12px;border:1px solid #d2d2d7;border-radius:11px;font-size:14.5px;background:#fbfbfd;box-sizing:border-box;')
+  }), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11px;color:#86868b;margin-top:6px;')
+  }, s.language === 'es' ? 'Es lo que verán las personas con quienes compartes (solo el nombre).' : 'This is what people you share with will see (first name only).')), /*#__PURE__*/React.createElement("button", {
     onClick: signOutUser,
     style: css('width:100%;background:#f5f5f7;color:#1d1d1f;border:none;padding:11px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;')
   }, s.language === 'es' ? 'Cerrar sesión' : 'Sign out'), /*#__PURE__*/React.createElement("div", {
@@ -5912,7 +5988,12 @@ function App() {
       style: css('display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:#1d1d1f;margin-bottom:6px;')
     }, /*#__PURE__*/React.createElement("b", null, fmt(cur)), tgt > 0 && /*#__PURE__*/React.createElement("span", { style: css('color:#86868b;font-size:12px;') }, fmt(tgt))), /*#__PURE__*/React.createElement("div", {
       style: css('height:7px;border-radius:4px;background:#f0f0f2;overflow:hidden;')
-    }, /*#__PURE__*/React.createElement("div", { style: { height: '100%', borderRadius: 4, background: color, width: pct + '%' } })), r.permission === 'edit' && /*#__PURE__*/React.createElement("button", {
+    }, /*#__PURE__*/React.createElement("div", { style: { height: '100%', borderRadius: 4, background: color, width: pct + '%' } })), (function () {
+      var pv = parseFloat(s.sharedPlans && s.sharedPlans[r.id]) || 0;
+      return /*#__PURE__*/React.createElement("div", {
+        style: css('display:flex;justify-content:space-between;align-items:center;font-size:11.5px;margin-top:9px;color:#6e6e73;')
+      }, /*#__PURE__*/React.createElement("span", null, s.language === 'es' ? 'Tu aporte acordado' : 'Your agreed contribution'), /*#__PURE__*/React.createElement("b", { style: { color: pv > 0 ? '#0071e3' : '#c7c7cc' } }, pv > 0 ? fmt(pv) + (s.language === 'es' ? '/mes' : '/mo') : (s.language === 'es' ? 'Toca para fijar' : 'Tap to set')));
+    })(), r.permission === 'edit' && /*#__PURE__*/React.createElement("button", {
       onClick: function (e) { e.stopPropagation(); setSharedDepositAmt(''); setSharedDepositShare(r); },
       style: css('margin-top:11px;width:100%;background:#eef6ff;color:#0071e3;border:none;border-radius:11px;padding:11px;font-size:13px;font-weight:700;cursor:pointer;')
     }, s.language === 'es' ? '+ Abonar' : '+ Add savings'));
