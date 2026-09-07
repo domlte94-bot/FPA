@@ -1331,6 +1331,9 @@ function App() {
   const [paycheckAmount, setPaycheckAmount] = useState('');
   const [depositType, setDepositType] = useState('paycheck'); // 'paycheck' | 'other'
   const [showExpenseModal, setShowExpenseModal] = useState(false);
+  // Which category's spending is expanded in the month summary. A category name, or
+  // NONREC_KEY for the non-recurring allowance. Null = all collapsed.
+  const [openExpenseCat, setOpenExpenseCat] = useState(null);
   const [shareModal, setShareModal] = useState(null); // { type, itemId, name }
   const [sharedDepositShare, setSharedDepositShare] = useState(null);
   const keyboardInset = useKeyboardInset();
@@ -3828,6 +3831,37 @@ function App() {
   });
   const fixedResumenRows = categoryResumenRows.filter(r => r.fixed);
   const variableResumenRows = categoryResumenRows.filter(r => !r.fixed);
+  // Tapping a category in the month summary opens what was actually spent on it that
+  // month — the totals alone don't tell you which purchases made them up.
+  const NONREC_KEY = ' nonrecurring';
+  const entriesForCat = key => (key === NONREC_KEY
+    ? periodEntries.filter(e => !e.recurring)
+    : periodEntries.filter(e => e.recurring && e.name === key)
+  ).slice().sort((a, b) => (b.day || 0) - (a.day || 0));
+  const catDetailList = key => {
+    if (openExpenseCat !== key) return null;
+    const rows = entriesForCat(key);
+    const esL = s.language === 'es';
+    return /*#__PURE__*/React.createElement("div", {
+      style: css('margin:6px 0 2px;padding:8px 10px;background:#fafafd;border-radius:10px;')
+    }, rows.length === 0 ? /*#__PURE__*/React.createElement("div", {
+      style: css('font-size:11.5px;color:#86868b;')
+    }, esL ? 'Nada registrado en esta categoría este mes.' : 'Nothing logged in this category this month.') : rows.map(e => /*#__PURE__*/React.createElement("div", {
+      key: e.id,
+      style: css('display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:4px 0;')
+    }, /*#__PURE__*/React.createElement("span", {
+      style: css('font-size:12px;color:#1d1d1f;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
+    }, /*#__PURE__*/React.createElement("span", {
+      style: css('color:#86868b;')
+    }, MONTH_NAMES[s.logMonth], " ", e.day, " · "), e.name), /*#__PURE__*/React.createElement("b", {
+      style: css('font-size:12px;flex:none;')
+    }, fmt(e.amount)))));
+  };
+  // A row is tappable only when there is something to show behind it.
+  const catRowProps = key => ({
+    onClick: () => setOpenExpenseCat(cur => cur === key ? null : key),
+    style: css('cursor:pointer;')
+  });
   const calendarWeeks = buildCalendarWeeks(s.logYear, s.logMonth);
   const categoryColorByName = {};
   s.expenseCategories.forEach((c, i) => {
@@ -7734,14 +7768,16 @@ function App() {
     style: css('display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-bottom:14px;')
   }, fixedResumenRows.map((cr, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
+    onClick: () => setOpenExpenseCat(cur => cur === cr.name ? null : cr.name),
     style: {
       background: '#fff',
-      border: cr.paid ? '1.5px solid #34c759' : '1.5px solid #f0f0f2',
+      border: openExpenseCat === cr.name ? '1.5px solid #0071e3' : cr.paid ? '1.5px solid #34c759' : '1.5px solid #f0f0f2',
       borderRadius: 11,
       padding: '9px 10px',
       display: 'flex',
       alignItems: 'center',
-      gap: 8
+      gap: 8,
+      cursor: 'pointer'
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -7781,12 +7817,16 @@ function App() {
     style: css('font-size:12px;font-weight:600;color:#1d1d1f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;')
   }, cr.name)), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;margin-left:12px;')
-  }, cr.planned_fmt))))), variableResumenRows.map((cr, i) => /*#__PURE__*/React.createElement("div", {
+  }, cr.planned_fmt))))), fixedResumenRows.some(r => r.name === openExpenseCat) && /*#__PURE__*/React.createElement("div", {
+    style: css('margin:-6px 0 12px;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11px;font-weight:700;color:#1d1d1f;margin-bottom:2px;')
+  }, openExpenseCat), catDetailList(openExpenseCat)), variableResumenRows.map((cr, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
     style: css('margin-bottom:10px;')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;justify-content:space-between;align-items:center;font-size:12.5px;margin-bottom:4px;')
-  }, /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("div", Object.assign({}, catRowProps(cr.name), {
+    style: css('display:flex;justify-content:space-between;align-items:center;font-size:12.5px;margin-bottom:4px;cursor:pointer;')
+  }), /*#__PURE__*/React.createElement("span", {
     style: css('display:flex;align-items:center;gap:6px;')
   }, /*#__PURE__*/React.createElement("span", {
     style: {
@@ -7796,7 +7836,9 @@ function App() {
       background: cr.catColor,
       flex: 'none'
     }
-  }), cr.name), /*#__PURE__*/React.createElement("span", null, cr.actual_fmt, " / ", cr.planned_fmt)), /*#__PURE__*/React.createElement("div", {
+  }), cr.name, /*#__PURE__*/React.createElement("span", {
+    style: css('color:#c7c7cc;font-size:9px;')
+  }, openExpenseCat === cr.name ? '▲' : '▼')), /*#__PURE__*/React.createElement("span", null, cr.actual_fmt, " / ", cr.planned_fmt)), /*#__PURE__*/React.createElement("div", {
     style: css('height:6px;border-radius:3px;background:#f0f0f2;overflow:hidden;')
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -7805,13 +7847,13 @@ function App() {
       background: cr.grad,
       width: cr.width
     }
-  })))), /*#__PURE__*/React.createElement("div", {
+  })), catDetailList(cr.name))), /*#__PURE__*/React.createElement("div", {
     style: css('margin-top:12px;padding-top:10px;border-top:1px solid #f0f0f2;')
   }, (() => {
     const nrPct = s.nonRecurringBudget > 0 ? resumenActualNonRecurringNum / s.nonRecurringBudget * 100 : 0;
-    return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-      style: css('display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px;')
-    }, /*#__PURE__*/React.createElement("span", {
+    return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", Object.assign({}, catRowProps(NONREC_KEY), {
+      style: css('display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px;cursor:pointer;')
+    }), /*#__PURE__*/React.createElement("span", {
       style: css('display:flex;align-items:center;gap:6px;')
     }, /*#__PURE__*/React.createElement("span", {
       style: {
@@ -7821,7 +7863,9 @@ function App() {
         background: NONRECURRING_COLOR,
         flex: 'none'
       }
-    }), "Non-recurring (one-off)"), /*#__PURE__*/React.createElement("span", null, fmt(resumenActualNonRecurringNum), " / ", fmt(s.nonRecurringBudget || 0))), /*#__PURE__*/React.createElement("div", {
+    }), "Non-recurring (one-off)", /*#__PURE__*/React.createElement("span", {
+      style: css('color:#c7c7cc;font-size:9px;')
+    }, openExpenseCat === NONREC_KEY ? '▲' : '▼')), /*#__PURE__*/React.createElement("span", null, fmt(resumenActualNonRecurringNum), " / ", fmt(s.nonRecurringBudget || 0))), /*#__PURE__*/React.createElement("div", {
       style: css('height:6px;border-radius:3px;background:#f0f0f2;overflow:hidden;')
     }, /*#__PURE__*/React.createElement("div", {
       style: {
@@ -7830,7 +7874,7 @@ function App() {
         background: pctGradient(nrPct),
         width: Math.min(nrPct, 100).toFixed(1) + '%'
       }
-    })));
+    })), catDetailList(NONREC_KEY));
   })()))), s.tab === 'guide' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:center;gap:10px;margin-bottom:6px;')
   }, /*#__PURE__*/React.createElement("button", {
