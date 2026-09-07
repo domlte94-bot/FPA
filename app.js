@@ -1356,6 +1356,16 @@ function App() {
   };
   const signOutUser = () => {
     if (!sbClient) return;
+    // Clear this device's local copy so the next account doesn't inherit this
+    // account's income/expenses/goals. Cloud data is untouched (per-user row).
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem('pf_owner_id');
+    } catch (e) {}
+    hasLoaded.current = false;
+    localUpdatedAtRef.current = 0;
+    syncGuard.current = { pulled: false, pulling: false };
+    setState(defaultState());
     sbClient.auth.signOut();
   };
   const [authMode, setAuthMode] = useState('login'); // 'login' | 'signup'
@@ -1991,6 +2001,8 @@ function App() {
         };
         return;
       }
+      let ownerId = '';
+      try { ownerId = localStorage.getItem('pf_owner_id') || ''; } catch (e) {}
       if (data && data.data && Object.keys(data.data).length > 0) {
         const cloudUpdatedAtMs = data.data._updatedAt || new Date(data.updated_at).getTime();
         if (cloudUpdatedAtMs > localUpdatedAtRef.current) {
@@ -2000,11 +2012,22 @@ function App() {
           }));
           localUpdatedAtRef.current = cloudUpdatedAtMs;
         }
+        try { localStorage.setItem('pf_owner_id', authUser.id); } catch (e) {}
         setCloudBackupInfo({
           updatedAt: data.updated_at
         });
         setCloudSyncStatus('synced');
       } else {
+        // No cloud backup for this user = a NEW account. If the local data belongs
+        // to a DIFFERENT (or no) user, wipe it so the new account starts at zero
+        // instead of inheriting the previous session's income/expenses/goals.
+        if (ownerId !== authUser.id) {
+          const fresh = defaultState();
+          fresh.hasSeenWelcome = true;
+          localUpdatedAtRef.current = 0;
+          setState(fresh);
+          try { localStorage.setItem('pf_owner_id', authUser.id); } catch (e) {}
+        }
         setCloudBackupInfo('none');
         setCloudSyncStatus('idle');
       }
@@ -2736,8 +2759,22 @@ function App() {
   });
   const resetApp = () => {
     askConfirm('Reset the app? This deletes everything — goals, expenses, investments, all of it. This cannot be undone.', () => {
-      storageAdapter.set(STORAGE_KEY, JSON.stringify(buildPersistPayload(defaultState()))).catch(() => {});
-      setState(defaultState());
+      const fresh = defaultState();
+      fresh.hasSeenWelcome = true;
+      const payload = buildPersistPayload(fresh);
+      payload._updatedAt = Date.now();
+      localUpdatedAtRef.current = payload._updatedAt;
+      storageAdapter.set(STORAGE_KEY, JSON.stringify(payload)).catch(() => {});
+      setState(fresh);
+      // Also overwrite the cloud backup with the empty state so the reset sticks
+      // (otherwise the old data would sync back on the next load).
+      if (sbClient && authUser) {
+        sbClient.from('user_state').upsert({
+          user_id: authUser.id,
+          data: payload,
+          updated_at: new Date().toISOString()
+        }).then(function () {});
+      }
     });
   };
   const sendFeedback = () => {
