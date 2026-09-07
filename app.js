@@ -1235,6 +1235,7 @@ function App() {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [investLogAmount, setInvestLogAmount] = useState('');
   const [editingFundSettings, setEditingFundSettings] = useState(false);
+  const [horizonOpen, setHorizonOpen] = useState(false);
   const [investValueEdit, setInvestValueEdit] = useState('');
   const [editingLogId, setEditingLogId] = useState(null);
   const [editingLogAmount, setEditingLogAmount] = useState('');
@@ -6527,7 +6528,7 @@ function App() {
     style: css('display:flex;justify-content:space-between;align-items:center;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
-  }, t('current')), !s.investments.some(i => i.goalId === sgSource.id) && /*#__PURE__*/React.createElement("button", {
+  }, t('current')), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       if (!editingCurrent) {
         // Seed the text buffer with just MY share so typing starts from the right number.
@@ -6556,7 +6557,7 @@ function App() {
     var mine = (sg.current || 0) - othersTotal;
     var shared = others.length > 0;
     var linkedFunds = s.investments.some(function (i) { return i.goalId === sgSource.id; });
-    if (editingCurrent && !linkedFunds) {
+    if (editingCurrent) {
       return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
         style: { position: 'relative', marginTop: 5 }
       }, /*#__PURE__*/React.createElement("span", {
@@ -6567,8 +6568,28 @@ function App() {
         onChange: function (e) {
           var raw = e.target.value.replace(/[^0-9.]/g, '');
           setMyShareEdit(raw);
-          var linked = (sg.current || 0) - (sgSource.current || 0);
-          updateGoal(sgSource.id, 'current', (parseFloat(raw) || 0) + othersTotal - linked);
+          var newMine = parseFloat(raw) || 0;
+          patch(function (cur) {
+            var g = (cur.goals || []).find(function (x) { return x.id === sgSource.id; });
+            if (!g) return {};
+            var linkedList = (cur.investments || []).filter(function (i) { return i.goalId === sgSource.id; });
+            var total = (g.current || 0) + linkedList.reduce(function (a, i) { return a + (i.amount || 0); }, 0);
+            var delta = newMine - (total - othersTotal);
+            if (!delta) return {};
+            // The money lives in the linked fund when there is one, so correct it there.
+            if (linkedList.length) {
+              var fid = linkedList[0].id;
+              return { investments: cur.investments.map(function (i) {
+                return i.id !== fid ? i : Object.assign({}, i, {
+                  amount: Math.max((i.amount || 0) + delta, 0),
+                  currentValue: Math.max((i.currentValue || 0) + delta, 0)
+                });
+              }) };
+            }
+            return { goals: cur.goals.map(function (x) {
+              return x.id !== sgSource.id ? x : Object.assign({}, x, { current: Math.max((x.current || 0) + delta, 0) });
+            }) };
+          });
         },
         onKeyDown: function (e) { if (e.key === 'Enter') setEditingCurrent(false); },
         style: css('width:100%;padding:6px 8px 6px 18px;border:1px solid #e5e5ea;border-radius:8px;font-size:15px;font-weight:700;background:#fbfbfd;')
@@ -6858,13 +6879,18 @@ function App() {
     style: css('font-size:10.5px;color:#86868b;margin-bottom:8px;line-height:1.3;')
   }, t('horizonHint')), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;flex-direction:column;gap:6px;')
-  }, [['short', 'horizonShort'], ['medium', 'horizonMedium'], ['long', 'horizonLong']].map(function (opt) {
+  }, [['short', 'horizonShort'], ['medium', 'horizonMedium'], ['long', 'horizonLong']].filter(function (opt) {
+    // Collapsed: only the chosen one shows. Tap it to reveal the alternatives.
+    return horizonOpen || !sgSource.horizon || sgSource.horizon === opt[0];
+  }).map(function (opt) {
     var val = opt[0];
     var sel = sgSource.horizon === val;
     return /*#__PURE__*/React.createElement("button", {
       key: val,
       onClick: function () {
-        updateGoal(sgSource.id, 'horizon', sel ? null : val);
+        if (sel && !horizonOpen) { setHorizonOpen(true); return; }
+        updateGoal(sgSource.id, 'horizon', val);
+        setHorizonOpen(false);
       },
       style: {
         display: 'block',
