@@ -280,9 +280,40 @@ function guessAssetType(inv) {
   const bonds = ['bond', 'bonos', 'treasury', 'tesoro', 'bnd', 'agg', 'fixed income', 'renta fija'];
   const cash = ['cash', 'savings', 'ahorro', 'high yield', 'high-yield', 'hysa', 'money market', 'cd ', 'certificate'];
   if (bonds.some(k => txt.includes(k))) return 'bonds';
-  if (cash.some(k => txt.includes(k))) return 'cash';
+  if (cash.some(k => txt.includes(k))) return 'cd';
   if (equity.some(k => txt.includes(k))) return 'equity';
   return null;
+}
+// A certificate / term deposit: money committed until a fixed date. It still counts
+// toward its goal (it IS saved), but it is NOT spendable until it matures — which is
+// the whole reason it needs its own type instead of passing as a normal fund.
+function isCertificate(inv) {
+  return guessAssetType(inv) === 'cd';
+}
+function certMaturityDate(inv) {
+  if (!inv || !inv.maturityDate) return null;
+  const d = new Date(inv.maturityDate + 'T00:00:00');
+  return isNaN(d.getTime()) ? null : d;
+}
+function certIsLocked(inv, today) {
+  const d = certMaturityDate(inv);
+  return !!d && d > (today || new Date());
+}
+function certHasMatured(inv, today) {
+  const d = certMaturityDate(inv);
+  return !!d && d <= (today || new Date());
+}
+// The latest date any certificate feeding this goal unlocks. A goal can't really be
+// "reached" before its money is reachable, so the projection has to respect this.
+function goalUnlockDate(goal, investments, today) {
+  let latest = null;
+  (investments || []).forEach(i => {
+    if (!goal || i.goalId !== goal.id || !isCertificate(i)) return;
+    if (!certIsLocked(i, today)) return;
+    const d = certMaturityDate(i);
+    if (d && (!latest || d > latest)) latest = d;
+  });
+  return latest;
 }
 // Money contributed (principal, no market gain) into funds linked to a goal.
 // A goal's shown progress = its own logged savings + what's deposited in its funds.
@@ -833,6 +864,25 @@ const STRINGS = {
     assetOtherDesc: 'real estate, crypto, etc.',
     assetUnsure: 'Not sure',
     assetUnsureDesc: 'no heads-up either way',
+    pctOfMonthly: '% of monthly savings',
+    reachGoalIn: 'You’ll reach your goal in',
+    perMo: '/mo',
+    monthWord: 'month',
+    monthsWord: 'months',
+    noTimeline: 'no timeline',
+    assetCd: 'Certificate / term deposit',
+    assetCdDesc: 'locked until a set date',
+    cdMaturityLabel: 'Matures on',
+    cdRateLabel: 'Rate (% a year)',
+    cdRateHint: 'Optional — only shown as a reminder of what you agreed.',
+    cdLockedUntil: 'Available in',
+    cdMaturedTitle: 'Your certificate matured',
+    cdMaturedBody: 'It has reached its date. Enter the final amount you received, then decide whether to renew it or move it to the goal.',
+    cdMaturedAction: 'Update amount',
+    cdUpcoming: 'Upcoming maturities',
+    cdLockedNote: 'Locked money',
+    cdEfLockedTitle: 'Part of your safety net is locked',
+    cdEfLockedBody: 'A certificate linked to your emergency fund is locked until its date, so that money is not available for an actual emergency right now.',
     guideEquityShort: 'Heads up: this looks like stocks, but its goal is short term. Money you’ll need within ~3 years is usually kept in cash or bonds, so a market dip right before you need it can’t hurt you. You can keep it — just worth weighing.',
     guideEquityMedium: 'Note: stocks for a medium-term goal (3–7 yrs) carries some timing risk. A blend of stocks and bonds is a common middle ground. Your call.',
     monthSummaryTitle: 'Month summary',
@@ -982,6 +1032,25 @@ const STRINGS = {
     assetOtherDesc: 'bienes raíces, cripto, etc.',
     assetUnsure: 'No estoy seguro',
     assetUnsureDesc: 'sin aviso en ningún sentido',
+    pctOfMonthly: '% de tu ahorro mensual',
+    reachGoalIn: 'Lograrás tu meta en',
+    perMo: '/mes',
+    monthWord: 'mes',
+    monthsWord: 'meses',
+    noTimeline: 'sin plazo',
+    assetCd: 'Certificado / plazo fijo',
+    assetCdDesc: 'bloqueado hasta una fecha',
+    cdMaturityLabel: 'Vence el',
+    cdRateLabel: 'Tasa (% al año)',
+    cdRateHint: 'Opcional — solo para recordar lo que acordaste.',
+    cdLockedUntil: 'Disponible en',
+    cdMaturedTitle: 'Tu certificado venció',
+    cdMaturedBody: 'Llegó a su fecha. Pon el monto final que recibiste y decide si lo renuevas o lo pasas a la meta.',
+    cdMaturedAction: 'Actualizar monto',
+    cdUpcoming: 'Próximos vencimientos',
+    cdLockedNote: 'Dinero bloqueado',
+    cdEfLockedTitle: 'Parte de tu red de seguridad está bloqueada',
+    cdEfLockedBody: 'Un certificado ligado a tu fondo de emergencia está bloqueado hasta su fecha, así que ese dinero no está disponible para una emergencia real ahora mismo.',
     guideEquityShort: 'Ojo: esto parece acciones, pero su meta es de corto plazo. El dinero que necesitarás en ~3 años suele mantenerse en efectivo o bonos, para que una caída del mercado justo antes no te afecte. Puedes dejarlo así — solo algo a considerar.',
     guideEquityMedium: 'Nota: acciones para una meta de mediano plazo (3–7 años) tiene algo de riesgo de tiempo. Una mezcla de acciones y bonos es un término medio común. Tú decides.',
     monthSummaryTitle: 'Resumen del mes',
@@ -3038,7 +3107,7 @@ function App() {
   const updateInvestment = (id, field, val) => patch(s => ({
     investments: s.investments.map(i => i.id === id ? {
       ...i,
-      [field]: field === 'amount' || field === 'currentValue' ? parseFloat(val) || 0 : field === 'percent' ? Math.max(0, Math.min(100, parseFloat(val) || 0)) : val,
+      [field]: field === 'amount' || field === 'currentValue' ? parseFloat(val) || 0 : field === 'percent' ? Math.max(0, Math.min(100, parseFloat(val) || 0)) : field === 'rate' ? (val === '' ? null : parseFloat(val) || 0) : val,
       ...(field === 'currentValue' ? {
         lastUpdated: todayStr
       } : {})
@@ -3719,7 +3788,18 @@ function App() {
     const partnersMonthly = goalDone ? 0 : (sharesByItem['goal:' + goal.id] || []).reduce((a, r) => a + recipientPlanOf(r), 0);
     const towardGoal = monthlyBoosted + partnersMonthly;
     const monthsToGoal = towardGoal > 0 ? Math.ceil(remaining / towardGoal) : Infinity;
-    const estDate = isFinite(monthsToGoal) ? addMonths(ctx.today, monthsToGoal) : null;
+    let monthsShown = monthsToGoal;
+    let estDate = isFinite(monthsToGoal) ? addMonths(ctx.today, monthsToGoal) : null;
+    // Money sitting in a certificate is saved but not reachable yet. Showing a date
+    // before it unlocks would promise something the person can't actually do, so the
+    // honest date is the later of the two.
+    const unlockDate = goalUnlockDate(goal, s.investments, ctx.today);
+    const heldByCert = !!(estDate && unlockDate && unlockDate > estDate);
+    if (heldByCert) {
+      estDate = unlockDate;
+      // Count the months to the date we actually show, or the two would disagree.
+      monthsShown = Math.max(monthsBetween(ctx.today, unlockDate), 1);
+    }
     const estDateLabel = estDate ? MONTH_NAMES[estDate.getMonth()] + ' ' + estDate.getFullYear() : 'No savings assigned';
     const progressPct = goal.target > 0 ? Math.min(100, cur / goal.target * 100) : 0;
     const isCompleted = goal.target > 0 && cur >= goal.target;
@@ -3730,6 +3810,7 @@ function App() {
       monthlyBoosted,
       partnersMonthly,
       towardGoal,
+      heldByCert,
       progressPct,
       monthsToGoal,
       isCompleted,
@@ -3738,7 +3819,7 @@ function App() {
       monthlyLabel: fmt(monthlyBoosted),
       percentLabel: Math.round(percent) + '%',
       estDateLabel,
-      monthsLabel: isFinite(monthsToGoal) ? monthsToGoal + (monthsToGoal === 1 ? ' month' : ' months') : 'no timeline'
+      monthsLabel: isFinite(monthsShown) ? monthsShown + ' ' + (monthsShown === 1 ? t('monthWord') : t('monthsWord')) : t('noTimeline')
     };
     if (!isDetail) return view;
     let customMsg = '',
@@ -3783,6 +3864,10 @@ function App() {
     }
     const assetType = guessAssetType(inv);
     const assetGuessed = !inv.assetType && !!assetType;
+    const matDate = certMaturityDate(inv);
+    const isCert = assetType === 'cd';
+    const locked = isCert && certIsLocked(inv, ctx.today);
+    const matured = isCert && certHasMatured(inv, ctx.today);
     return {
       mode,
       percent,
@@ -3791,6 +3876,11 @@ function App() {
       assetType,
       assetGuessed,
       synced,
+      isCert,
+      locked,
+      matured,
+      maturityAt: matDate,
+      maturityLabel: matDate ? MONTH_NAMES[matDate.getMonth()] + ' ' + matDate.getFullYear() : '',
       percentLabel: Math.round(percent) + '%',
       monthlyLabel: fmt(monthly)
     };
@@ -3848,14 +3938,23 @@ function App() {
       style: css('font-size:11.5px;color:#86868b;')
     }, esL ? 'Nada registrado en esta categoría este mes.' : 'Nothing logged in this category this month.') : rows.map(e => /*#__PURE__*/React.createElement("div", {
       key: e.id,
-      style: css('display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:4px 0;')
+      style: css('display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:4px 0;')
     }, /*#__PURE__*/React.createElement("span", {
-      style: css('font-size:12px;color:#1d1d1f;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
+      style: css('font-size:12px;color:#1d1d1f;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
     }, /*#__PURE__*/React.createElement("span", {
       style: css('color:#86868b;')
     }, MONTH_NAMES[s.logMonth], " ", e.day, " · "), e.name), /*#__PURE__*/React.createElement("b", {
       style: css('font-size:12px;flex:none;')
-    }, fmt(e.amount)))));
+    }, fmt(e.amount)), /*#__PURE__*/React.createElement("button", {
+      onClick: ev => {
+        ev.stopPropagation();
+        askConfirm(
+          (esL ? 'Eliminar este gasto de ' : 'Delete this expense from ') + MONTH_NAMES[s.logMonth] + ' ' + e.day + '? (' + fmt(e.amount) + ')',
+          () => removeLogEntry(e.id)
+        );
+      },
+      style: css('background:none;border:none;color:#ff3b30;cursor:pointer;font-size:14px;line-height:1;padding:0 2px;flex:none;')
+    }, "×"))));
   };
   // A row is tappable only when there is something to show behind it.
   const catRowProps = key => ({
@@ -3913,6 +4012,7 @@ function App() {
     const dateLabel = MONTH_NAMES[lastUpdatedDate.getMonth()] + ' ' + lastUpdatedDate.getDate() + ', ' + lastUpdatedDate.getFullYear();
     const agoLabel = monthsSince <= 0 ? (s.language === 'es' ? 'Actualizado hoy' : 'Updated today') : monthsSince === 1 ? (s.language === 'es' ? 'Actualizado hace 1 mes' : 'Updated 1 month ago') : (s.language === 'es' ? 'Actualizado hace ' + monthsSince + ' meses' : 'Updated ' + monthsSince + ' months ago');
     const linkedGoal = inv.goalId ? s.goals.find(g => g.id === inv.goalId) : null;
+    const matDate = certMaturityDate(inv);
     return {
       ...inv,
       monthsSince,
@@ -3921,7 +4021,14 @@ function App() {
       gainPct,
       dateLabel,
       agoLabel,
-      linkedGoal
+      linkedGoal,
+      isCert: isCertificate(inv),
+      locked: certIsLocked(inv, ctx.today),
+      matured: certHasMatured(inv, ctx.today),
+      // Named `maturityAt` on purpose: `maturityDate` stays the raw YYYY-MM-DD string
+      // the <input type="date"> is bound to, and a Date here would blank that field.
+      maturityAt: matDate,
+      maturityLabel: matDate ? MONTH_NAMES[matDate.getMonth()] + ' ' + matDate.getFullYear() : ''
     };
   });
   const investAssignedTotal = s.goals.reduce((a, g) => a + buildGoalView(g, false).monthlyBoosted, 0);
@@ -3960,7 +4067,31 @@ function App() {
           setShowEmergencyFundPicker(true);
         }
       });
-    } else if (!efFunded && equityInvs.some(i => buildInvestView(i).mode !== 'off')) {
+    }
+    // A certificate that has reached its date: the person needs to enter what they
+    // actually received and decide whether to renew it, or the money goes stale here.
+    const maturedCerts = s.investments.filter(i => certHasMatured(i, ctx.today));
+    maturedCerts.forEach(i => {
+      tips.push({
+        id: 'cd-matured-' + i.id,
+        title: t('cdMaturedTitle') + ' · ' + i.name,
+        body: t('cdMaturedBody'),
+        actionLabel: t('cdMaturedAction'),
+        action: () => openInvestment(i.id)
+      });
+    });
+    // Locked money can't answer an emergency, so say so rather than letting the
+    // progress bar imply the safety net is ready.
+    if (emergencyGoal && s.investments.some(i => i.goalId === emergencyGoal.id && certIsLocked(i, ctx.today))) {
+      tips.push({
+        id: 'cd-ef-locked',
+        title: t('cdEfLockedTitle'),
+        body: t('cdEfLockedBody'),
+        actionLabel: es ? 'Ver fondo' : 'View fund',
+        action: () => openGoal(emergencyGoal.id)
+      });
+    }
+    if (emergencyGoal && !efFunded && equityInvs.some(i => buildInvestView(i).mode !== 'off')) {
       tips.push({
         id: 'ef-underfunded',
         title: es ? 'Termina tu red de seguridad' : 'Finish your safety net',
@@ -4251,7 +4382,13 @@ function App() {
       viewBox: "0 0 24 24", width: 12, height: 12, fill: "none", stroke: "#0071e3", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", style: { flex: 'none' }
     }, /*#__PURE__*/React.createElement("path", { d: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" }), /*#__PURE__*/React.createElement("path", { d: "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" })), /*#__PURE__*/React.createElement("span", {
       style: css('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
-    }, (s.language === 'es' ? 'Ligado a ' : 'Linked to ') + inv.linkedGoal.name))))), /*#__PURE__*/React.createElement("button", {
+    }, (s.language === 'es' ? 'Ligado a ' : 'Linked to ') + inv.linkedGoal.name)), (inv.locked || inv.matured) && /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;align-items:center;gap:4px;font-size:11px;font-weight:600;margin-top:5px;overflow:hidden;color:' + (inv.matured ? '#34c759' : '#8a6d3b') + ';')
+    }, /*#__PURE__*/React.createElement("svg", {
+      viewBox: "0 0 24 24", width: 12, height: 12, fill: "none", stroke: inv.matured ? '#34c759' : '#8a6d3b', strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", style: { flex: 'none' }
+    }, /*#__PURE__*/React.createElement("rect", { x: 3, y: 11, width: 18, height: 11, rx: 2 }), /*#__PURE__*/React.createElement("path", { d: inv.matured ? "M7 11V7a5 5 0 0 1 9.9-1" : "M7 11V7a5 5 0 0 1 10 0v4" })), /*#__PURE__*/React.createElement("span", {
+      style: css('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
+    }, inv.matured ? t('cdMaturedTitle') : t('cdLockedUntil') + ' ' + inv.maturityLabel))))), /*#__PURE__*/React.createElement("button", {
       key: "add-fund",
       onClick: () => {
         setNewFundName('');
@@ -4275,7 +4412,35 @@ function App() {
       }
     }, "+"), /*#__PURE__*/React.createElement("span", {
       style: css('font-size:12.5px;font-weight:700;color:#0071e3;')
-    }, s.language === 'es' ? 'Agregar fondo' : 'Add fund'))), sharedInvestsIn.length > 0 && /*#__PURE__*/React.createElement("div", {
+    }, s.language === 'es' ? 'Agregar fondo' : 'Add fund'))), (function () {
+      // With more than one certificate, the dates are the thing you need at a glance:
+      // which money frees up, how much, and when.
+      var certs = investmentViews.filter(function (i) { return i.isCert && i.maturityAt; })
+        .sort(function (a, b) { return a.maturityAt - b.maturityAt; });
+      if (certs.length < 2) return null;
+      var esC = s.language === 'es';
+      return /*#__PURE__*/React.createElement("div", {
+        style: css('margin-top:18px;background:#fff;border-radius:18px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,0.05);')
+      }, /*#__PURE__*/React.createElement("div", {
+        style: css('font-size:12px;font-weight:700;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
+      }, t('cdUpcoming')), certs.map(function (c) {
+        return /*#__PURE__*/React.createElement("button", {
+          key: c.id,
+          onClick: function () { openInvestment(c.id); },
+          style: css('display:flex;width:100%;justify-content:space-between;align-items:center;gap:10px;background:none;border:none;padding:8px 0;border-top:1px solid #f5f5f7;cursor:pointer;text-align:left;')
+        }, /*#__PURE__*/React.createElement("span", {
+          style: css('min-width:0;')
+        }, /*#__PURE__*/React.createElement("span", {
+          style: css('display:block;font-size:13px;font-weight:600;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
+        }, c.name), /*#__PURE__*/React.createElement("span", {
+          style: css('display:block;font-size:11px;margin-top:1px;color:' + (c.matured ? '#34c759' : '#86868b') + ';')
+        }, c.matured ? t('cdMaturedTitle') : t('cdLockedUntil') + ' ' + c.maturityLabel, c.rate ? ' · ' + c.rate + '%' : '')), /*#__PURE__*/React.createElement("b", {
+          style: css('font-size:14px;flex:none;font-variant-numeric:tabular-nums;')
+        }, fmt(c.currentValue || 0)));
+      }), /*#__PURE__*/React.createElement("div", {
+        style: css('font-size:11px;color:#86868b;margin-top:8px;padding-top:8px;border-top:1px solid #f5f5f7;')
+      }, t('cdLockedNote'), ": ", /*#__PURE__*/React.createElement("b", null, fmt(certs.filter(function (c) { return c.locked; }).reduce(function (a, c) { return a + (c.currentValue || 0); }, 0))), esC ? ' de ' : ' of ', fmt(certs.reduce(function (a, c) { return a + (c.currentValue || 0); }, 0))));
+    })(), sharedInvestsIn.length > 0 && /*#__PURE__*/React.createElement("div", {
       style: css('margin-top:18px;')
     }, /*#__PURE__*/React.createElement("div", {
       style: css('font-size:12px;font-weight:700;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
@@ -4411,7 +4576,7 @@ function App() {
         style: css('font-size:11px;color:#86868b;margin-bottom:10px;line-height:1.35;')
       }, t('assetTypeHint')), /*#__PURE__*/React.createElement("div", {
         style: css('display:flex;flex-direction:column;gap:6px;margin-bottom:16px;')
-      }, [['equity', 'assetEquity', 'assetEquityDesc'], ['bonds', 'assetBonds', 'assetBondsDesc'], ['other', 'assetOther', 'assetOtherDesc'], [null, 'assetUnsure', 'assetUnsureDesc']].map(function (o) {
+      }, [['equity', 'assetEquity', 'assetEquityDesc'], ['bonds', 'assetBonds', 'assetBondsDesc'], ['cd', 'assetCd', 'assetCdDesc'], ['other', 'assetOther', 'assetOtherDesc'], [null, 'assetUnsure', 'assetUnsureDesc']].map(function (o) {
         var val = o[0];
         var sel = (selectedInvestment.assetType || null) === val;
         return /*#__PURE__*/React.createElement("button", {
@@ -4434,7 +4599,25 @@ function App() {
         }, t(o[1])), /*#__PURE__*/React.createElement("span", {
           style: css('font-size:11.5px;color:#86868b;')
         }, "  ·  " + t(o[2])));
-      })), /*#__PURE__*/React.createElement("div", {
+      })), isCertificate(selectedInvestment) && /*#__PURE__*/React.createElement("div", {
+        style: css('margin:-6px 0 16px;padding:12px;background:#fbfbfd;border:1px solid #f0f0f2;border-radius:12px;')
+      }, /*#__PURE__*/React.createElement("label", {
+        style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:5px;')
+      }, t('cdMaturityLabel')), /*#__PURE__*/React.createElement("input", {
+        type: "date",
+        value: selectedInvestment.maturityDate || '',
+        onChange: function (e) { updateInvestment(selectedInvestment.id, 'maturityDate', e.target.value); },
+        style: css('width:100%;padding:9px 11px;border:1px solid #e5e5ea;border-radius:10px;font-size:13.5px;background:#fff;margin-bottom:12px;')
+      }), /*#__PURE__*/React.createElement("label", {
+        style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:5px;')
+      }, t('cdRateLabel')), /*#__PURE__*/React.createElement("input", {
+        type: "number", inputMode: "decimal", placeholder: "0",
+        value: selectedInvestment.rate != null ? selectedInvestment.rate : '',
+        onChange: function (e) { updateInvestment(selectedInvestment.id, 'rate', e.target.value); },
+        style: css('width:100%;padding:9px 11px;border:1px solid #e5e5ea;border-radius:10px;font-size:13.5px;background:#fff;')
+      }), /*#__PURE__*/React.createElement("div", {
+        style: css('font-size:10.5px;color:#86868b;margin-top:5px;line-height:1.35;')
+      }, t('cdRateHint'))), /*#__PURE__*/React.createElement("div", {
         style: css('font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:8px;')
       }, t('linkToGoal')), /*#__PURE__*/React.createElement("select", {
         value: selectedInvestment.goalId || '',
@@ -7174,33 +7357,36 @@ function App() {
       }, MONTH_NAMES[mo.month] + (mo.year !== curY ? " '" + String(mo.year).slice(-2) : '')));
     }));
   })()), /*#__PURE__*/React.createElement("div", {
-    style: css('display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px;margin-bottom:16px;align-items:stretch;')
+    // Back to two columns, but split by meaning: the left stack is what YOU and the
+    // people sharing put in each month; the right stack is when that gets you there.
+    style: css('display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px;margin-bottom:16px;align-items:start;')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;')
+    style: css('display:flex;flex-direction:column;gap:10px;min-width:0;')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;')
+    style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;min-width:0;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:10px;')
   }, /*#__PURE__*/React.createElement("label", {
-    style: css('font-size:11.5px;color:#86868b;font-weight:600;')
-  }, "% of monthly savings"), /*#__PURE__*/React.createElement("button", {
+    style: css('font-size:11.5px;color:#86868b;font-weight:600;line-height:1.25;min-width:0;')
+  }, t('pctOfMonthly')), /*#__PURE__*/React.createElement("button", {
     onClick: () => toggleGoalMode(sgSource.id),
-    style: css('background:#f5f5f7;border:none;padding:4px 9px;border-radius:8px;font-size:10.5px;font-weight:600;color:#1d1d1f;cursor:pointer;')
+    style: css('background:#f5f5f7;border:none;padding:4px 9px;border-radius:8px;font-size:10.5px;font-weight:600;color:#1d1d1f;cursor:pointer;flex:none;')
   }, sgSource.mode === 'manual' ? 'Manual' : 'Auto')), sgSource.mode === 'manual' ? /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;align-items:baseline;gap:5px;font-size:15px;color:#1d1d1f;font-weight:700;')
+    style: css('display:flex;align-items:baseline;gap:3px;')
   }, /*#__PURE__*/React.createElement("input", {
     type: "number", inputMode: "decimal",
     min: "0",
     max: "100",
     value: sgSource.percent || '',
     onChange: e => updateGoal(sgSource.id, 'percent', Math.max(0, Math.min(100, parseFloat(e.target.value) || 0))),
-    style: css('width:42px;padding:2px 3px;border:none;border-bottom:1.5px solid #0071e3;font-size:15px;font-weight:700;color:#1d1d1f;background:transparent;text-align:center;')
-  }), /*#__PURE__*/React.createElement("span", { style: css('font-size:13px;color:#86868b;font-weight:600;') }, "% → ", sg.monthlyLabel, "/mo")) : /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:15px;font-weight:700;color:#1d1d1f;')
-  }, sg.percentLabel, /*#__PURE__*/React.createElement("span", { style: css('font-size:13px;color:#86868b;font-weight:600;') }, " → ", sg.monthlyLabel, "/mo")), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:11.5px;color:#6e6e73;margin-top:10px;padding-top:10px;border-top:1px solid #f5f5f7;')
-  }, "You'll reach your goal in ", /*#__PURE__*/React.createElement("b", {
-    style: css('color:#1d1d1f;')
-  }, sg.estDateLabel), " (", sg.monthsLabel, ")", sg.partnersMonthly > 0 && /*#__PURE__*/React.createElement("span", null, s.language === 'es' ? ', contando ' : ', counting ', fmt(sg.partnersMonthly), s.language === 'es' ? '/mes de quien comparte la meta' : '/mo from who you share it with')), (function () {
-    // What each person I share this goal with has committed per month.
+    style: css('width:56px;padding:2px 3px;border:none;border-bottom:1.5px solid #0071e3;font-size:20px;font-weight:800;color:#1d1d1f;background:transparent;text-align:center;flex:none;')
+  }), /*#__PURE__*/React.createElement("span", { style: css('font-size:15px;color:#86868b;font-weight:700;') }, "%")) : /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:20px;font-weight:800;color:#1d1d1f;')
+  }, sg.percentLabel), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:13px;color:#86868b;font-weight:600;margin-top:6px;')
+  }, "→ ", sg.monthlyLabel, t('perMo'))), (function () {
+    // Who is putting in what each month. Its own card now — buried under the
+    // percentage it was easy to miss, and it grows with every person you share with.
     var rows = sharesByItem['goal:' + sgSource.id] || [];
     if (!rows.length) return null;
     var esP = s.language === 'es';
@@ -7208,28 +7394,50 @@ function App() {
       return { name: recipientNameOf(r), amount: recipientPlanOf(r) };
     });
     return /*#__PURE__*/React.createElement("div", {
-      style: css('font-size:11.5px;color:#6e6e73;margin-top:10px;padding-top:10px;border-top:1px solid #f5f5f7;')
+      style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;min-width:0;')
     }, /*#__PURE__*/React.createElement("div", {
-      style: css('font-size:10.5px;color:#86868b;font-weight:600;margin-bottom:5px;')
-    }, esP ? 'Aportan cada mes' : 'Contributing each month'), lines.map(function (l, i) {
+      style: css('font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:8px;line-height:1.25;')
+    }, esP ? 'Aportan cada mes' : 'Contributing each month'), /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;justify-content:space-between;align-items:center;gap:8px;padding:3px 0;font-size:12px;')
+    }, /*#__PURE__*/React.createElement("span", {
+      style: css('color:#1d1d1f;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;')
+    }, esP ? 'Tú' : 'You'), /*#__PURE__*/React.createElement("b", {
+      style: css('flex:none;font-variant-numeric:tabular-nums;')
+    }, sg.monthlyLabel)), lines.map(function (l, i) {
       return /*#__PURE__*/React.createElement("div", {
         key: i,
-        style: css('display:flex;justify-content:space-between;align-items:center;gap:8px;padding:2px 0;')
+        style: css('display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:3px 0;font-size:12px;border-top:1px solid #f5f5f7;')
       }, /*#__PURE__*/React.createElement("span", {
-        style: css('overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;')
+        // Let a long name wrap rather than truncate — in a half-width card "Anamaria
+        // Gonzalez" became "Anamaria G…", and you can't tell two relatives apart that way.
+        style: css('color:#1d1d1f;min-width:0;overflow-wrap:anywhere;line-height:1.3;')
       }, l.name), /*#__PURE__*/React.createElement("b", {
-        style: { color: l.amount > 0 ? '#1d1d1f' : '#c7c7cc', flex: 'none' }
-      }, l.amount > 0 ? fmt(l.amount) + (esP ? '/mes' : '/mo') : (esP ? 'sin fijar' : 'not set')));
+        style: { color: l.amount > 0 ? '#1d1d1f' : '#c7c7cc', flex: 'none', fontVariantNumeric: 'tabular-nums' }
+      }, l.amount > 0 ? fmt(l.amount) : (esP ? 'sin fijar' : 'not set')));
     }));
   })()), /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;')
+    style: css('display:flex;flex-direction:column;gap:10px;min-width:0;')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:12.5px;font-weight:700;color:#1d1d1f;margin-bottom:10px;')
+    style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;min-width:0;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:6px;line-height:1.25;')
+  }, t('reachGoalIn')), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:20px;font-weight:800;color:#1d1d1f;letter-spacing:-0.01em;line-height:1.15;')
+  }, sg.estDateLabel), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12.5px;color:#86868b;font-weight:600;margin-top:3px;')
+  }, sg.monthsLabel), (sg.partnersMonthly > 0 || sg.heldByCert) && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11px;color:#6e6e73;margin-top:9px;padding-top:9px;border-top:1px solid #f5f5f7;line-height:1.4;')
+  }, sg.partnersMonthly > 0 && /*#__PURE__*/React.createElement("div", null, s.language === 'es' ? 'Incluye ' : 'Includes ', fmt(sg.partnersMonthly), s.language === 'es' ? '/mes de quien comparte la meta.' : '/mo from who you share it with.'), sg.heldByCert && /*#__PURE__*/React.createElement("div", {
+    style: css('color:#8a6d3b;margin-top:4px;')
+  }, s.language === 'es' ? 'Juntarías el monto antes, pero es cuando se libera tu certificado.' : 'You’d have the amount sooner, but that’s when your certificate unlocks.'))), /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;min-width:0;')
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12.5px;font-weight:700;color:#1d1d1f;margin-bottom:10px;line-height:1.3;')
   }, t('hitDate')), /*#__PURE__*/React.createElement("input", {
     type: "date",
     value: sgSource.customDate || '',
     onChange: e => updateGoal(sgSource.id, 'customDate', e.target.value),
-    style: css('width:88%;padding:6px 6px;border:1px solid #e5e5ea;border-radius:8px;font-size:11px;background:#fbfbfd;')
+    style: css('width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #e5e5ea;border-radius:8px;font-size:12.5px;background:#fbfbfd;')
   }), sgSource.customDate && sg.customMsg && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
@@ -7271,7 +7479,8 @@ function App() {
         cursor: 'pointer'
       }
     }, t(opt[1]));
-  }))))), false && /*#__PURE__*/React.createElement("div", {
+  })))))
+), false && /*#__PURE__*/React.createElement("div", {
     style: css('display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:12px;')
