@@ -865,6 +865,9 @@ const STRINGS = {
     assetUnsure: 'Not sure',
     assetUnsureDesc: 'no heads-up either way',
     pctOfMonthly: '% of monthly savings',
+    savingsMonthly: 'savings monthly',
+    leftThisMonth: 'left to assign',
+    doneThisMonth: 'done this month',
     reachGoalIn: 'You’ll reach your goal in',
     perMo: '/mo',
     monthWord: 'month',
@@ -1033,6 +1036,9 @@ const STRINGS = {
     assetUnsure: 'No estoy seguro',
     assetUnsureDesc: 'sin aviso en ningún sentido',
     pctOfMonthly: '% de tu ahorro mensual',
+    savingsMonthly: 'del ahorro mensual',
+    leftThisMonth: 'falta asignar',
+    doneThisMonth: 'completo este mes',
     reachGoalIn: 'Lograrás tu meta en',
     perMo: '/mes',
     monthWord: 'mes',
@@ -7129,17 +7135,17 @@ function App() {
       minWidth: 120,
       order: 2
     }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => { setDepositAmount(''); setQuickAddGoalId(sgSource.id); },
-    style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:12px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;')
-  }, t('logSavings')), (() => {
+  }, (() => {
     const now = new Date();
     const skipped = (sgSource.skippedMonths || []).some(sm => sm.year === now.getFullYear() && sm.month === now.getMonth());
     return /*#__PURE__*/React.createElement("button", {
       onClick: () => toggleSkipMonth(sgSource.id, now.getFullYear(), now.getMonth()),
-      style: css('width:100%;background:none;border:1px solid ' + (skipped ? '#ffd9a0' : '#e5e5ea') + ';color:' + (skipped ? '#ff9500' : '#86868b') + ';font-size:11.5px;font-weight:600;cursor:pointer;margin-top:8px;padding:10px;border-radius:10px;')
+      style: css('width:100%;background:none;border:1px solid ' + (skipped ? '#ffd9a0' : '#e5e5ea') + ';color:' + (skipped ? '#ff9500' : '#86868b') + ';font-size:11.5px;font-weight:600;cursor:pointer;margin-bottom:8px;padding:10px;border-radius:10px;')
     }, skipped ? s.language === 'es' ? '↩ Deshacer — sí voy a depositar' : "↩ Undo — I'll deposit after all" : s.language === 'es' ? 'No voy a depositar este mes' : "I won't deposit this month");
-  })()), (() => {
+  })(), /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setDepositAmount(''); setQuickAddGoalId(sgSource.id); },
+    style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:12px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;')
+  }, t('logSavings'))), (() => {
     const now = new Date();
     const monthEntries = (sgSource.savingsLog || []).filter(entry => {
       const p = parseMonthYearLabel(entry.label);
@@ -7160,6 +7166,7 @@ function App() {
     const extrasMonthlyTarget = ctx.assignedByGoal[sgSource.id] || 0;
     const hasExtras = extrasMonthlyTarget > 0;
     const salaryPct = salaryMonthlyTarget > 0 ? Math.min(100, salaryLogged / salaryMonthlyTarget * 100) : salaryLogged > 0 ? 100 : 0;
+    const salaryLeft = Math.max(salaryMonthlyTarget - salaryLogged, 0);
     const extrasPct = extrasMonthlyTarget > 0 ? Math.min(100, extrasLogged / extrasMonthlyTarget * 100) : extrasLogged > 0 ? 100 : 0;
     const R1 = 16,
       R2 = 27,
@@ -7231,7 +7238,15 @@ function App() {
         fontWeight: 800,
         color: sgSource.color
       }
-    }, salaryPct.toFixed(0), "%"), " savings monthly"), /*#__PURE__*/React.createElement("div", {
+    }, salaryPct.toFixed(0), "%"), " " + t('savingsMonthly')), salaryMonthlyTarget > 0 && /*#__PURE__*/React.createElement("div", {
+      // A percentage alone doesn't tell you what to do next. This is the amount still
+      // missing to hit this month's share for the goal.
+      style: { marginTop: 2 }
+    }, salaryLeft > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+      style: { fontSize: 14, fontWeight: 800, color: '#1d1d1f' }
+    }, fmt(salaryLeft)), " " + t('leftThisMonth')) : /*#__PURE__*/React.createElement("span", {
+      style: { fontSize: 11, fontWeight: 700, color: '#34c759' }
+    }, "✓ " + t('doneThisMonth'))), /*#__PURE__*/React.createElement("div", {
       style: { marginTop: 2 }
     }, /*#__PURE__*/React.createElement("span", {
       style: {
