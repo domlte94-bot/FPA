@@ -5726,7 +5726,12 @@ function App() {
     const v = buildGoalView(g, false);
     const goalMonthEntries = (g.savingsLog || []).filter(entry => {
       const p = parseMonthYearLabel(entry.label);
-      return p.year === ctx.today.getFullYear() && p.month === ctx.today.getMonth();
+      if (p.year !== ctx.today.getFullYear() || p.month !== ctx.today.getMonth()) return false;
+      // Only MY deposits count toward "met this month". The target here is my own
+      // share, so someone else's contribution marking it done would tell me I'm
+      // finished when I still owe my part. Their side shows in the goal detail.
+      const who = entryAuthor(entry);
+      return !who || who === myEmail;
     });
     const loggedThisMonth = goalMonthEntries.reduce((a, e) => a + e.amount, 0);
     const monthPct = v.monthlyBoosted > 0 ? Math.min(100, loggedThisMonth / v.monthlyBoosted * 100) : loggedThisMonth > 0 ? 100 : 0;
@@ -6650,7 +6655,10 @@ function App() {
     const remaining = Math.max(g.target - goalCur(g), 0);
     const monthEntries = (g.savingsLog || []).filter(e => {
       const p = parseMonthYearLabel(e.label);
-      return p.year === ctx.today.getFullYear() && p.month === ctx.today.getMonth();
+      if (p.year !== ctx.today.getFullYear() || p.month !== ctx.today.getMonth()) return false;
+      // Same rule as the home cards: my progress is measured against my own share.
+      const who = entryAuthor(e);
+      return !who || who === myEmail;
     });
     const loggedThisMonth = monthEntries.reduce((a, e) => a + e.amount, 0);
     const monthPct = v.monthlyBoosted > 0 ? Math.round(loggedThisMonth / v.monthlyBoosted * 100) : loggedThisMonth > 0 ? 100 : 0;
