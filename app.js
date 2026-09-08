@@ -4979,6 +4979,19 @@ function App() {
     setShowInvestDetail(false);
     setAllocatingLeftover(false);
     setEditingRetirement(false);
+    // A shared goal opens as a full-screen layer. Nothing here used to close it, so on
+    // desktop you could click the sidebar, the tab underneath would change, and the
+    // layer just stayed on top — the only way out was its own back button.
+    setSharedDetailShare(null);
+    // Same idea for anything else floating above the page: navigating away should
+    // never leave a sheet or dialog stranded on top of the section you asked for.
+    setQuickAddGoalId(null);
+    setShowPaycheckModal(false);
+    setShowExpenseModal(false);
+    setShareModal(null);
+    setSharedDepositShare(null);
+    setEditingGoalMeta(false);
+    setDeleteConfirm(null);
     setSettingsView('menu');
     setTab(name);
   };
