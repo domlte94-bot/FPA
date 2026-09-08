@@ -3897,6 +3897,22 @@ function App() {
   // People sharing this goal. Hoisted so the detail layout knows which card sits last
   // in the left stack and can stretch it to match the right stack's height.
   const goalShareRows = sgSource ? (sharesByItem['goal:' + sgSource.id] || []) : [];
+  // The "you'll reach your goal in" card moves between columns: it sits under the
+  // percentage when nobody shares the goal (otherwise that column is one short card
+  // and a tall blank), and moves right when the contributors card takes its place.
+  const goalEtaCard = !sg ? null : /*#__PURE__*/React.createElement("div", {
+    style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;min-width:0;' + (goalShareRows.length ? '' : 'flex:1;'))
+  }, /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:6px;line-height:1.25;')
+  }, t('reachGoalIn')), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:20px;font-weight:800;color:#1d1d1f;letter-spacing:-0.01em;line-height:1.15;')
+  }, sg.estDateLabel), /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:12.5px;color:#86868b;font-weight:600;margin-top:3px;')
+  }, sg.monthsLabel), (sg.partnersMonthly > 0 || sg.heldByCert) && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11px;color:#6e6e73;margin-top:9px;padding-top:9px;border-top:1px solid #f5f5f7;line-height:1.4;')
+  }, sg.partnersMonthly > 0 && /*#__PURE__*/React.createElement("div", null, s.language === 'es' ? 'Incluye ' : 'Includes ', fmt(sg.partnersMonthly), s.language === 'es' ? ' compartido' : ' shared'), sg.heldByCert && /*#__PURE__*/React.createElement("div", {
+    style: css('color:#8a6d3b;margin-top:4px;')
+  }, s.language === 'es' ? 'Juntarías el monto antes, pero es cuando se libera tu certificado.' : 'You’d have the amount sooner, but that’s when your certificate unlocks.')));
   const pctColor = pct => pct >= 100 ? '#ff3b30' : '#0071e3';
   const pctGradient = pct => pct >= 100 ? 'linear-gradient(90deg,#ff3b30,#ff9500)' : 'linear-gradient(90deg,#0071e3,#5ac8fa)';
   const periodEntries = s.expenseLog.filter(e => e.year === s.logYear && e.month === s.logMonth);
@@ -7368,12 +7384,18 @@ function App() {
   }, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;flex-direction:column;gap:10px;min-width:0;height:100%;')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;min-width:0;display:flex;flex-direction:column;' + (goalShareRows.length ? '' : 'flex:1;'))
+    // Never stretches: another card sits under it in both cases, so growing this one
+    // was what produced the tall empty box under the percentage.
+    style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;min-width:0;display:flex;flex-direction:column;')
+  }, /*#__PURE__*/React.createElement("div", {
+    // Same header shape as the other cards in this screen: label left, Edit top-right.
+    style: css('display:flex;align-items:flex-start;justify-content:space-between;gap:6px;margin-bottom:10px;')
   }, /*#__PURE__*/React.createElement("label", {
-    // The Manual pill used to sit beside this label and squeezed it onto three lines.
-    // It now lives at the bottom of the card, so the label gets the full width.
-    style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;line-height:1.25;margin-bottom:10px;')
-  }, t('pctOfMonthly')), sgSource.mode === 'manual' ? /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;color:#86868b;font-weight:600;line-height:1.25;min-width:0;')
+  }, t('pctOfMonthly')), /*#__PURE__*/React.createElement("button", {
+    onClick: () => toggleGoalMode(sgSource.id),
+    style: css('background:none;border:none;color:#0071e3;font-size:10px;font-weight:700;cursor:pointer;padding:0;flex:none;')
+  }, t('edit'))), sgSource.mode === 'manual' ? /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:baseline;gap:3px;')
   }, /*#__PURE__*/React.createElement("input", {
     type: "number", inputMode: "decimal",
@@ -7386,12 +7408,13 @@ function App() {
     style: css('font-size:20px;font-weight:800;color:#1d1d1f;')
   }, sg.percentLabel), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;color:#86868b;font-weight:600;margin-top:6px;')
-  }, "→ ", sg.monthlyLabel, t('perMo')), /*#__PURE__*/React.createElement("button", {
-    onClick: () => toggleGoalMode(sgSource.id),
-    style: css('margin-top:auto;padding-top:10px;background:none;border:none;display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;cursor:pointer;font-size:11px;font-weight:600;color:#86868b;')
-  }, /*#__PURE__*/React.createElement("span", null, sgSource.mode === 'manual' ? 'Manual' : 'Auto'), /*#__PURE__*/React.createElement("span", {
-    style: css('color:#0071e3;font-weight:700;')
-  }, t('edit')))), (function () {
+  }, "→ ", sg.monthlyLabel, t('perMo')), /*#__PURE__*/React.createElement("div", {
+    // The grey pill is back, now as a badge for the current mode — Edit above is what
+    // changes it. It also holds the card's floor, keeping both columns level.
+    style: css('margin-top:auto;padding-top:12px;')
+  }, /*#__PURE__*/React.createElement("span", {
+    style: css('display:inline-block;background:#f5f5f7;padding:4px 9px;border-radius:8px;font-size:10.5px;font-weight:600;color:#1d1d1f;')
+  }, sgSource.mode === 'manual' ? 'Manual' : 'Auto'))), (function () {
     // Who is putting in what each month. Its own card now — buried under the
     // percentage it was easy to miss, and it grows with every person you share with.
     var rows = goalShareRows;
@@ -7422,21 +7445,9 @@ function App() {
         style: { color: l.amount > 0 ? '#1d1d1f' : '#c7c7cc', flex: 'none', fontVariantNumeric: 'tabular-nums' }
       }, l.amount > 0 ? fmt(l.amount) : (esP ? 'sin fijar' : 'not set')));
     }));
-  })()), /*#__PURE__*/React.createElement("div", {
+  })(), goalShareRows.length ? null : goalEtaCard), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;flex-direction:column;gap:10px;min-width:0;height:100%;')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;min-width:0;')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:6px;line-height:1.25;')
-  }, t('reachGoalIn')), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:20px;font-weight:800;color:#1d1d1f;letter-spacing:-0.01em;line-height:1.15;')
-  }, sg.estDateLabel), /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:12.5px;color:#86868b;font-weight:600;margin-top:3px;')
-  }, sg.monthsLabel), (sg.partnersMonthly > 0 || sg.heldByCert) && /*#__PURE__*/React.createElement("div", {
-    style: css('font-size:11px;color:#6e6e73;margin-top:9px;padding-top:9px;border-top:1px solid #f5f5f7;line-height:1.4;')
-  }, sg.partnersMonthly > 0 && /*#__PURE__*/React.createElement("div", null, s.language === 'es' ? 'Incluye ' : 'Includes ', fmt(sg.partnersMonthly), s.language === 'es' ? ' compartido' : ' shared'), sg.heldByCert && /*#__PURE__*/React.createElement("div", {
-    style: css('color:#8a6d3b;margin-top:4px;')
-  }, s.language === 'es' ? 'Juntarías el monto antes, pero es cuando se libera tu certificado.' : 'You’d have the amount sooner, but that’s when your certificate unlocks.'))), /*#__PURE__*/React.createElement("div", {
+  }, goalShareRows.length ? goalEtaCard : null, /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;min-width:0;flex:1;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12.5px;font-weight:700;color:#1d1d1f;margin-bottom:10px;line-height:1.3;')
