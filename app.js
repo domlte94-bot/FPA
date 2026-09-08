@@ -2045,10 +2045,16 @@ function App() {
   });
   // Long-press (hold) a card to delete it. Returns pointer handlers; pair with
   // cardTapGuard so the normal tap (open detail) is skipped after a long-press.
+  // TOUCH ONLY: with a mouse, holding the button for half a second while clicking is
+  // completely normal, so this used to hijack ordinary desktop clicks — the card
+  // never opened and the swallow-the-next-tap flag stayed set, which is what made the
+  // sidebar feel dead afterwards. On desktop the delete button inside the detail is
+  // the way to remove things.
   const cardPressProps = onLong => ({
-    onPointerDown: () => {
+    onPointerDown: e => {
       cardPressRef.current.fired = false;
       clearTimeout(cardPressRef.current.id);
+      if (e && e.pointerType === 'mouse') return;
       cardPressRef.current.id = setTimeout(() => {
         cardPressRef.current.fired = true;
         onLong();
@@ -2098,8 +2104,13 @@ function App() {
     onPointerDown: e => {
       cardPressRef.current.fired = false;
       const el = e.currentTarget, pid = e.pointerId;
-      goalDragRef.current = { x: e.clientX, y: e.clientY, moved: false, idx: null, el: el, pid: pid };
+      const isMouse = e.pointerType === 'mouse';
+      goalDragRef.current = { x: e.clientX, y: e.clientY, moved: false, idx: null, el: el, pid: pid, mouse: isMouse, i: i, gid: g.id };
       clearTimeout(cardPressRef.current.id);
+      // With a mouse there is no hold-to-arm: a click always opens the goal, however
+      // long the button is held. Dragging still reorders — it starts on movement
+      // instead (below), which is the desktop convention anyway.
+      if (isMouse) return;
       cardPressRef.current.id = setTimeout(() => {
         cardPressRef.current.fired = true;
         goalDragRef.current.idx = i;
@@ -2111,8 +2122,16 @@ function App() {
     onPointerMove: e => {
       const d = goalDragRef.current;
       if (d.idx === null) {
-        if (Math.abs(e.clientX - d.x) > 8 || Math.abs(e.clientY - d.y) > 8) {
-          clearTimeout(cardPressRef.current.id);
+        const far = Math.abs(e.clientX - d.x) > 8 || Math.abs(e.clientY - d.y) > 8;
+        if (!far) return;
+        clearTimeout(cardPressRef.current.id);
+        // Mouse: begin the reorder drag now that the pointer has actually moved.
+        if (d.mouse && d.el) {
+          cardPressRef.current.fired = true;
+          d.idx = d.i;
+          d.moved = true;
+          try { d.el.setPointerCapture(d.pid); } catch (err) {}
+          setGoalDragIndex(d.i);
         }
         return;
       }
