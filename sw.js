@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pf-cache-v40';
+const CACHE_NAME = 'pf-cache-v41';
 
 // Files that change when you update the app — always try the network first,
 // so you get the latest version automatically. Cache is only a fallback for offline use.

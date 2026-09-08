@@ -3894,6 +3894,9 @@ function App() {
   const overAllocatedWarning = ctx.manualPercentTotal > 100 ? 'Your manual percentages add up to (' + ctx.manualPercentTotal.toFixed(0) + '%), which is over 100%.' : '';
   const sgSource = s.goals.find(g => g.id === s.selectedGoalId);
   const sg = sgSource ? buildGoalView(sgSource, true) : null;
+  // People sharing this goal. Hoisted so the detail layout knows which card sits last
+  // in the left stack and can stretch it to match the right stack's height.
+  const goalShareRows = sgSource ? (sharesByItem['goal:' + sgSource.id] || []) : [];
   const pctColor = pct => pct >= 100 ? '#ff3b30' : '#0071e3';
   const pctGradient = pct => pct >= 100 ? 'linear-gradient(90deg,#ff3b30,#ff9500)' : 'linear-gradient(90deg,#0071e3,#5ac8fa)';
   const periodEntries = s.expenseLog.filter(e => e.year === s.logYear && e.month === s.logMonth);
@@ -7359,19 +7362,18 @@ function App() {
   })()), /*#__PURE__*/React.createElement("div", {
     // Back to two columns, but split by meaning: the left stack is what YOU and the
     // people sharing put in each month; the right stack is when that gets you there.
-    style: css('display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px;margin-bottom:16px;align-items:start;')
+    // Stretch, not start: both columns end at the same height so the shorter one
+    // doesn't leave a block of empty white beside the taller one.
+    style: css('display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px;margin-bottom:16px;align-items:stretch;')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;flex-direction:column;gap:10px;min-width:0;')
+    style: css('display:flex;flex-direction:column;gap:10px;min-width:0;height:100%;')
   }, /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;min-width:0;')
-  }, /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:10px;')
+    style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;min-width:0;display:flex;flex-direction:column;' + (goalShareRows.length ? '' : 'flex:1;'))
   }, /*#__PURE__*/React.createElement("label", {
-    style: css('font-size:11.5px;color:#86868b;font-weight:600;line-height:1.25;min-width:0;')
-  }, t('pctOfMonthly')), /*#__PURE__*/React.createElement("button", {
-    onClick: () => toggleGoalMode(sgSource.id),
-    style: css('background:#f5f5f7;border:none;padding:4px 9px;border-radius:8px;font-size:10.5px;font-weight:600;color:#1d1d1f;cursor:pointer;flex:none;')
-  }, sgSource.mode === 'manual' ? 'Manual' : 'Auto')), sgSource.mode === 'manual' ? /*#__PURE__*/React.createElement("div", {
+    // The Manual pill used to sit beside this label and squeezed it onto three lines.
+    // It now lives at the bottom of the card, so the label gets the full width.
+    style: css('display:block;font-size:11.5px;color:#86868b;font-weight:600;line-height:1.25;margin-bottom:10px;')
+  }, t('pctOfMonthly')), sgSource.mode === 'manual' ? /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:baseline;gap:3px;')
   }, /*#__PURE__*/React.createElement("input", {
     type: "number", inputMode: "decimal",
@@ -7384,17 +7386,22 @@ function App() {
     style: css('font-size:20px;font-weight:800;color:#1d1d1f;')
   }, sg.percentLabel), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;color:#86868b;font-weight:600;margin-top:6px;')
-  }, "→ ", sg.monthlyLabel, t('perMo'))), (function () {
+  }, "→ ", sg.monthlyLabel, t('perMo')), /*#__PURE__*/React.createElement("button", {
+    onClick: () => toggleGoalMode(sgSource.id),
+    style: css('margin-top:auto;padding-top:10px;background:none;border:none;display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;cursor:pointer;font-size:11px;font-weight:600;color:#86868b;')
+  }, /*#__PURE__*/React.createElement("span", null, sgSource.mode === 'manual' ? 'Manual' : 'Auto'), /*#__PURE__*/React.createElement("span", {
+    style: css('color:#0071e3;font-weight:700;')
+  }, t('edit')))), (function () {
     // Who is putting in what each month. Its own card now — buried under the
     // percentage it was easy to miss, and it grows with every person you share with.
-    var rows = sharesByItem['goal:' + sgSource.id] || [];
+    var rows = goalShareRows;
     if (!rows.length) return null;
     var esP = s.language === 'es';
     var lines = rows.map(function (r) {
       return { name: recipientNameOf(r), amount: recipientPlanOf(r) };
     });
     return /*#__PURE__*/React.createElement("div", {
-      style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;min-width:0;')
+      style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;min-width:0;flex:1;')
     }, /*#__PURE__*/React.createElement("div", {
       style: css('font-size:11.5px;color:#86868b;font-weight:600;margin-bottom:8px;line-height:1.25;')
     }, esP ? 'Aportan cada mes' : 'Contributing each month'), /*#__PURE__*/React.createElement("div", {
@@ -7416,7 +7423,7 @@ function App() {
       }, l.amount > 0 ? fmt(l.amount) : (esP ? 'sin fijar' : 'not set')));
     }));
   })()), /*#__PURE__*/React.createElement("div", {
-    style: css('display:flex;flex-direction:column;gap:10px;min-width:0;')
+    style: css('display:flex;flex-direction:column;gap:10px;min-width:0;height:100%;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;min-width:0;')
   }, /*#__PURE__*/React.createElement("div", {
@@ -7427,17 +7434,19 @@ function App() {
     style: css('font-size:12.5px;color:#86868b;font-weight:600;margin-top:3px;')
   }, sg.monthsLabel), (sg.partnersMonthly > 0 || sg.heldByCert) && /*#__PURE__*/React.createElement("div", {
     style: css('font-size:11px;color:#6e6e73;margin-top:9px;padding-top:9px;border-top:1px solid #f5f5f7;line-height:1.4;')
-  }, sg.partnersMonthly > 0 && /*#__PURE__*/React.createElement("div", null, s.language === 'es' ? 'Incluye ' : 'Includes ', fmt(sg.partnersMonthly), s.language === 'es' ? '/mes de quien comparte la meta.' : '/mo from who you share it with.'), sg.heldByCert && /*#__PURE__*/React.createElement("div", {
+  }, sg.partnersMonthly > 0 && /*#__PURE__*/React.createElement("div", null, s.language === 'es' ? 'Incluye ' : 'Includes ', fmt(sg.partnersMonthly), s.language === 'es' ? ' compartido' : ' shared'), sg.heldByCert && /*#__PURE__*/React.createElement("div", {
     style: css('color:#8a6d3b;margin-top:4px;')
   }, s.language === 'es' ? 'Juntarías el monto antes, pero es cuando se libera tu certificado.' : 'You’d have the amount sooner, but that’s when your certificate unlocks.'))), /*#__PURE__*/React.createElement("div", {
-    style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;min-width:0;')
+    style: css('background:#fff;border:1px solid #f0f0f2;border-radius:14px;padding:14px;min-width:0;flex:1;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12.5px;font-weight:700;color:#1d1d1f;margin-bottom:10px;line-height:1.3;')
   }, t('hitDate')), /*#__PURE__*/React.createElement("input", {
     type: "date",
     value: sgSource.customDate || '',
     onChange: e => updateGoal(sgSource.id, 'customDate', e.target.value),
-    style: css('width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #e5e5ea;border-radius:8px;font-size:12.5px;background:#fbfbfd;')
+    // Safari sizes date inputs from their content and ignores width:100% unless it is
+    // also allowed to shrink — that is what pushed "Dec 31, 2027" past the card edge.
+    style: css('display:block;width:100%;min-width:0;max-width:100%;box-sizing:border-box;-webkit-appearance:none;appearance:none;padding:8px 9px;border:1px solid #e5e5ea;border-radius:8px;font-size:12px;background:#fbfbfd;font-family:inherit;color:#1d1d1f;')
   }), sgSource.customDate && sg.customMsg && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
