@@ -3987,7 +3987,12 @@ function App() {
       style: css('font-size:12px;color:#1d1d1f;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
     }, /*#__PURE__*/React.createElement("span", {
       style: css('color:#86868b;')
-    }, MONTH_NAMES[s.logMonth], " ", e.day, " · "), e.name), /*#__PURE__*/React.createElement("b", {
+    }, MONTH_NAMES[s.logMonth], " ", e.day), // A recurring entry's name IS the category you just opened, so repeating it
+    // on every line says nothing. Only a name that adds something is shown —
+    // which is what the free-text description on a non-recurring expense does.
+    e.name && e.name !== key ? /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+      style: css('color:#86868b;')
+    }, " · "), e.name) : null), /*#__PURE__*/React.createElement("b", {
       style: css('font-size:12px;flex:none;')
     }, fmt(e.amount)), /*#__PURE__*/React.createElement("button", {
       onClick: ev => {
