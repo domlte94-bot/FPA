@@ -8112,9 +8112,12 @@ function App() {
     style: css('font-size:11px;font-weight:700;color:#1d1d1f;margin-bottom:2px;')
   }, openExpenseCat), catDetailList(openExpenseCat)), variableResumenRows.map((cr, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
-    style: css('margin-bottom:10px;')
+    // These rows sat almost on top of each other, so the bar of one read as if it
+    // belonged to the name below it. The gap between rows is now clearly larger than
+    // the gap between a name and its own bar, which is what groups them correctly.
+    style: css('margin-bottom:18px;')
   }, /*#__PURE__*/React.createElement("div", Object.assign({}, catRowProps(cr.name), {
-    style: css('display:flex;justify-content:space-between;align-items:center;font-size:12.5px;margin-bottom:4px;cursor:pointer;')
+    style: css('display:flex;justify-content:space-between;align-items:center;font-size:12.5px;margin-bottom:6px;cursor:pointer;padding:2px 0;')
   }), /*#__PURE__*/React.createElement("span", {
     style: css('display:flex;align-items:center;gap:6px;')
   }, /*#__PURE__*/React.createElement("span", {
