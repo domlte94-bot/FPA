@@ -604,8 +604,14 @@ function defaultState() {
     logYear: today.getFullYear()
   };
 }
+// 'biweekly' = every 14 days from a known payday (26 a year).
+// 'semimonthly' = the 15th and the last day of each month (24 a year) — what
+// "quincenal" means across most of Latin America.
+function payPeriodsPerYear(s) {
+  return s.payFrequency === 'biweekly' ? 26 : s.payFrequency === 'semimonthly' ? 24 : 12;
+}
 function monthlyIncomeOf(s) {
-  return s.payFrequency === 'biweekly' ? (s.income || 0) * 26 / 12 : s.income || 0;
+  return (s.income || 0) * payPeriodsPerYear(s) / 12;
 }
 function nextPaydayFrom(anchorStr, today) {
   if (!anchorStr) return null;
@@ -616,6 +622,62 @@ function nextPaydayFrom(anchorStr, today) {
   while (d.getTime() - 14 * 86400000 >= t.getTime()) d = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 14);
   return d;
 }
+// The pay period today falls in, as [start, end) with the payday that ends it.
+// Periods begin ON a payday, so the money that just arrived is the money for it.
+// Null for monthly pay (the month is the period), or biweekly with no known payday.
+function currentPayPeriod(s, today) {
+  const t = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  if (s.payFrequency === 'semimonthly') {
+    const y = t.getFullYear(), m = t.getMonth(), d = t.getDate();
+    const last = new Date(y, m + 1, 0).getDate();
+    if (d < 15) return { start: new Date(y, m, 0), end: new Date(y, m, 15), nextPayday: new Date(y, m, 15) };
+    if (d < last) return { start: new Date(y, m, 15), end: new Date(y, m, last), nextPayday: new Date(y, m, last) };
+    return { start: new Date(y, m, last), end: new Date(y, m + 1, 15), nextPayday: new Date(y, m + 1, 15) };
+  }
+  if (s.payFrequency === 'biweekly') {
+    const next = nextPaydayFrom(s.nextPaydayDate, t);
+    if (!next) return null;
+    if (next.getTime() === t.getTime()) {
+      const n2 = new Date(t.getFullYear(), t.getMonth(), t.getDate() + 14);
+      return { start: t, end: n2, nextPayday: n2 };
+    }
+    return { start: new Date(next.getFullYear(), next.getMonth(), next.getDate() - 14), end: next, nextPayday: next };
+  }
+  return null;
+}
+// Does this fixed expense's due day land inside the period? Null when it has no day
+// set yet — the caller then falls back to an even share instead of guessing.
+function fixedDueInPeriod(cat, period) {
+  const dd = parseInt(cat.dueDay, 10);
+  if (!dd) return null;
+  let y = period.start.getFullYear(), m = period.start.getMonth();
+  for (let k = 0; k < 3; k++) {
+    const dim = new Date(y, m + 1, 0).getDate();
+    const due = new Date(y, m, Math.min(dd, dim));
+    if (due >= period.start && due < period.end) return true;
+    m++;
+    if (m > 11) { m = 0; y++; }
+  }
+  return false;
+}
+// How much this one paycheck has to cover. Fixed bills count in full in the period
+// they're due (rent lands on one paycheck, not half on each); variable budgets are
+// spread evenly, since groceries happen all month long.
+function periodBudgetOf(s, period) {
+  const share = 12 / payPeriodsPerYear(s);
+  let total = 0;
+  (s.expenseCategories || []).forEach(c => {
+    const amt = c.amount || 0;
+    if (c.fixed) {
+      const hit = fixedDueInPeriod(c, period);
+      total += hit === null ? amt * share : hit ? amt : 0;
+    } else {
+      total += amt * share;
+    }
+  });
+  total += ((s.nonRecurringBudget || 0) + (s.spendingBoost || 0)) * share;
+  return total;
+}
 function receivedThisMonth(s, today) {
   const y = today.getFullYear(),
     m = today.getMonth();
@@ -625,7 +687,7 @@ function receivedThisMonth(s, today) {
   }).reduce((a, p) => a + p.amount, 0);
 }
 function actualMonthlyIncomeOf(s, today) {
-  if (s.payFrequency !== 'biweekly') return s.income || 0;
+  if (payPeriodsPerYear(s) === 12) return s.income || 0;
   // Budget against the smoothed monthly income (≈2.17 paychecks/mo). A single
   // paycheck logged mid-month is only part of the month's income, so it must NOT
   // replace the monthly figure — otherwise "available this month" collapses to $0
@@ -641,7 +703,7 @@ function computeCtx(s) {
   const hustleTotal = sum(s.hustles);
   const generalHustleTotal = s.hustles.filter(h => !h.goalId).reduce((a, h) => a + (h.amount || 0), 0);
   const monthlyIncome = actualMonthlyIncomeOf(s, today);
-  const usingActualPaychecks = s.payFrequency === 'biweekly' && receivedThisMonth(s, today) > 0;
+  const usingActualPaychecks = payPeriodsPerYear(s) !== 12 && receivedThisMonth(s, today) > 0;
   const baseAvailable = monthlyIncome - totalExpenses;
   const boostedAvailable = monthlyIncome + generalHustleTotal - totalExpenses;
   // Investments can opt into the same auto/manual split as goals.
@@ -929,6 +991,22 @@ const STRINGS = {
     totalSaved: 'Total saved',
     totalInvested: 'Total invested',
     spentSoFar: 'spent so far',
+    spentThisPeriod: 'spent this pay period',
+    ofMonthBudget: 'of {x} budget',
+    ofPeriodBudget: 'of {x} budget until {d}',
+    canSpendMore: 'You can spend {x} more until your next payday ({d}).',
+    careLeft: 'Careful — only {x} left until your next payday ({d}).',
+    overPeriod: 'You’re over this pay period’s budget.',
+    onTrackMonth: 'You’re on track this month.',
+    closeMonth: 'Careful — you’re close to your budget.',
+    overMonth: 'You’re over your budget this month.',
+    setBudgetHint: 'Set your expense budget to track your spending.',
+    semimonthlyLabel: 'Twice a month',
+    semimonthlyHint: 'Paid on the 15th and the last day of each month.',
+    dueDayPh: 'Day',
+    dueDayHint: 'Add the day you pay each fixed expense, so each paycheck only counts the bills that fall in it.',
+    thisPayPeriod: 'This pay period',
+    untilDate: 'until {d}',
     allowanceLabel: 'Allowance',
     fixedContractsLabel: 'Fixed contracts income',
     freelanceExtrasLabel: 'Freelance extras',
@@ -947,7 +1025,7 @@ const STRINGS = {
     parttimeLabel: 'Part-time',
     payFreqQ: 'How do you get paid?',
     monthlyLabel: 'Monthly',
-    biweeklyLabel: 'Biweekly',
+    biweeklyLabel: 'Every 2 weeks',
     fixedContractsQ: 'Do you have fixed contracts?',
     yesLabel: 'Yes',
     noLabel: 'No, it varies',
@@ -1100,6 +1178,22 @@ const STRINGS = {
     totalSaved: 'Total ahorrado',
     totalInvested: 'Total invertido',
     spentSoFar: 'gastado hasta ahora',
+    spentThisPeriod: 'gastado esta quincena',
+    ofMonthBudget: 'de {x} de presupuesto',
+    ofPeriodBudget: 'de {x} de presupuesto hasta el {d}',
+    canSpendMore: 'Puedes gastar {x} más hasta tu próximo pago ({d}).',
+    careLeft: 'Cuidado: solo te quedan {x} hasta tu próximo pago ({d}).',
+    overPeriod: 'Te pasaste del presupuesto de esta quincena.',
+    onTrackMonth: 'Vas bien este mes.',
+    closeMonth: 'Cuidado: estás cerca de tu presupuesto.',
+    overMonth: 'Te pasaste del presupuesto este mes.',
+    setBudgetHint: 'Define tu presupuesto de gastos para seguir lo que gastas.',
+    semimonthlyLabel: 'Quincenal',
+    semimonthlyHint: 'Te pagan el 15 y el último día de cada mes.',
+    dueDayPh: 'Día',
+    dueDayHint: 'Pon el día en que pagas cada gasto fijo, así cada quincena descuenta solo lo que cae en ella.',
+    thisPayPeriod: 'Esta quincena',
+    untilDate: 'hasta el {d}',
     allowanceLabel: 'Mesada',
     fixedContractsLabel: 'Ingreso de contratos fijos',
     freelanceExtrasLabel: 'Extras freelance',
@@ -1118,7 +1212,7 @@ const STRINGS = {
     parttimeLabel: 'Medio tiempo',
     payFreqQ: '¿Cómo te pagan?',
     monthlyLabel: 'Mensual',
-    biweeklyLabel: 'Quincenal',
+    biweeklyLabel: 'Cada 2 semanas',
     fixedContractsQ: '¿Tienes contratos fijos?',
     yesLabel: 'Sí',
     noLabel: 'No, varía',
@@ -2707,7 +2801,7 @@ function App() {
     const rows = s.expenseCategories.slice();
     rows[i] = {
       ...rows[i],
-      [field]: field === 'amount' ? parseFloat(val) || 0 : val
+      [field]: field === 'amount' ? parseFloat(val) || 0 : field === 'dueDay' ? val === '' ? null : Math.max(1, Math.min(31, parseInt(val, 10) || 1)) : val
     };
     return {
       expenseCategories: rows
@@ -4033,22 +4127,36 @@ function App() {
   const now = new Date();
   const nowMonthPrefix = now.getFullYear() + '-' + pad2(now.getMonth() + 1);
   const homeMonthEntries = s.expenseLog.filter(e => entryDateStr(e).slice(0, 7) === nowMonthPrefix);
-  const homeSpentTotal = homeMonthEntries.reduce((a, e) => a + e.amount, 0);
-  const homeSpentPct = ctx.totalExpenses > 0 ? homeSpentTotal / ctx.totalExpenses * 100 : 0;
+  const homeMonthSpent = homeMonthEntries.reduce((a, e) => a + e.amount, 0);
+  // Paid more than once a month? Then the useful number is what's left until the
+  // next paycheck, measured against what THIS paycheck has to cover.
+  const payPeriod = currentPayPeriod(s, ctx.today);
+  const payPeriodSpent = payPeriod ? s.expenseLog.filter(e => {
+    const d = new Date(entryDateStr(e) + 'T00:00:00');
+    return d >= payPeriod.start && d < payPeriod.end;
+  }).reduce((a, e) => a + e.amount, 0) : 0;
+  const payPeriodBudget = payPeriod ? periodBudgetOf(s, payPeriod) : 0;
+  const payPeriodDateLabel = payPeriod ? MONTH_NAMES[payPeriod.nextPayday.getMonth()] + ' ' + payPeriod.nextPayday.getDate() : '';
+  const homeSpentTotal = payPeriod ? payPeriodSpent : homeMonthSpent;
+  const homeBudget = payPeriod ? payPeriodBudget : ctx.totalExpenses;
+  const homeSpentPct = homeBudget > 0 ? homeSpentTotal / homeBudget * 100 : 0;
   const nextPayday = s.payFrequency === 'biweekly' ? nextPaydayFrom(s.nextPaydayDate, ctx.today) : null;
   const daysUntilPayday = nextPayday ? Math.round((nextPayday.getTime() - new Date(ctx.today.getFullYear(), ctx.today.getMonth(), ctx.today.getDate()).getTime()) / 86400000) : null;
   const nextPaydayLabel = nextPayday ? MONTH_NAMES[nextPayday.getMonth()] + ' ' + nextPayday.getDate() + ', ' + nextPayday.getFullYear() : '';
   const homeSpentColor = pctColor(homeSpentPct);
-  const homeLeftToSpend = ctx.totalExpenses - homeSpentTotal;
+  const homeLeftToSpend = homeBudget - homeSpentTotal;
+  const fillPeriod = key => t(key).replace('{x}', () => fmt(Math.max(homeLeftToSpend, 0))).replace('{d}', () => payPeriodDateLabel);
   let homeSpendHeadline;
-  if (ctx.totalExpenses <= 0) {
-    homeSpendHeadline = 'Set your expense budget to track your spending.';
+  if (homeBudget <= 0) {
+    homeSpendHeadline = t('setBudgetHint');
   } else if (homeSpentPct > 100) {
-    homeSpendHeadline = "You're over your budget this month.";
+    homeSpendHeadline = payPeriod ? t('overPeriod') : t('overMonth');
+  } else if (payPeriod) {
+    homeSpendHeadline = fillPeriod(homeSpentPct >= 80 ? 'careLeft' : 'canSpendMore');
   } else if (homeSpentPct >= 80) {
-    homeSpendHeadline = "Careful — you're close to your budget.";
+    homeSpendHeadline = t('closeMonth');
   } else {
-    homeSpendHeadline = "You're on track this month.";
+    homeSpendHeadline = t('onTrackMonth');
   }
   const investmentTotal = sum(s.investments);
   const investmentValueTotal = s.investments.reduce((a, i) => a + (i.currentValue || 0), 0);
@@ -5567,7 +5675,7 @@ function App() {
     style: css('background:rgba(255,255,255,0.14);border-radius:20px;padding:18px 18px 20px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12px;font-weight:600;opacity:0.85;text-transform:uppercase;letter-spacing:0.03em;')
-  }, t('spentSoFar')), /*#__PURE__*/React.createElement("div", {
+  }, payPeriod ? t('spentThisPeriod') : t('spentSoFar')), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 32,
       fontWeight: 800,
@@ -5593,7 +5701,7 @@ function App() {
     }
   }, Math.round(Math.min(homeSpentPct, 999)), "%")), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:11.5px;opacity:0.85;margin-top:6px;')
-  }, "of ", fmt(ctx.totalExpenses), " budget"), /*#__PURE__*/React.createElement("div", {
+  }, payPeriod ? t('ofPeriodBudget').replace('{x}', () => fmt(homeBudget)).replace('{d}', () => payPeriodDateLabel) : t('ofMonthBudget').replace('{x}', () => fmt(homeBudget))), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 14,
       fontWeight: 600,
@@ -5702,7 +5810,7 @@ function App() {
     style: css('display:flex;justify-content:space-between;align-items:center;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;')
-  }, s.incomeProfile === 'allowance' ? t('allowanceLabel') : s.incomeProfile === 'freelance' ? t('fixedContractsLabel') : s.payFrequency === 'biweekly' ? t('incomePerPaycheck') : t('monthlyIncome')), /*#__PURE__*/React.createElement("button", {
+  }, s.incomeProfile === 'allowance' ? t('allowanceLabel') : s.incomeProfile === 'freelance' ? t('fixedContractsLabel') : s.payFrequency === 'biweekly' || s.payFrequency === 'semimonthly' ? t('incomePerPaycheck') : t('monthlyIncome')), /*#__PURE__*/React.createElement("button", {
     onClick: e => {
       e.stopPropagation();
       setTab('incomeHistory');
@@ -5881,8 +5989,8 @@ function App() {
       flex: 1,
       padding: 8,
       borderRadius: 9,
-      border: s.payFrequency !== 'biweekly' ? '2px solid #0071e3' : '1px solid #e5e5ea',
-      background: s.payFrequency !== 'biweekly' ? '#eef6ff' : '#fbfbfd',
+      border: (s.payFrequency || 'monthly') === 'monthly' ? '2px solid #0071e3' : '1px solid #e5e5ea',
+      background: (s.payFrequency || 'monthly') === 'monthly' ? '#eef6ff' : '#fbfbfd',
       fontSize: 12,
       fontWeight: 600,
       color: '#1d1d1f',
@@ -5901,7 +6009,22 @@ function App() {
       color: '#1d1d1f',
       cursor: 'pointer'
     }
-  }, t('biweeklyLabel'))), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("div", {
+  }, t('biweeklyLabel')), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setPayFrequency('semimonthly'),
+    style: {
+      flex: 1,
+      padding: 8,
+      borderRadius: 9,
+      border: s.payFrequency === 'semimonthly' ? '2px solid #0071e3' : '1px solid #e5e5ea',
+      background: s.payFrequency === 'semimonthly' ? '#eef6ff' : '#fbfbfd',
+      fontSize: 12,
+      fontWeight: 600,
+      color: '#1d1d1f',
+      cursor: 'pointer'
+    }
+  }, t('semimonthlyLabel'))), s.payFrequency === 'semimonthly' && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11px;color:#86868b;line-height:1.35;margin-top:8px;')
+  }, t('semimonthlyHint')), s.payFrequency === 'biweekly' && /*#__PURE__*/React.createElement("div", {
     style: css('margin-top:10px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;')
@@ -5926,7 +6049,7 @@ function App() {
     style: css('font-size:20px;font-weight:700;color:#1d1d1f;')
   }, fmt(s.income)), s.incomeProfile !== 'allowance' && /*#__PURE__*/React.createElement("div", {
     style: css('font-size:11px;color:#86868b;margin-top:1px;')
-  }, s.payFrequency === 'biweekly' ? t('biweeklyLabel') : t('monthlyLabel')))), /*#__PURE__*/React.createElement("div", {
+  }, s.payFrequency === 'biweekly' ? t('biweeklyLabel') : s.payFrequency === 'semimonthly' ? t('semimonthlyLabel') : t('monthlyLabel')))), /*#__PURE__*/React.createElement("div", {
     style: css('background:#fff;border-radius:16px;padding:16px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:10.5px;color:#86868b;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:4px;')
@@ -6447,8 +6570,8 @@ function App() {
       flex: 1,
       padding: 11,
       borderRadius: 11,
-      border: s.payFrequency !== 'biweekly' ? '2px solid #0071e3' : '1px solid #e5e5ea',
-      background: s.payFrequency !== 'biweekly' ? '#eef6ff' : '#fbfbfd',
+      border: (s.payFrequency || 'monthly') === 'monthly' ? '2px solid #0071e3' : '1px solid #e5e5ea',
+      background: (s.payFrequency || 'monthly') === 'monthly' ? '#eef6ff' : '#fbfbfd',
       fontSize: 13,
       fontWeight: 600,
       color: '#1d1d1f',
@@ -6467,7 +6590,22 @@ function App() {
       color: '#1d1d1f',
       cursor: 'pointer'
     }
-  }, t('biweeklyLabel')))), s.incomeProfile === 'freelance' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, t('biweeklyLabel')), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setPayFrequency('semimonthly'),
+    style: {
+      flex: 1,
+      padding: 11,
+      borderRadius: 11,
+      border: s.payFrequency === 'semimonthly' ? '2px solid #0071e3' : '1px solid #e5e5ea',
+      background: s.payFrequency === 'semimonthly' ? '#eef6ff' : '#fbfbfd',
+      fontSize: 13,
+      fontWeight: 600,
+      color: '#1d1d1f',
+      cursor: 'pointer'
+    }
+  }, t('semimonthlyLabel'))), s.payFrequency === 'semimonthly' && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11px;color:#86868b;line-height:1.35;margin:-12px 0 18px;')
+  }, t('semimonthlyHint'))), s.incomeProfile === 'freelance' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:10px;')
   }, t('fixedContractsQ')), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:8px;margin-bottom:20px;')
@@ -8024,7 +8162,17 @@ function App() {
     style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:4px;')
   }, "Expense summary — ", MONTH_NAMES[s.logMonth], " ", s.logYear), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:12.5px;color:#86868b;margin-bottom:12px;')
-  }, "Comparison between what you planned and what you actually spent (everything included)."), /*#__PURE__*/React.createElement("div", {
+  }, "Comparison between what you planned and what you actually spent (everything included)."), payPeriod && s.logYear === ctx.today.getFullYear() && s.logMonth === ctx.today.getMonth() && /*#__PURE__*/React.createElement("div", {
+    style: css('display:flex;justify-content:space-between;align-items:baseline;gap:10px;background:#f2f7ff;border-radius:10px;padding:9px 11px;margin-bottom:12px;font-size:12.5px;')
+  }, /*#__PURE__*/React.createElement("span", {
+    style: css('font-weight:600;color:#1d1d1f;min-width:0;')
+  }, t('thisPayPeriod'), /*#__PURE__*/React.createElement("span", {
+    style: css('color:#86868b;font-weight:500;')
+  }, ' · ' + t('untilDate').replace('{d}', () => payPeriodDateLabel))), /*#__PURE__*/React.createElement("span", {
+    style: css('flex:none;')
+  }, /*#__PURE__*/React.createElement("b", {
+    style: { color: payPeriodSpent > payPeriodBudget ? '#ff3b30' : '#1d1d1f' }
+  }, fmt(payPeriodSpent)), " / ", fmt(payPeriodBudget))), /*#__PURE__*/React.createElement("div", {
     style: css('margin-bottom:12px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -8466,7 +8614,14 @@ function App() {
       cursor: 'pointer',
       whiteSpace: 'nowrap'
     }
-  }, row.fixed ? '✓ Fixed' : 'Fixed'), /*#__PURE__*/React.createElement("input", {
+  }, row.fixed ? '✓ Fixed' : 'Fixed'), row.fixed && s.payFrequency && s.payFrequency !== 'monthly' && /*#__PURE__*/React.createElement("input", {
+    type: "number", inputMode: "numeric", min: "1", max: "31",
+    placeholder: t('dueDayPh'),
+    "aria-label": t('dueDayPh'),
+    value: row.dueDay || '',
+    onChange: e => updateExpenseRow(i, 'dueDay', e.target.value),
+    style: css('width:46px;flex:none;border:1px solid #e5e5ea;border-radius:8px;padding:6px 4px;font-size:12px;background:#fbfbfd;text-align:center;')
+  }), /*#__PURE__*/React.createElement("input", {
     type: "number", inputMode: "decimal",
     value: row.amount || '',
     onChange: e => updateExpenseRow(i, 'amount', e.target.value),
@@ -8477,7 +8632,9 @@ function App() {
   }, "×"))), /*#__PURE__*/React.createElement("button", {
     onClick: addExpenseRow,
     style: css('margin-top:10px;background:#f5f5f7;border:none;padding:8px 14px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;')
-  }, t('addExpense')), /*#__PURE__*/React.createElement("div", {
+  }, t('addExpense')), s.payFrequency && s.payFrequency !== 'monthly' && s.expenseCategories.some(c => c.fixed) && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11px;color:#86868b;margin-top:8px;line-height:1.4;')
+  }, t('dueDayHint')), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:8px;align-items:center;padding:10px 0;border-top:1px solid #f0f0f2;margin-top:10px;')
   }, /*#__PURE__*/React.createElement("span", {
     style: {
