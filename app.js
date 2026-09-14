@@ -344,6 +344,36 @@ function entryAuthor(e) {
   if (typeof e.label === 'string' && e.label.indexOf('@') > -1) return e.label.split('·')[0].trim().toLowerCase();
   return null;
 }
+// Someone a goal is shared WITH can take money back out, but only what they put in
+// themselves (net of what they already took back) — never the owner's money or another
+// person's. Always built from the freshly read row, so a stale screen can't overdraw.
+function sharedMineNet(itemData, email) {
+  const em = String(email || '').toLowerCase();
+  if (!em) return 0;
+  return ((itemData && itemData.savingsLog) || []).reduce((a, e) => a + (entryAuthor(e) === em ? (e.amount || 0) : 0), 0);
+}
+function buildSharedWithdrawal(itemData, email, name, abs, reason, now) {
+  const data = Object.assign({}, itemData || {});
+  const prevLog = data.savingsLog || [];
+  if (!(abs > 0)) return { error: 'amount' };
+  const mine = sharedMineNet(data, email);
+  if (abs > mine + 0.001) return { error: 'over', mine };
+  const base = typeof data.baseCurrent === 'number' ? data.baseCurrent : ((data.current || 0) - prevLog.reduce((a, e) => a + (e.amount || 0), 0));
+  const entry = {
+    id: now.getTime() + Math.floor(Math.random() * 1000),
+    label: name + ' · ' + MONTH_NAMES[now.getMonth()] + ' ' + now.getFullYear(),
+    amount: -abs,
+    by: String(email).toLowerCase(),
+    kind: 'withdrawal',
+    reason: (reason || '').trim() || undefined,
+    ym: now.getFullYear() * 12 + now.getMonth()
+  };
+  const log = [entry].concat(prevLog).slice(0, 80);
+  data.savingsLog = log;
+  data.baseCurrent = base;
+  data.current = base + log.reduce((a, e) => a + (e.amount || 0), 0);
+  return { data, entry };
+}
 function goalOthersTotal(goal) {
   return ((goal && goal.savingsLog) || []).reduce(function (a, e) {
     var who = e.by || (typeof e.label === 'string' && e.label.indexOf('@') > -1 ? e.label.split('·')[0].trim() : null);
@@ -927,6 +957,18 @@ const STRINGS = {
     assetUnsure: 'Not sure',
     assetUnsureDesc: 'no heads-up either way',
     pctOfMonthly: '% of monthly savings',
+    withdrawFromGoal: 'Withdraw from this goal',
+    withdrawTitle: 'Withdraw from goal',
+    withdrawAvailable: 'Available in this goal',
+    withdrawWarn: 'This takes money back out of what you already saved. It stays marked in red in the history.',
+    withdrawReasonPh: 'What is it for? (optional)',
+    withdrawTooMuch: 'That’s more than this goal has',
+    withdrawConfirm: 'Withdraw',
+    withdrawalLabel: 'Withdrawal',
+    withdrawMine: 'Withdraw from my contributions',
+    withdrawMineAvailable: 'Your contributions',
+    withdrawMineTooMuch: 'You can only take back what you put in',
+    withdrawMineWarn: 'You can only withdraw what you contributed. It stays marked in red in the history, and the goal’s owner will see it.',
     savingsMonthly: 'savings monthly',
     leftThisMonth: 'left to assign',
     doneThisMonth: 'done this month',
@@ -1114,6 +1156,18 @@ const STRINGS = {
     assetUnsure: 'No estoy seguro',
     assetUnsureDesc: 'sin aviso en ningún sentido',
     pctOfMonthly: '% de tu ahorro mensual',
+    withdrawFromGoal: 'Retirar de esta meta',
+    withdrawTitle: 'Retirar de la meta',
+    withdrawAvailable: 'Disponible en esta meta',
+    withdrawWarn: 'Esto saca dinero de lo que ya ahorraste. Quedará marcado en rojo en el historial.',
+    withdrawReasonPh: '¿Para qué es? (opcional)',
+    withdrawTooMuch: 'Es más de lo que tiene esta meta',
+    withdrawConfirm: 'Retirar',
+    withdrawalLabel: 'Retiro',
+    withdrawMine: 'Retirar de mis aportes',
+    withdrawMineAvailable: 'Tus aportes',
+    withdrawMineTooMuch: 'Solo puedes retirar lo que tú aportaste',
+    withdrawMineWarn: 'Solo puedes retirar lo que tú aportaste. Quedará marcado en rojo en el historial y el dueño de la meta lo verá.',
     savingsMonthly: 'del ahorro mensual',
     leftThisMonth: 'falta asignar',
     doneThisMonth: 'completo este mes',
@@ -1442,6 +1496,10 @@ function App() {
   const [storageWarning, setStorageWarning] = useState('');
   const [depositAmount, setDepositAmount] = useState('');
   const [quickAddGoalId, setQuickAddGoalId] = useState(null);
+  const [withdrawGoalId, setWithdrawGoalId] = useState(null); // goal whose "withdraw" sheet is open
+  const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [withdrawReason, setWithdrawReason] = useState('');
+  const [sharedWithdrawShare, setSharedWithdrawShare] = useState(null); // shared goal row I'm withdrawing my own money from
   const [logAmount, setLogAmount] = useState('');
   const [logName, setLogName] = useState('');
   const [logType, setLogType] = useState('recurring');
@@ -1510,7 +1568,7 @@ function App() {
   // (iOS otherwise auto-scrolls the page when the keyboard opens, dragging the
   // sheet back down under the keyboard). Scrolling inside the sheet still works.
   useEffect(() => {
-    if (!showPaycheckModal && !showExpenseModal && !quickAddGoalId && !shareModal && !sharedDepositShare) return;
+    if (!showPaycheckModal && !showExpenseModal && !quickAddGoalId && !withdrawGoalId && !sharedWithdrawShare && !shareModal && !sharedDepositShare) return;
     const prevBody = document.body.style.overflow;
     const prevHtml = document.documentElement.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -1525,7 +1583,7 @@ function App() {
       document.documentElement.style.overflow = prevHtml;
       document.removeEventListener('touchmove', prevent);
     };
-  }, [showPaycheckModal, showExpenseModal, quickAddGoalId, shareModal, sharedDepositShare]);
+  }, [showPaycheckModal, showExpenseModal, quickAddGoalId, withdrawGoalId, sharedWithdrawShare, shareModal, sharedDepositShare]);
   const expensesCalRef = useRef(null);
   const [expensesCalH, setExpensesCalH] = useState(0);
   useEffect(function () {
@@ -1860,6 +1918,28 @@ function App() {
         .eq('id', share.id).select('id').then(res => {
           if (noteShareError('deposit', res.error)) return;
           if (!res.data || res.data.length === 0) { noteShareError('deposit', { message: 'No permission to save on this shared item.' }); return; }
+          setShareSyncError('');
+          fetchShares();
+        });
+    });
+  };
+  const myNetInShared = itemData => sharedMineNet(itemData, myEmail);
+  const withdrawFromSharedGoal = (share, abs, reason) => {
+    if (!sbClient || !authUser || !(abs > 0)) return;
+    sbClient.from('shares').select('*').eq('id', share.id).maybeSingle().then(({ data: fresh, error: readErr }) => {
+      if (noteShareError('withdraw', readErr)) return;
+      const built = buildSharedWithdrawal(fresh && fresh.item_data ? fresh.item_data : (share.item_data || {}), myEmail, myDisplayName() || 'me', abs, reason, new Date());
+      if (built.error === 'over') {
+        noteShareError('withdraw', { message: t('withdrawMineTooMuch') + ': ' + fmt(Math.max(built.mine, 0)) });
+        fetchShares();
+        return;
+      }
+      if (built.error) return;
+      sbClient.from('shares')
+        .update({ item_data: built.data, updated_at: new Date().toISOString(), updated_by: authUser.id })
+        .eq('id', share.id).select('id').then(res => {
+          if (noteShareError('withdraw', res.error)) return;
+          if (!res.data || res.data.length === 0) { noteShareError('withdraw', { message: 'No permission to save on this shared item.' }); return; }
           setShareSyncError('');
           fetchShares();
         });
@@ -3067,10 +3147,69 @@ function App() {
     });
     setDepositAmount('');
   };
+  // ---- withdrawals ----
+  // Taking money back out of a goal is recorded as a NEGATIVE savings entry, so every
+  // total that sums the log (current, streak rings, "left to assign") nets it out on
+  // its own. It comes out of the linked fund first — that's where deposits went — and
+  // any remainder from the goal's own balance; the split is stored so undo is exact.
+  const takeFromGoal = (st, goalId, abs, entryId) => {
+    const goal = st.goals.find(g => g.id === goalId);
+    if (!goal) return null;
+    const linked = (st.investments || []).find(i => i.goalId === goalId);
+    const fundPart = linked ? Math.min(abs, Math.max(linked.amount || 0, 0)) : 0;
+    const goalPart = abs - fundPart;
+    const goals = st.goals.map(g => g.id !== goalId ? g : { ...g, current: Math.max((g.current || 0) - goalPart, 0) });
+    const investments = fundPart > 0 ? st.investments.map(i => i.id !== linked.id ? i : {
+      ...i,
+      amount: Math.max((i.amount || 0) - fundPart, 0),
+      currentValue: Math.max((i.currentValue || 0) - fundPart, 0),
+      lastUpdated: todayStr,
+      log: [{ id: Date.now() + Math.random(), amount: -fundPart, date: todayStr, srcId: entryId }].concat(i.log || []).slice(0, 24)
+    }) : st.investments;
+    return { goals, investments, fundId: fundPart > 0 ? linked.id : undefined, fundPart };
+  };
+  const giveBackToGoal = (st, goalId, entry) => {
+    const abs = Math.abs(entry.amount || 0);
+    const fundPart = entry.fundPart || 0;
+    const goals = st.goals.map(g => g.id !== goalId ? g : { ...g, current: (g.current || 0) + (abs - fundPart) });
+    const investments = fundPart > 0 && entry.fundId ? st.investments.map(i => i.id !== entry.fundId ? i : {
+      ...i,
+      amount: (i.amount || 0) + fundPart,
+      currentValue: (i.currentValue || 0) + fundPart,
+      log: (i.log || []).filter(l => l.srcId !== entry.id)
+    }) : st.investments;
+    return { goals, investments };
+  };
+  const registerWithdrawal = (goalId, abs, reason) => {
+    if (!(abs > 0)) return;
+    patch(st => {
+      const id = Date.now();
+      const r = takeFromGoal(st, goalId, abs, id);
+      if (!r) return {};
+      const entry = {
+        id,
+        label: MONTH_NAMES[new Date().getMonth()] + ' ' + new Date().getFullYear(),
+        amount: -abs,
+        kind: 'withdrawal',
+        reason: (reason || '').trim() || undefined,
+        fundId: r.fundId,
+        fundPart: r.fundPart || undefined
+      };
+      return {
+        goals: r.goals.map(g => g.id !== goalId ? g : { ...g, savingsLog: [entry].concat(g.savingsLog || []).slice(0, 60) }),
+        investments: r.investments
+      };
+    });
+  };
   const removeSavingsLogEntry = (goalId, entryId) => patch(s => {
     const goal = s.goals.find(g => g.id === goalId);
     const entry = goal && (goal.savingsLog || []).find(e => e.id === entryId);
     if (!entry) return {};
+    if (entry.kind === 'withdrawal') {
+      // Deleting a withdrawal puts the money back exactly where it came from.
+      const r = giveBackToGoal(s, goalId, entry);
+      return { goals: r.goals.map(g => g.id !== goalId ? g : { ...g, savingsLog: g.savingsLog.filter(e => e.id !== entryId) }), investments: r.investments };
+    }
     // If this entry went into a linked fund, take it back out of the fund, not the goal.
     const fund = entry.fundId ? (s.investments || []).find(i => i.id === entry.fundId) : null;
     const goals = s.goals.map(g => g.id !== goalId ? g : {
@@ -3090,6 +3229,17 @@ function App() {
     const goal = s.goals.find(g => g.id === goalId);
     const entry = goal && (goal.savingsLog || []).find(e => e.id === entryId);
     if (!entry) return {};
+    if (entry.kind === 'withdrawal') {
+      // Editing a withdrawal: put the old amount back, then take the new one out with
+      // the same fund-first rule. Typed as a positive number, stored negative.
+      const back = giveBackToGoal(s, goalId, entry);
+      const abs = Math.abs(newAmount);
+      const r = takeFromGoal({ ...s, goals: back.goals, investments: back.investments }, goalId, abs, entry.id);
+      return {
+        goals: r.goals.map(g => g.id !== goalId ? g : { ...g, savingsLog: g.savingsLog.map(e => e.id === entryId ? { ...e, amount: -abs, fundId: r.fundId, fundPart: r.fundPart || undefined } : e) }),
+        investments: r.investments
+      };
+    }
     const delta = newAmount - entry.amount;
     const fund = entry.fundId ? (s.investments || []).find(i => i.id === entry.fundId) : null;
     const goals = s.goals.map(g => g.id !== goalId ? g : {
@@ -5099,6 +5249,8 @@ function App() {
     // Same idea for anything else floating above the page: navigating away should
     // never leave a sheet or dialog stranded on top of the section you asked for.
     setQuickAddGoalId(null);
+    setWithdrawGoalId(null);
+    setSharedWithdrawShare(null);
     setShowPaycheckModal(false);
     setShowExpenseModal(false);
     setShareModal(null);
@@ -5413,7 +5565,10 @@ function App() {
     }, /*#__PURE__*/React.createElement("span", null, es ? 'Total' : 'Total'), /*#__PURE__*/React.createElement("span", null, fmt(cur))))), row.permission === 'edit' && /*#__PURE__*/React.createElement("button", {
       onClick: function () { setSharedDepositAmt(''); setSharedDepositShare(row); },
       style: css('width:100%;background:#0071e3;color:#fff;border:none;border-radius:13px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:14px;')
-    }, es ? '+ Abonar a esta meta' : '+ Add savings'), /*#__PURE__*/React.createElement("div", {
+    }, es ? '+ Abonar a esta meta' : '+ Add savings'), row.permission === 'edit' && myNetInShared(d) > 0 && /*#__PURE__*/React.createElement("button", {
+      onClick: function () { setWithdrawAmount(''); setWithdrawReason(''); setSharedWithdrawShare(row); },
+      style: css('width:100%;background:none;border:none;color:#ff3b30;font-size:12.5px;font-weight:600;cursor:pointer;margin:-8px 0 12px;padding:6px;')
+    }, t('withdrawMine')), /*#__PURE__*/React.createElement("div", {
       style: css(card)
     }, /*#__PURE__*/React.createElement("div", {
       style: css('font-size:13px;font-weight:700;color:#1d1d1f;margin-bottom:4px;')
@@ -5489,7 +5644,9 @@ function App() {
       return /*#__PURE__*/React.createElement("div", {
         key: entry.id || i,
         style: css('display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:8px 0;border-top:' + (i === 0 ? 'none' : '1px solid #f0f0f2') + ';')
-      }, /*#__PURE__*/React.createElement("span", { style: css('color:#6e6e73;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;') }, entry.label || (es ? 'Aporte' : 'Contribution')), /*#__PURE__*/React.createElement("b", null, fmt(entry.amount || 0)));
+      }, /*#__PURE__*/React.createElement("span", { style: css('color:#6e6e73;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;') }, ((entry.amount || 0) < 0 ? (es ? 'Retiro · ' : 'Withdrawal · ') : '') + (entry.label || (es ? 'Aporte' : 'Contribution'))), /*#__PURE__*/React.createElement("b", {
+        style: { color: (entry.amount || 0) < 0 ? '#ff3b30' : '#1d1d1f', flex: 'none' }
+      }, (entry.amount || 0) < 0 ? '−' + fmt(Math.abs(entry.amount)) : fmt(entry.amount || 0)));
     })));
   })(), revokeConfirm && (function () {
     var es = s.language === 'es';
@@ -5540,7 +5697,45 @@ function App() {
       fn();
     },
     style: css('flex:1;background:#ff3b30;color:#fff;border:none;padding:11px;border-radius:10px;font-size:13.5px;font-weight:600;cursor:pointer;')
-  }, s.language === 'es' ? 'Sí, continuar' : 'Yes, continue')))), quickAddGoalId && (function () { var qa = s.goals.find(function (g) { return g.id === quickAddGoalId; }); if (!qa) return null; var qaMonthly = buildGoalView(qa, false).monthlyBoosted; var qaThisLabel = MONTH_NAMES[new Date().getMonth()] + ' ' + new Date().getFullYear(); var qaAssigned = s.goals.reduce(function (a, g) { return a + (g.savingsLog || []).filter(function (e) { return e.label === qaThisLabel; }).reduce(function (x, e) { return x + (e.amount || 0); }, 0); }, 0); var qaPool = Math.max(ctx.boostedAvailable - qaAssigned - sharedPlanTotal, 0); var qaTyped = parseFloat(depositAmount) || 0; var qaAfter = qaPool - qaTyped; return React.createElement('div', { onClick: function () { setQuickAddGoalId(null); }, className: 'pf-overlay-in', style: css('position:fixed;inset:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;padding:0;') }, React.createElement('div', { onClick: function (e) { e.stopPropagation(); }, className: 'pf-modal-in', style: Object.assign(css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));max-width:480px;width:100%;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);'), { paddingBottom: keyboardInset > 0 ? keyboardInset + 24 : undefined, transition: 'padding-bottom 0.18s ease-out' }) }, React.createElement('div', { style: css('display:flex;align-items:center;gap:12px;margin-bottom:16px;') }, React.createElement('div', { style: { width: 40, height: 40, borderRadius: 11, background: qa.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' } }, React.createElement(GoalIconGlyph, { icon: qa.icon, size: 20 })), React.createElement('div', null, React.createElement('div', { style: css('font-size:16px;font-weight:700;') }, s.language === 'es' ? 'Asignar ahorro' : 'Assign savings'), React.createElement('div', { style: css('font-size:12.5px;color:#86868b;') }, qa.name))), React.createElement('div', { style: { position: 'relative', marginBottom: 12 } }, React.createElement('span', { style: css('position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:17px;color:#86868b;pointer-events:none;') }, '$'), React.createElement('input', { type: 'number', inputMode: 'decimal', autoFocus: true, placeholder: '0', value: depositAmount, onChange: function (e) { setDepositAmount(e.target.value); }, onKeyDown: function (e) { if (e.key === 'Enter') { registerDeposit(quickAddGoalId); setQuickAddGoalId(null); } }, style: css('width:100%;padding:13px 12px 13px 26px;border:1px solid #d2d2d7;border-radius:12px;font-size:18px;font-weight:700;background:#fbfbfd;') })), qaMonthly > 0 && React.createElement('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } }, React.createElement('button', { onClick: function () { setDepositAmount(String(Math.round(qaMonthly))); }, style: css('flex:1;background:#f5f5f7;border:none;border-radius:10px;padding:9px;font-size:12.5px;font-weight:600;color:#1d1d1f;cursor:pointer;') }, (s.language === 'es' ? 'Este mes: ' : 'This month: ') + fmt(qaMonthly)), React.createElement('button', { onClick: function () { setDepositAmount(String(Math.round(qaMonthly / 2))); }, style: css('flex:none;background:#f5f5f7;border:none;border-radius:10px;padding:9px 12px;font-size:12.5px;font-weight:600;color:#1d1d1f;cursor:pointer;') }, s.language === 'es' ? 'Mitad' : 'Half')), React.createElement('div', { style: css('background:#f5f5f7;border-radius:12px;padding:11px 12px;margin-bottom:16px;') }, React.createElement('div', { style: css('display:flex;justify-content:space-between;align-items:center;font-size:12.5px;color:#6e6e73;') }, React.createElement('span', null, s.language === 'es' ? 'Disponible para repartir' : 'Available to assign'), React.createElement('b', { style: { color: '#1d1d1f' } }, fmt(qaPool))), qaTyped > 0 && React.createElement('div', { style: { fontSize: 12, marginTop: 5, color: qaAfter < 0 ? '#ff3b30' : '#86868b' } }, (s.language === 'es' ? 'Te queda ' : "You'll have ") + fmt(qaAfter) + (s.language === 'es' ? ' para otras metas y gastos' : ' left for other goals and expenses'))), React.createElement('div', { style: { display: 'flex', gap: 10 } }, React.createElement('button', { onClick: function () { setQuickAddGoalId(null); setDepositAmount(''); }, style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;') }, s.language === 'es' ? 'Cancelar' : 'Cancel'), React.createElement('button', { onClick: function () { registerDeposit(quickAddGoalId); setQuickAddGoalId(null); }, style: css('flex:1;background:#0071e3;color:#fff;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;') }, s.language === 'es' ? 'Asignar' : 'Assign')))); })(), !s.hasSeenWelcome && React.createElement('div', { style: css('position:fixed;inset:0;z-index:100;background:#fff;display:flex;flex-direction:column;overflow-y:auto;padding:calc(env(safe-area-inset-top) + 20px) 24px calc(env(safe-area-inset-bottom) + 28px);') }, React.createElement('div', { style: css('width:100%;max-width:420px;margin:0 auto;flex:1;display:flex;flex-direction:column;') }, React.createElement('div', { style: css('display:flex;justify-content:flex-end;margin-bottom:2px;') }, React.createElement('button', { onClick: function(){ setLanguage(s.language==='es'?'en':'es'); }, style: css('background:none;border:none;color:#86868b;font-size:12.5px;font-weight:700;cursor:pointer;padding:4px;') }, s.language==='es'?'EN':'ES')), (welcomeStep < 3) && React.createElement('div', { style: css('margin-bottom:8px;') }, React.createElement('div', { style: css('text-align:center;font-size:12px;color:#86868b;font-weight:600;margin-bottom:8px;') }, welcomeStep===0 ? (s.language==='es'?'Paso 1':'Step 1') : welcomeStep===1 ? (s.language==='es'?'Paso 2 de 3':'Step 2 of 3') : (s.language==='es'?'Paso 3 de 3':'Step 3 of 3')), React.createElement('div', { style: css('display:flex;gap:8px;') }, [0,1,2].map(function(idx){ return React.createElement('div', { key: idx, style: { flex:1, height:4, borderRadius:2, background: idx<=welcomeStep ? '#1d1d1f' : '#e5e5ea' } }); }))), welcomeStep===0 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, t('profileQTitle')), ['allowance','salary','freelance'].map(function(pp){ return React.createElement('button', { key:pp, onClick: function(){ setIncomeProfile(pp); }, style: { display:'block', width:'100%', textAlign:'left', padding:'14px 16px', borderRadius:12, border: s.incomeProfile===pp ? '2px solid #2f6bff' : '1px solid #d2d2d7', background: s.incomeProfile===pp ? '#eef4ff' : '#fff', fontSize:14, fontWeight:500, color:'#1d1d1f', cursor:'pointer', marginBottom:10 } }, pp==='allowance'?t('profileAllowance'):pp==='salary'?t('profileSalary'):t('profileFreelance')); }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(1), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : welcomeStep===1 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, t('howOldQ')), React.createElement('input', { type:'number', inputMode:'numeric', autoFocus:true, placeholder: t('yourAge'), value: s.studentAge || '', onChange: function(e){ setStudentAge(parseInt(e.target.value,10)||null); }, style: css('width:100%;padding:14px 16px;border:1px solid #d2d2d7;border-radius:12px;font-size:15px;background:#fff;margin-bottom:16px;') }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(2), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : welcomeStep===2 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, s.language==='es'?'¿Inviertes?':'Do you invest?'), [ { k:true, label: s.language==='es'?'Sí, mis padres y yo invertimos juntos':'Yes, my parents and I invest together' }, { k:'own', label: s.language==='es'?'Sí, tengo mi propia cuenta':'Yes, I have my own account' }, { k:false, label: t('investNo') } ].map(function(opt,ix){ return React.createElement('button', { key:ix, onClick: function(){ setInvestsWithParents(opt.k); }, style: { display:'block', width:'100%', textAlign:'left', padding:'14px 16px', borderRadius:12, border: s.investsWithParents===opt.k ? '2px solid #2f6bff' : '1px solid #d2d2d7', background: s.investsWithParents===opt.k ? '#eef4ff' : '#fff', fontSize:14, fontWeight:500, color:'#1d1d1f', cursor:'pointer', marginBottom:10 } }, opt.label); }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(3), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'8vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;line-height:1.15;margin-bottom:26px;') }, s.language==='es'?'¡Últimos pasos! Es hora de configurar tu cuenta':"Last steps! It's time to set up your account"), [ { tt: s.language==='es'?'Ingreso':'Income', dd: s.language==='es'?'Dinos cuánto y cada cuánto te pagan.':'Tell us how much and how often you get paid.', tb:'inicio' }, { tt: s.language==='es'?'Plan de gastos':'Expenses Budget Plan', dd: s.language==='es'?'Define tu plan de gasto del mes.':'Set your spending plan for the month.', tb:'budgetPlan' }, { tt: s.language==='es'?'Metas':'Goals', dd: s.language==='es'?'Agrega metas que quieras lograr.':'Add goals you want to achieve.', tb:'metas' } ].map(function(card,ci){ return React.createElement('button', { key:ci, onClick: function(){ dismissWelcome(); setTab(card.tb); }, style: css('display:block;width:100%;text-align:left;background:#fff;border:1px solid #e5e5ea;border-radius:14px;padding:16px;margin-bottom:12px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.05);') }, React.createElement('div', { style: css('font-size:15px;font-weight:700;color:#1d1d1f;margin-bottom:3px;') }, card.tt), React.createElement('div', { style: css('font-size:12.5px;color:#86868b;') }, card.dd)); }), React.createElement('button', { onClick: function(){ dismissWelcome(); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#2f6bff;font-size:14px;font-weight:700;cursor:pointer;margin-top:8px;padding:0;') }, s.language==='es'?'Hacerlo después':'Do it later') ))), /*#__PURE__*/React.createElement("div", {
+  }, s.language === 'es' ? 'Sí, continuar' : 'Yes, continue')))), (withdrawGoalId || sharedWithdrawShare) && (function () {
+    // One sheet, two cases: the owner withdrawing from their own goal (anything in it),
+    // or someone the goal is shared with, who can only take back what THEY put in.
+    var sharedRow = !withdrawGoalId && sharedWithdrawShare ? (sharesData.find(function (r) { return r.id === sharedWithdrawShare.id; }) || sharedWithdrawShare) : null;
+    var sd = sharedRow ? (sharedRow.item_data || {}) : null;
+    var wg = sharedRow ? { id: sharedRow.id, color: sd.color || '#0071e3', icon: sd.icon || 'star', name: sd.name || 'Meta' } : s.goals.find(function (g) { return g.id === withdrawGoalId; });
+    if (!wg) return null;
+    var es = s.language === 'es';
+    var avail = sharedRow ? Math.max(myNetInShared(sd), 0) : goalCur(wg);
+    var amt = parseFloat(withdrawAmount) || 0;
+    var tooMuch = amt > avail + 0.001;
+    var canGo = amt > 0 && !tooMuch;
+    var close = function () { setWithdrawGoalId(null); setSharedWithdrawShare(null); setWithdrawAmount(''); setWithdrawReason(''); };
+    var go = function () {
+      if (!canGo) return;
+      if (sharedRow) withdrawFromSharedGoal(sharedRow, amt, withdrawReason);
+      else registerWithdrawal(wg.id, amt, withdrawReason);
+      close();
+    };
+    var head = React.createElement('div', { style: css('display:flex;align-items:center;gap:12px;margin-bottom:14px;') },
+      React.createElement('div', { style: { width: 40, height: 40, borderRadius: 11, background: wg.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' } }, React.createElement(GoalIconGlyph, { icon: wg.icon, size: 20 })),
+      React.createElement('div', null,
+        React.createElement('div', { style: css('font-size:16px;font-weight:700;') }, t('withdrawTitle')),
+        React.createElement('div', { style: css('font-size:12.5px;color:#86868b;') }, wg.name)));
+    var warn = React.createElement('div', { style: css('background:#fff4f4;border-radius:12px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#c62828;line-height:1.4;') }, sharedRow ? t('withdrawMineWarn') : t('withdrawWarn'));
+    var amountField = React.createElement('div', { style: { position: 'relative', marginBottom: 8 } },
+      React.createElement('span', { style: css('position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:17px;color:#86868b;pointer-events:none;') }, '$'),
+      React.createElement('input', { type: 'number', inputMode: 'decimal', autoFocus: true, placeholder: '0', value: withdrawAmount, onChange: function (e) { setWithdrawAmount(e.target.value); }, onKeyDown: function (e) { if (e.key === 'Enter') go(); }, style: css('width:100%;padding:13px 12px 13px 26px;border:1px solid ' + (tooMuch ? '#ff3b30' : '#d2d2d7') + ';border-radius:12px;font-size:18px;font-weight:700;background:#fbfbfd;') }));
+    var availLine = React.createElement('div', { style: css('display:flex;justify-content:space-between;font-size:12px;margin-bottom:12px;color:' + (tooMuch ? '#ff3b30' : '#86868b') + ';') },
+      React.createElement('span', null, sharedRow ? (tooMuch ? t('withdrawMineTooMuch') : t('withdrawMineAvailable')) : (tooMuch ? t('withdrawTooMuch') : t('withdrawAvailable'))),
+      React.createElement('b', null, fmt(avail)));
+    var reasonField = React.createElement('input', { type: 'text', placeholder: t('withdrawReasonPh'), value: withdrawReason, maxLength: 60, onChange: function (e) { setWithdrawReason(e.target.value); }, style: css('width:100%;padding:11px 12px;border:1px solid #e5e5ea;border-radius:12px;font-size:14px;background:#fbfbfd;margin-bottom:16px;') });
+    var actions = React.createElement('div', { style: { display: 'flex', gap: 10 } },
+      React.createElement('button', { onClick: close, style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;') }, es ? 'Cancelar' : 'Cancel'),
+      React.createElement('button', { onClick: go, disabled: !canGo, style: css('flex:1;background:' + (canGo ? '#ff3b30' : '#ffc9c6') + ';color:#fff;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:700;cursor:' + (canGo ? 'pointer' : 'default') + ';') }, t('withdrawConfirm')));
+    return React.createElement('div', { onClick: close, className: 'pf-overlay-in', style: css('position:fixed;inset:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;padding:0;') },
+      React.createElement('div', { onClick: function (e) { e.stopPropagation(); }, className: 'pf-modal-in', style: Object.assign(css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));max-width:480px;width:100%;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);'), { paddingBottom: keyboardInset > 0 ? keyboardInset + 24 : undefined, transition: 'padding-bottom 0.18s ease-out' }) },
+        head, warn, amountField, availLine, reasonField, actions));
+  })(), quickAddGoalId && (function () { var qa = s.goals.find(function (g) { return g.id === quickAddGoalId; }); if (!qa) return null; var qaMonthly = buildGoalView(qa, false).monthlyBoosted; var qaThisLabel = MONTH_NAMES[new Date().getMonth()] + ' ' + new Date().getFullYear(); var qaAssigned = s.goals.reduce(function (a, g) { return a + (g.savingsLog || []).filter(function (e) { return e.label === qaThisLabel; }).reduce(function (x, e) { return x + (e.amount || 0); }, 0); }, 0); var qaPool = Math.max(ctx.boostedAvailable - qaAssigned - sharedPlanTotal, 0); var qaTyped = parseFloat(depositAmount) || 0; var qaAfter = qaPool - qaTyped; return React.createElement('div', { onClick: function () { setQuickAddGoalId(null); }, className: 'pf-overlay-in', style: css('position:fixed;inset:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;padding:0;') }, React.createElement('div', { onClick: function (e) { e.stopPropagation(); }, className: 'pf-modal-in', style: Object.assign(css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));max-width:480px;width:100%;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);'), { paddingBottom: keyboardInset > 0 ? keyboardInset + 24 : undefined, transition: 'padding-bottom 0.18s ease-out' }) }, React.createElement('div', { style: css('display:flex;align-items:center;gap:12px;margin-bottom:16px;') }, React.createElement('div', { style: { width: 40, height: 40, borderRadius: 11, background: qa.color, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' } }, React.createElement(GoalIconGlyph, { icon: qa.icon, size: 20 })), React.createElement('div', null, React.createElement('div', { style: css('font-size:16px;font-weight:700;') }, s.language === 'es' ? 'Asignar ahorro' : 'Assign savings'), React.createElement('div', { style: css('font-size:12.5px;color:#86868b;') }, qa.name))), React.createElement('div', { style: { position: 'relative', marginBottom: 12 } }, React.createElement('span', { style: css('position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:17px;color:#86868b;pointer-events:none;') }, '$'), React.createElement('input', { type: 'number', inputMode: 'decimal', autoFocus: true, placeholder: '0', value: depositAmount, onChange: function (e) { setDepositAmount(e.target.value); }, onKeyDown: function (e) { if (e.key === 'Enter') { registerDeposit(quickAddGoalId); setQuickAddGoalId(null); } }, style: css('width:100%;padding:13px 12px 13px 26px;border:1px solid #d2d2d7;border-radius:12px;font-size:18px;font-weight:700;background:#fbfbfd;') })), qaMonthly > 0 && React.createElement('div', { style: { display: 'flex', gap: 8, marginBottom: 16 } }, React.createElement('button', { onClick: function () { setDepositAmount(String(Math.round(qaMonthly))); }, style: css('flex:1;background:#f5f5f7;border:none;border-radius:10px;padding:9px;font-size:12.5px;font-weight:600;color:#1d1d1f;cursor:pointer;') }, (s.language === 'es' ? 'Este mes: ' : 'This month: ') + fmt(qaMonthly)), React.createElement('button', { onClick: function () { setDepositAmount(String(Math.round(qaMonthly / 2))); }, style: css('flex:none;background:#f5f5f7;border:none;border-radius:10px;padding:9px 12px;font-size:12.5px;font-weight:600;color:#1d1d1f;cursor:pointer;') }, s.language === 'es' ? 'Mitad' : 'Half')), React.createElement('div', { style: css('background:#f5f5f7;border-radius:12px;padding:11px 12px;margin-bottom:16px;') }, React.createElement('div', { style: css('display:flex;justify-content:space-between;align-items:center;font-size:12.5px;color:#6e6e73;') }, React.createElement('span', null, s.language === 'es' ? 'Disponible para repartir' : 'Available to assign'), React.createElement('b', { style: { color: '#1d1d1f' } }, fmt(qaPool))), qaTyped > 0 && React.createElement('div', { style: { fontSize: 12, marginTop: 5, color: qaAfter < 0 ? '#ff3b30' : '#86868b' } }, (s.language === 'es' ? 'Te queda ' : "You'll have ") + fmt(qaAfter) + (s.language === 'es' ? ' para otras metas y gastos' : ' left for other goals and expenses'))), React.createElement('div', { style: { display: 'flex', gap: 10 } }, React.createElement('button', { onClick: function () { setQuickAddGoalId(null); setDepositAmount(''); }, style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;') }, s.language === 'es' ? 'Cancelar' : 'Cancel'), React.createElement('button', { onClick: function () { registerDeposit(quickAddGoalId); setQuickAddGoalId(null); }, style: css('flex:1;background:#0071e3;color:#fff;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;') }, s.language === 'es' ? 'Asignar' : 'Assign')))); })(), !s.hasSeenWelcome && React.createElement('div', { style: css('position:fixed;inset:0;z-index:100;background:#fff;display:flex;flex-direction:column;overflow-y:auto;padding:calc(env(safe-area-inset-top) + 20px) 24px calc(env(safe-area-inset-bottom) + 28px);') }, React.createElement('div', { style: css('width:100%;max-width:420px;margin:0 auto;flex:1;display:flex;flex-direction:column;') }, React.createElement('div', { style: css('display:flex;justify-content:flex-end;margin-bottom:2px;') }, React.createElement('button', { onClick: function(){ setLanguage(s.language==='es'?'en':'es'); }, style: css('background:none;border:none;color:#86868b;font-size:12.5px;font-weight:700;cursor:pointer;padding:4px;') }, s.language==='es'?'EN':'ES')), (welcomeStep < 3) && React.createElement('div', { style: css('margin-bottom:8px;') }, React.createElement('div', { style: css('text-align:center;font-size:12px;color:#86868b;font-weight:600;margin-bottom:8px;') }, welcomeStep===0 ? (s.language==='es'?'Paso 1':'Step 1') : welcomeStep===1 ? (s.language==='es'?'Paso 2 de 3':'Step 2 of 3') : (s.language==='es'?'Paso 3 de 3':'Step 3 of 3')), React.createElement('div', { style: css('display:flex;gap:8px;') }, [0,1,2].map(function(idx){ return React.createElement('div', { key: idx, style: { flex:1, height:4, borderRadius:2, background: idx<=welcomeStep ? '#1d1d1f' : '#e5e5ea' } }); }))), welcomeStep===0 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, t('profileQTitle')), ['allowance','salary','freelance'].map(function(pp){ return React.createElement('button', { key:pp, onClick: function(){ setIncomeProfile(pp); }, style: { display:'block', width:'100%', textAlign:'left', padding:'14px 16px', borderRadius:12, border: s.incomeProfile===pp ? '2px solid #2f6bff' : '1px solid #d2d2d7', background: s.incomeProfile===pp ? '#eef4ff' : '#fff', fontSize:14, fontWeight:500, color:'#1d1d1f', cursor:'pointer', marginBottom:10 } }, pp==='allowance'?t('profileAllowance'):pp==='salary'?t('profileSalary'):t('profileFreelance')); }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(1), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : welcomeStep===1 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, t('howOldQ')), React.createElement('input', { type:'number', inputMode:'numeric', autoFocus:true, placeholder: t('yourAge'), value: s.studentAge || '', onChange: function(e){ setStudentAge(parseInt(e.target.value,10)||null); }, style: css('width:100%;padding:14px 16px;border:1px solid #d2d2d7;border-radius:12px;font-size:15px;background:#fff;margin-bottom:16px;') }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(2), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : welcomeStep===2 ? React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'7vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;margin-bottom:26px;') }, s.language==='es'?'Empecemos':"Let's get started"), React.createElement('div', { style: css('font-size:14px;color:#1d1d1f;font-weight:500;margin-bottom:14px;') }, s.language==='es'?'¿Inviertes?':'Do you invest?'), [ { k:true, label: s.language==='es'?'Sí, mis padres y yo invertimos juntos':'Yes, my parents and I invest together' }, { k:'own', label: s.language==='es'?'Sí, tengo mi propia cuenta':'Yes, I have my own account' }, { k:false, label: t('investNo') } ].map(function(opt,ix){ return React.createElement('button', { key:ix, onClick: function(){ setInvestsWithParents(opt.k); }, style: { display:'block', width:'100%', textAlign:'left', padding:'14px 16px', borderRadius:12, border: s.investsWithParents===opt.k ? '2px solid #2f6bff' : '1px solid #d2d2d7', background: s.investsWithParents===opt.k ? '#eef4ff' : '#fff', fontSize:14, fontWeight:500, color:'#1d1d1f', cursor:'pointer', marginBottom:10 } }, opt.label); }), (function(next){ return React.createElement('button', { onClick: function(){ setWelcomeStep(next); }, style: css('width:100%;padding:14px;background:#2f6bff;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:6px;') }, t('continueLabel')); })(3), sbClient && React.createElement('button', { onClick: function(){ setShowLoginFromWelcome(true); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#6e6e73;font-size:14px;font-weight:600;cursor:pointer;margin-top:16px;padding:0;') }, s.language==='es'?'¿Ya tienes cuenta?':'Already have an account?') ) : React.createElement(React.Fragment, null, React.createElement('div', { style: { height:'8vh' } }), React.createElement('div', { style: css('font-size:30px;font-weight:800;letter-spacing:-0.02em;color:#111;line-height:1.15;margin-bottom:26px;') }, s.language==='es'?'¡Últimos pasos! Es hora de configurar tu cuenta':"Last steps! It's time to set up your account"), [ { tt: s.language==='es'?'Ingreso':'Income', dd: s.language==='es'?'Dinos cuánto y cada cuánto te pagan.':'Tell us how much and how often you get paid.', tb:'inicio' }, { tt: s.language==='es'?'Plan de gastos':'Expenses Budget Plan', dd: s.language==='es'?'Define tu plan de gasto del mes.':'Set your spending plan for the month.', tb:'budgetPlan' }, { tt: s.language==='es'?'Metas':'Goals', dd: s.language==='es'?'Agrega metas que quieras lograr.':'Add goals you want to achieve.', tb:'metas' } ].map(function(card,ci){ return React.createElement('button', { key:ci, onClick: function(){ dismissWelcome(); setTab(card.tb); }, style: css('display:block;width:100%;text-align:left;background:#fff;border:1px solid #e5e5ea;border-radius:14px;padding:16px;margin-bottom:12px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.05);') }, React.createElement('div', { style: css('font-size:15px;font-weight:700;color:#1d1d1f;margin-bottom:3px;') }, card.tt), React.createElement('div', { style: css('font-size:12.5px;color:#86868b;') }, card.dd)); }), React.createElement('button', { onClick: function(){ dismissWelcome(); }, style: css('display:block;width:100%;text-align:center;background:none;border:none;color:#2f6bff;font-size:14px;font-weight:700;cursor:pointer;margin-top:8px;padding:0;') }, s.language==='es'?'Hacerlo después':'Do it later') ))), /*#__PURE__*/React.createElement("div", {
     style: css('padding-bottom:' + (isDesktop ? '20' : '96') + 'px;display:flex;')
   }, isDesktop && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5879,7 +6074,7 @@ function App() {
       return !who || who === myEmail;
     });
     const loggedThisMonth = goalMonthEntries.reduce((a, e) => a + e.amount, 0);
-    const monthPct = v.monthlyBoosted > 0 ? Math.min(100, loggedThisMonth / v.monthlyBoosted * 100) : loggedThisMonth > 0 ? 100 : 0;
+    const monthPct = Math.max(0, v.monthlyBoosted > 0 ? Math.min(100, loggedThisMonth / v.monthlyBoosted * 100) : loggedThisMonth > 0 ? 100 : 0);
     const sharePct = v.percent;
     return /*#__PURE__*/React.createElement("div", {
       key: g.id,
@@ -6171,7 +6366,13 @@ function App() {
   }, s.language === 'es' ? 'Todavía no hay nada registrado.' : 'Nothing logged yet.') : sgSource.savingsLog.map(entry => /*#__PURE__*/React.createElement("div", {
     key: entry.id,
     style: css('display:flex;justify-content:space-between;align-items:center;font-size:13px;color:#1d1d1f;padding:10px 0;border-bottom:1px solid #f5f5f7;')
-  }, /*#__PURE__*/React.createElement("span", null, entry.label), editingSavingsEntryId === entry.id ? /*#__PURE__*/React.createElement("span", {
+  }, entry.kind === 'withdrawal' ? /*#__PURE__*/React.createElement("span", {
+    style: css('display:flex;flex-direction:column;min-width:0;')
+  }, /*#__PURE__*/React.createElement("span", {
+    style: css('color:#ff3b30;font-weight:600;')
+  }, t('withdrawalLabel') + ' · ' + entry.label), entry.reason && /*#__PURE__*/React.createElement("span", {
+    style: css('font-size:11.5px;color:#86868b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
+  }, entry.reason)) : /*#__PURE__*/React.createElement("span", null, entry.label), editingSavingsEntryId === entry.id ? /*#__PURE__*/React.createElement("span", {
     style: css('display:flex;align-items:center;gap:6px;')
   }, /*#__PURE__*/React.createElement("input", {
     type: "number", inputMode: "decimal",
@@ -6196,10 +6397,10 @@ function App() {
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       setEditingSavingsEntryId(entry.id);
-      setEditingSavingsAmount(String(entry.amount));
+      setEditingSavingsAmount(String(Math.abs(entry.amount)));
     },
-    style: css('background:none;border:none;color:#0071e3;font-weight:700;font-size:13px;cursor:pointer;padding:0;')
-  }, fmt(entry.amount)), /*#__PURE__*/React.createElement("button", {
+    style: css('background:none;border:none;color:' + (entry.kind === 'withdrawal' ? '#ff3b30' : '#0071e3') + ';font-weight:700;font-size:13px;cursor:pointer;padding:0;')
+  }, entry.kind === 'withdrawal' ? '−' + fmt(Math.abs(entry.amount)) : fmt(entry.amount)), /*#__PURE__*/React.createElement("button", {
     onClick: () => removeSavingsLogEntry(sgSource.id, entry.id),
     style: css('background:none;border:none;color:#ff3b30;cursor:pointer;font-size:15px;')
   }, "×")))), showAddSavingsEntry ? /*#__PURE__*/React.createElement("div", {
@@ -6836,7 +7037,7 @@ function App() {
       return !who || who === myEmail;
     });
     const loggedThisMonth = monthEntries.reduce((a, e) => a + e.amount, 0);
-    const monthPct = v.monthlyBoosted > 0 ? Math.round(loggedThisMonth / v.monthlyBoosted * 100) : loggedThisMonth > 0 ? 100 : 0;
+    const monthPct = Math.max(0, v.monthlyBoosted > 0 ? Math.round(loggedThisMonth / v.monthlyBoosted * 100) : loggedThisMonth > 0 ? 100 : 0);
     const capColor = g.color;
     const isDragging = goalDragIndex === gi;
     return /*#__PURE__*/React.createElement("div", Object.assign({
@@ -7328,7 +7529,10 @@ function App() {
   })(), /*#__PURE__*/React.createElement("button", {
     onClick: () => { setDepositAmount(''); setQuickAddGoalId(sgSource.id); },
     style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:12px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;')
-  }, t('logSavings'))), (() => {
+  }, t('logSavings')), goalCur(sgSource) > 0 && /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setWithdrawAmount(''); setWithdrawReason(''); setWithdrawGoalId(sgSource.id); },
+    style: css('width:100%;background:none;border:none;color:#ff3b30;font-size:12px;font-weight:600;cursor:pointer;margin-top:6px;padding:6px;')
+  }, t('withdrawFromGoal'))), (() => {
     const now = new Date();
     const monthEntries = (sgSource.savingsLog || []).filter(entry => {
       const p = parseMonthYearLabel(entry.label);
@@ -7348,7 +7552,7 @@ function App() {
     const salaryMonthlyTarget = Math.max(ctx.baseAvailable, 0) * (sg.percent / 100);
     const extrasMonthlyTarget = ctx.assignedByGoal[sgSource.id] || 0;
     const hasExtras = extrasMonthlyTarget > 0;
-    const salaryPct = salaryMonthlyTarget > 0 ? Math.min(100, salaryLogged / salaryMonthlyTarget * 100) : salaryLogged > 0 ? 100 : 0;
+    const salaryPct = Math.max(0, salaryMonthlyTarget > 0 ? Math.min(100, salaryLogged / salaryMonthlyTarget * 100) : salaryLogged > 0 ? 100 : 0);
     const salaryLeft = Math.max(salaryMonthlyTarget - salaryLogged, 0);
     const extrasPct = extrasMonthlyTarget > 0 ? Math.min(100, extrasLogged / extrasMonthlyTarget * 100) : extrasLogged > 0 ? 100 : 0;
     const R1 = 16,
@@ -7503,12 +7707,12 @@ function App() {
           // Same colour family as the goal's icon, progressively lighter per person.
           color: pastelOf(sgSource.color, 0.45 + ri * 0.18),
           r: 11 - ri * 4,
-          pct: tgt > 0 ? Math.min(100, got / tgt * 100) : (got > 0 ? 100 : 0)
+          pct: Math.max(0, tgt > 0 ? Math.min(100, got / tgt * 100) : (got > 0 ? 100 : 0))
         };
       }).filter(x => x.r >= 4);
       const skipped = (sgSource.skippedMonths || []).some(sm => sm.year === mo.year && sm.month === mo.month);
       const target = sg.monthlyBoosted;
-      const pct = target > 0 ? Math.min(100, monthActual / target * 100) : monthActual > 0 ? 100 : 0;
+      const pct = Math.max(0, target > 0 ? Math.min(100, monthActual / target * 100) : monthActual > 0 ? 100 : 0);
       const done = pct >= 100;
       const isCurrent = !mo.inactive && mo.year === curY && mo.month === curM;
       const R2 = 15,
