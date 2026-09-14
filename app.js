@@ -144,6 +144,7 @@ function buildPersistPayload(state) {
     dismissedTips: state.dismissedTips,
     profileName: state.profileName,
     sharedPlans: state.sharedPlans,
+    cards: state.cards,
     seenShares: state.seenShares,
     lastProcessedMonth: state.lastProcessedMonth,
     lastProcessedYear: state.lastProcessedYear,
@@ -373,6 +374,95 @@ function buildSharedWithdrawal(itemData, email, name, abs, reason, now) {
   data.baseCurrent = base;
   data.current = base + log.reduce((a, e) => a + (e.amount || 0), 0);
   return { data, entry };
+}
+// ---------- credit cards ----------
+// A card is a way to PAY, not a spending category. A purchase counts in the budget the
+// day it's made (that's when the decision to spend happened). What differs is when the
+// cash leaves:
+//  - payMode 'full': the statement is only a date shift. Paying it is NOT a new expense
+//    — that would count every purchase twice. The app just reminds you to set it aside.
+//  - payMode 'minimum' | 'fixed': the card carries a balance, i.e. debt. The planned
+//    payment is a real monthly obligation, budgeted like a fixed bill.
+function cardDay(y, m, day) {
+  const want = Math.max(1, parseInt(day, 10) || 1);
+  return new Date(y, m, Math.min(want, new Date(y, m + 1, 0).getDate()));
+}
+function isDebtCard(card) {
+  return !!card && (card.payMode === 'minimum' || card.payMode === 'fixed');
+}
+function cardYmd(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+// The statement that most recently closed (on or before today), its due date, what's
+// still owed on it, and what has been charged in the cycle that's open now.
+function cardStatement(card, expenseLog, today) {
+  const t = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  let close = cardDay(t.getFullYear(), t.getMonth(), card.closingDay);
+  if (close > t) close = cardDay(t.getFullYear(), t.getMonth() - 1, card.closingDay);
+  const prevClose = cardDay(close.getFullYear(), close.getMonth() - 1, card.closingDay);
+  const nextClose = cardDay(close.getFullYear(), close.getMonth() + 1, card.closingDay);
+  let due = cardDay(close.getFullYear(), close.getMonth(), card.dueDay);
+  if (due <= close) due = cardDay(close.getFullYear(), close.getMonth() + 1, card.dueDay);
+  const charges = (from, to) => (expenseLog || []).filter(e => {
+    if (e.cardId == null || String(e.cardId) !== String(card.id)) return false;
+    const d = new Date((e.date || '') + 'T00:00:00');
+    return d > from && d <= to;
+  }).reduce((a, e) => a + (e.amount || 0), 0);
+  const key = cardYmd(close);
+  const statementAmount = charges(prevClose, close);
+  const paid = (card.payments || []).filter(p => p.statementKey === key).reduce((a, p) => a + (p.amount || 0), 0);
+  const toPay = Math.max(statementAmount - paid, 0);
+  return { close, prevClose, nextClose, due, key, statementAmount, paid, toPay, cycleSoFar: charges(close, t), overdue: toPay > 0.005 && t > due };
+}
+// Carried balance on a debt card: the statement balance entered (as of its date) plus
+// purchases since, minus payments since. Interest isn't compounded in — every bank
+// computes it differently — so it's shown as an estimate and the person re-syncs the
+// balance from their statement when it matters.
+function cardDebtBalance(card, expenseLog) {
+  const since = card.balanceDate ? new Date(card.balanceDate + 'T00:00:00') : new Date(0);
+  const charged = (expenseLog || []).filter(e => e.cardId != null && String(e.cardId) === String(card.id) && new Date((e.date || '') + 'T00:00:00') > since).reduce((a, e) => a + (e.amount || 0), 0);
+  const paid = (card.payments || []).filter(p => new Date((p.date || '') + 'T00:00:00') >= since).reduce((a, p) => a + (p.amount || 0), 0);
+  return Math.max((parseFloat(card.balance) || 0) + charged - paid, 0);
+}
+function cardMonthlyInterest(card, balance) {
+  return (balance || 0) * (parseFloat(card.apr) || 0) / 100 / 12;
+}
+function cardPlannedPayment(card, balance) {
+  if (!isDebtCard(card) || !(balance > 0)) return 0;
+  if (card.payMode === 'fixed') return Math.min(parseFloat(card.fixedAmount) || 0, balance);
+  const typed = parseFloat(card.minPayment);
+  if (typed > 0) return Math.min(typed, balance);
+  // No minimum typed: a common rough rule, clearly labelled as an estimate in the UI.
+  return Math.min(balance, Math.max(25, Math.round(balance * 0.03)));
+}
+function cardPayoffMonths(balance, aprPct, payment) {
+  if (!(balance > 0)) return 0;
+  if (!(payment > 0)) return Infinity;
+  const r = (parseFloat(aprPct) || 0) / 100 / 12;
+  if (r === 0) return Math.ceil(balance / payment);
+  if (payment <= balance * r) return Infinity;
+  return Math.ceil(-Math.log(1 - r * balance / payment) / Math.log(1 + r));
+}
+function cardsMonthlyObligation(s) {
+  return (s.cards || []).reduce((a, c) => a + (isDebtCard(c) ? cardPlannedPayment(c, cardDebtBalance(c, s.expenseLog)) : 0), 0);
+}
+// Button looks, taken from controls the app already had, so new ones don't drift:
+//  sheetCancel / sheetPrimary — the "Log expense" / "Log deposit" sheet actions
+//  dangerSoft                 — "Delete goal"
+//  inlinePrimary / inlineSoft — small actions inside a card
+//  segment                    — the Recurring / Non-recurring choice
+const UI_BTN = {
+  sheetCancel: 'flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:13px;padding:14px;font-size:15px;font-weight:600;cursor:pointer;',
+  sheetPrimary: 'flex:2;background:#0071e3;color:#fff;border:none;border-radius:13px;padding:14px;font-size:15px;font-weight:700;',
+  sheetDanger: 'flex:2;background:#ff3b30;color:#fff;border:none;border-radius:13px;padding:14px;font-size:15px;font-weight:700;',
+  dangerSoft: 'width:100%;background:#fff2ef;color:#ff3b30;border:none;border-radius:12px;padding:13px;font-size:13.5px;font-weight:700;cursor:pointer;',
+  inlinePrimary: 'flex:none;background:#0071e3;color:#fff;border:none;border-radius:9px;padding:8px 14px;font-size:12.5px;font-weight:700;cursor:pointer;',
+  inlineSoft: 'width:100%;background:#f5f5f7;color:#0071e3;border:none;padding:9px;border-radius:9px;font-size:12.5px;font-weight:700;cursor:pointer;',
+  segment: (active, pad, size) => 'background:' + (active ? '#0071e3' : '#f5f5f7') + ';color:' + (active ? '#fff' : '#1d1d1f') + ';border:none;border-radius:10px;padding:' + (pad || '11px') + ';font-size:' + (size || '13px') + ';font-weight:600;cursor:pointer;'
+};
+// Disabled = the same button, faded — not a different colour that reads as another control.
+function uiEnabled(on) {
+  return on ? 'cursor:pointer;' : 'opacity:0.4;cursor:default;';
 }
 function goalOthersTotal(goal) {
   return ((goal && goal.savingsLog) || []).reduce(function (a, e) {
@@ -621,6 +711,7 @@ function defaultState() {
     profileName: '',
     sharedPlans: {},
     seenShares: {},
+    cards: [],
     lastProcessedMonth: today.getMonth(),
     lastProcessedYear: today.getFullYear(),
     expenseCategories: [],
@@ -706,6 +797,12 @@ function periodBudgetOf(s, period) {
     }
   });
   total += ((s.nonRecurringBudget || 0) + (s.spendingBoost || 0)) * share;
+  // A debt card's payment lands, in full, on the paycheck that covers its due date.
+  (s.cards || []).forEach(c => {
+    if (!isDebtCard(c)) return;
+    const pay = cardPlannedPayment(c, cardDebtBalance(c, s.expenseLog));
+    if (pay > 0 && fixedDueInPeriod({ dueDay: c.dueDay }, period)) total += pay;
+  });
   return total;
 }
 function receivedThisMonth(s, today) {
@@ -729,7 +826,9 @@ function actualMonthlyIncomeOf(s, today) {
 }
 function computeCtx(s) {
   const today = new Date();
-  const totalExpenses = sum(s.expenseCategories) + (s.nonRecurringBudget || 0) + (s.spendingBoost || 0);
+  // Debt-card payments are a real monthly obligation. Pay-in-full cards add nothing:
+  // their purchases are already in the expense log.
+  const totalExpenses = sum(s.expenseCategories) + (s.nonRecurringBudget || 0) + (s.spendingBoost || 0) + cardsMonthlyObligation(s);
   const hustleTotal = sum(s.hustles);
   const generalHustleTotal = s.hustles.filter(h => !h.goalId).reduce((a, h) => a + (h.amount || 0), 0);
   const monthlyIncome = actualMonthlyIncomeOf(s, today);
@@ -965,6 +1064,55 @@ const STRINGS = {
     withdrawTooMuch: 'That’s more than this goal has',
     withdrawConfirm: 'Withdraw',
     withdrawalLabel: 'Withdrawal',
+    cardsTitle: 'Credit cards',
+    cardsHint: 'Log card purchases the day you make them. Paying a card you pay in full isn’t a new expense — it was already counted.',
+    addCard: '+ Add card',
+    paidWith: 'Paid with',
+    cashDebit: 'Cash / debit',
+    cardName: 'Name (e.g. Visa)',
+    cardLast4: 'Last 4 digits',
+    closingDay: 'Statement closes on day',
+    dueDay: 'Payment due on day',
+    howYouPay: 'How do you pay it?',
+    payFull: 'All of it',
+    payMinimum: 'The minimum',
+    payFixed: 'A fixed amount',
+    minPaymentLabel: 'Minimum payment (from your statement)',
+    minPaymentSuggest: 'Leave it empty to use ~3% of the balance as an estimate.',
+    fixedAmountLabel: 'Amount you pay each month',
+    balanceLabel: 'Current balance (from your statement)',
+    limitLabel: 'Limit (optional)',
+    aprLabel: 'Interest % a year (optional)',
+    firstStatementQ: 'Did you already log the purchases on your current statement?',
+    firstStatementYes: 'Yes',
+    firstStatementNo: 'No, I only log the payment',
+    saveCard: 'Save card',
+    deleteCard: 'Delete card',
+    newCard: 'New card',
+    thisCycle: 'This cycle',
+    closesOn: 'closes {d}',
+    statementToPay: 'To pay',
+    dueOn: 'due {d}',
+    overdue: 'overdue since {d}',
+    markPaid: 'Mark as paid',
+    statementPaid: 'Statement paid',
+    firstPaymentTitle: 'Your first payment',
+    firstPaymentHint: 'Those purchases weren’t logged, so this one payment counts as an expense. From the next statement on, it won’t.',
+    logPayment: 'Log payment',
+    balanceApprox: 'Balance (approx.)',
+    interestApprox: '~{x}/mo in interest',
+    plannedPayment: 'Planned payment',
+    payoffIn: 'Paid off in {n} months ({d})',
+    payoffNever: 'At this payment the debt never goes down',
+    cardPaymentName: 'Card payment · {c}',
+    upcomingCardPay: 'Card payment · {c}',
+    tipCardApr: 'Pay down your card before investing',
+    tipCardAprBody: '{c} charges {r}% a year — about {x} a month in interest. Paying it off beats almost any return on savings.',
+    tipCardMin: 'Your payment doesn’t cover the interest',
+    tipCardMinBody: 'On {c}, the payment ({p}) doesn’t cover the interest (~{x}/mo), so the debt never goes down.',
+    tipCardUtil: 'You’re using a lot of your credit',
+    tipCardUtilBody: '{c} is at {u}% of its limit. Staying under 30% helps your credit history.',
+    viewCard: 'View card',
     withdrawMine: 'Withdraw from my contributions',
     withdrawMineAvailable: 'Your contributions',
     withdrawMineTooMuch: 'You can only take back what you put in',
@@ -1164,6 +1312,55 @@ const STRINGS = {
     withdrawTooMuch: 'Es más de lo que tiene esta meta',
     withdrawConfirm: 'Retirar',
     withdrawalLabel: 'Retiro',
+    cardsTitle: 'Tarjetas de crédito',
+    cardsHint: 'Registra las compras con tarjeta el día que las haces. Pagar una tarjeta que pagas completa no es un gasto nuevo: ya se contó.',
+    addCard: '+ Agregar tarjeta',
+    paidWith: 'Pagado con',
+    cashDebit: 'Efectivo / débito',
+    cardName: 'Nombre (ej. Visa)',
+    cardLast4: 'Últimos 4 dígitos',
+    closingDay: 'Fecha de corte (día)',
+    dueDay: 'Fecha de pago (día)',
+    howYouPay: '¿Cómo la pagas?',
+    payFull: 'Todo',
+    payMinimum: 'El mínimo',
+    payFixed: 'Monto fijo',
+    minPaymentLabel: 'Pago mínimo (de tu estado de cuenta)',
+    minPaymentSuggest: 'Déjalo vacío para usar ~3 % del saldo como estimado.',
+    fixedAmountLabel: 'Monto que pagas cada mes',
+    balanceLabel: 'Saldo actual (de tu estado de cuenta)',
+    limitLabel: 'Límite (opcional)',
+    aprLabel: 'Interés % anual (opcional)',
+    firstStatementQ: '¿Ya registraste las compras de tu estado de cuenta actual?',
+    firstStatementYes: 'Sí',
+    firstStatementNo: 'No, solo registro el pago',
+    saveCard: 'Guardar tarjeta',
+    deleteCard: 'Eliminar tarjeta',
+    newCard: 'Nueva tarjeta',
+    thisCycle: 'Este corte',
+    closesOn: 'cierra el {d}',
+    statementToPay: 'Por pagar',
+    dueOn: 'vence el {d}',
+    overdue: 'vencido desde el {d}',
+    markPaid: 'Marcar como pagada',
+    statementPaid: 'Estado de cuenta pagado',
+    firstPaymentTitle: 'Tu primer pago',
+    firstPaymentHint: 'Esas compras no se registraron, así que este pago sí cuenta como gasto, una sola vez. Desde el próximo estado de cuenta ya no.',
+    logPayment: 'Registrar pago',
+    balanceApprox: 'Saldo (aprox.)',
+    interestApprox: '~{x}/mes de interés',
+    plannedPayment: 'Pago planeado',
+    payoffIn: 'La saldas en {n} meses ({d})',
+    payoffNever: 'Con este pago la deuda nunca baja',
+    cardPaymentName: 'Pago tarjeta · {c}',
+    upcomingCardPay: 'Pago de tarjeta · {c}',
+    tipCardApr: 'Paga tu tarjeta antes de invertir',
+    tipCardAprBody: '{c} cobra {r} % al año, unos {x} al mes de interés. Pagarla le gana a casi cualquier rendimiento de ahorro.',
+    tipCardMin: 'Tu pago no cubre el interés',
+    tipCardMinBody: 'En {c}, el pago ({p}) no cubre el interés (~{x}/mes), así que la deuda nunca baja.',
+    tipCardUtil: 'Estás usando mucho de tu crédito',
+    tipCardUtilBody: '{c} está al {u} % de su límite. Mantenerte debajo del 30 % ayuda a tu historial crediticio.',
+    viewCard: 'Ver tarjeta',
     withdrawMine: 'Retirar de mis aportes',
     withdrawMineAvailable: 'Tus aportes',
     withdrawMineTooMuch: 'Solo puedes retirar lo que tú aportaste',
@@ -1499,11 +1696,14 @@ function App() {
   const [withdrawGoalId, setWithdrawGoalId] = useState(null); // goal whose "withdraw" sheet is open
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawReason, setWithdrawReason] = useState('');
-  const [sharedWithdrawShare, setSharedWithdrawShare] = useState(null); // shared goal row I'm withdrawing my own money from
+  const [sharedWithdrawShare, setSharedWithdrawShare] = useState(null);
+  const [cardSheet, setCardSheet] = useState(null); // draft of the card being added/edited
+  const [cardPayInput, setCardPayInput] = useState({}); // cardId -> payment amount being typed // shared goal row I'm withdrawing my own money from
   const [logAmount, setLogAmount] = useState('');
   const [logName, setLogName] = useState('');
   const [logType, setLogType] = useState('recurring');
   const [logCategory, setLogCategory] = useState('');
+  const [logCardId, setLogCardId] = useState(''); // '' = cash/debit, otherwise the card that paid
   const todayStr = (() => {
     const t = new Date();
     return toDateStr(t.getFullYear(), t.getMonth(), t.getDate());
@@ -1568,7 +1768,7 @@ function App() {
   // (iOS otherwise auto-scrolls the page when the keyboard opens, dragging the
   // sheet back down under the keyboard). Scrolling inside the sheet still works.
   useEffect(() => {
-    if (!showPaycheckModal && !showExpenseModal && !quickAddGoalId && !withdrawGoalId && !sharedWithdrawShare && !shareModal && !sharedDepositShare) return;
+    if (!showPaycheckModal && !showExpenseModal && !quickAddGoalId && !withdrawGoalId && !sharedWithdrawShare && !cardSheet && !shareModal && !sharedDepositShare) return;
     const prevBody = document.body.style.overflow;
     const prevHtml = document.documentElement.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -1583,7 +1783,7 @@ function App() {
       document.documentElement.style.overflow = prevHtml;
       document.removeEventListener('touchmove', prevent);
     };
-  }, [showPaycheckModal, showExpenseModal, quickAddGoalId, withdrawGoalId, sharedWithdrawShare, shareModal, sharedDepositShare]);
+  }, [showPaycheckModal, showExpenseModal, quickAddGoalId, withdrawGoalId, sharedWithdrawShare, cardSheet, shareModal, sharedDepositShare]);
   const expensesCalRef = useRef(null);
   const [expensesCalH, setExpensesCalH] = useState(0);
   useEffect(function () {
@@ -2445,6 +2645,7 @@ function App() {
             });
           }
           if (loaded.hasSeenWelcome === undefined) loaded.hasSeenWelcome = true;
+          if (!Array.isArray(loaded.cards)) loaded.cards = [];
           if (loaded.goals && loaded.goals.length) {
             const nowFallback = new Date();
             loaded.goals = loaded.goals.map(g => {
@@ -2908,7 +3109,8 @@ function App() {
           day: d.getDate(),
           amount: amt,
           name,
-          recurring
+          recurring,
+          cardId: (s.cards || []).some(c => String(c.id) === String(logCardId)) ? logCardId : undefined
         }])
       };
     });
@@ -2933,7 +3135,8 @@ function App() {
           day: d.getDate(),
           amount: amt,
           name,
-          recurring
+          recurring,
+          cardId: (s.cards || []).some(c => String(c.id) === String(logCardId)) ? logCardId : undefined
         }])
       };
     });
@@ -2941,8 +3144,47 @@ function App() {
     setLogName('');
   };
   const removeLogEntry = id => patch(s => ({
-    expenseLog: s.expenseLog.filter(e => e.id !== id)
+    expenseLog: s.expenseLog.filter(e => e.id !== id),
+    // A logged card payment is two linked records (the expense and the card's payment);
+    // deleting one must delete both, or the card's balance/statement drifts.
+    cards: (s.cards || []).map(c => (c.payments || []).some(p => p.id === id) ? { ...c, payments: c.payments.filter(p => p.id !== id) } : c)
   }));
+  const saveCard = draft => patch(st => {
+    const clean = { ...draft, closingDay: Math.max(1, Math.min(31, parseInt(draft.closingDay, 10) || 1)), dueDay: Math.max(1, Math.min(31, parseInt(draft.dueDay, 10) || 1)), last4: String(draft.last4 || '').replace(/\D/g, '').slice(-4) };
+    const exists = (st.cards || []).some(c => c.id === clean.id);
+    return { cards: exists ? st.cards.map(c => c.id === clean.id ? { ...c, ...clean } : c) : (st.cards || []).concat([clean]) };
+  });
+  const deleteCard = id => patch(st => ({ cards: (st.cards || []).filter(c => c.id !== id) }));
+  // Record paying a card. It becomes an EXPENSE only when the budget hasn't seen that
+  // money yet: a debt card's payment (budgeted obligation), or the very first statement
+  // of a card whose purchases were never logged. A pay-in-full statement is not one.
+  const logCardPayment = (cardId, amount, asFirstStatement) => {
+    const amt = parseFloat(amount) || 0;
+    if (amt <= 0) return;
+    const d = new Date(todayStr + 'T00:00:00');
+    patch(st => {
+      const card = (st.cards || []).find(c => c.id === cardId);
+      if (!card) return {};
+      const id = Date.now();
+      const stmt = cardStatement(card, st.expenseLog, d);
+      const out = {
+        cards: st.cards.map(c => c.id !== cardId ? c : {
+          ...c,
+          firstStatementPending: asFirstStatement ? false : c.firstStatementPending,
+          payments: [{ id, date: todayStr, amount: amt, statementKey: stmt.key }].concat(c.payments || []).slice(0, 36)
+        })
+      };
+      if (isDebtCard(card) || asFirstStatement) {
+        out.expenseLog = st.expenseLog.concat([{
+          id, date: todayStr, year: d.getFullYear(), month: d.getMonth(), day: d.getDate(), amount: amt,
+          name: t('cardPaymentName').replace('{c}', () => card.name || 'Card'),
+          recurring: isDebtCard(card),
+          cardPaymentFor: card.id
+        }]);
+      }
+      return out;
+    });
+  };
   const removePlannedExpense = id => patch(s => ({
     plannedExpenses: s.plannedExpenses.filter(p => p.id !== id)
   }));
@@ -4190,8 +4432,13 @@ function App() {
   const resumenActualTotalNum = resumenActualRecurringNum + resumenActualNonRecurringNum;
   const resumenPlannedTotalNum = monthlyTotal;
   const resumenTotalPct = resumenPlannedTotalNum > 0 ? resumenActualTotalNum / resumenPlannedTotalNum * 100 : 0;
-  const categoryResumenRows = s.expenseCategories.map((c, i) => {
-    const actual = periodEntries.filter(e => e.recurring && e.name === c.name).reduce((a, e) => a + e.amount, 0);
+  // Debt cards add their planned payment as a fixed line, so the month's total, its bar
+  // and "left over" reflect the obligation. Matched by card id, never by name.
+  const cardBudgetRows = (s.cards || []).filter(isDebtCard).map(c => ({ name: t('cardPaymentName').replace('{c}', () => c.name || 'Card'), amount: cardPlannedPayment(c, cardDebtBalance(c, s.expenseLog)), fixed: true, color: '#ff9500', cardId: c.id })).filter(r => r.amount > 0);
+  const cardRowByName = {};
+  cardBudgetRows.forEach(r => { cardRowByName[r.name] = r.cardId; });
+  const categoryResumenRows = s.expenseCategories.concat(cardBudgetRows).map((c, i) => {
+    const actual = periodEntries.filter(e => c.cardId ? e.cardPaymentFor === c.cardId : (e.recurring && e.name === c.name && !e.cardPaymentFor)).reduce((a, e) => a + e.amount, 0);
     const pct = c.amount > 0 ? actual / c.amount * 100 : 0;
     const paid = actual > 0 && actual >= c.amount;
     const catColor = c.color || PALETTE[i % PALETTE.length];
@@ -4211,10 +4458,117 @@ function App() {
   const variableResumenRows = categoryResumenRows.filter(r => !r.fixed);
   // Tapping a category in the month summary opens what was actually spent on it that
   // month — the totals alone don't tell you which purchases made them up.
+  const cardLabelOf = id => {
+    const c = (s.cards || []).find(x => String(x.id) === String(id));
+    return c ? (c.name || 'Card') + (c.last4 ? ' ····' + c.last4 : '') : '';
+  };
+  // "Paid with" — only appears once someone has a card, so people without one never see it.
+  const paidWithChips = () => {
+    const cards = s.cards || [];
+    if (!cards.length) return null;
+    const opts = [{ id: '', label: t('cashDebit') }].concat(cards.map(c => ({ id: c.id, label: cardLabelOf(c.id) })));
+    return /*#__PURE__*/React.createElement('div', { style: css('margin-bottom:10px;') },
+      /*#__PURE__*/React.createElement('div', { style: css('font-size:11px;color:#86868b;font-weight:600;margin-bottom:6px;') }, t('paidWith')),
+      /*#__PURE__*/React.createElement('div', { style: css('display:flex;gap:6px;flex-wrap:wrap;') }, opts.map(o => {
+        const known = o.id === '' || cards.some(c => String(c.id) === String(logCardId));
+        const sel = known ? String(logCardId || '') === String(o.id) : o.id === '';
+        return /*#__PURE__*/React.createElement('button', {
+          key: 'pw' + o.id, type: 'button', onClick: () => setLogCardId(o.id),
+          style: css(UI_BTN.segment(sel, '9px 12px', '12.5px'))
+        }, o.label);
+      })));
+  };
+  const cardDateLabel = d => MONTH_NAMES[d.getMonth()] + ' ' + d.getDate();
+  // Home reminder: a card payment due within two weeks (or already late), so the money is
+  // set aside before the day — the point of registering the card at all.
+  const cardDueBanner = () => {
+    const today0 = new Date(ctx.today.getFullYear(), ctx.today.getMonth(), ctx.today.getDate());
+    const items = [];
+    (s.cards || []).forEach(card => {
+      const stmt = cardStatement(card, s.expenseLog, ctx.today);
+      const days = Math.round((stmt.due - today0) / 86400000);
+      let amt = 0;
+      if (isDebtCard(card)) {
+        const paidAlready = (card.payments || []).some(p => new Date(p.date + 'T00:00:00') > stmt.close);
+        amt = paidAlready ? 0 : cardPlannedPayment(card, cardDebtBalance(card, s.expenseLog));
+      } else if (!card.firstStatementPending) {
+        amt = stmt.toPay;
+      }
+      if (amt > 0.005 && days <= 14) items.push({ card, amt, days, due: stmt.due });
+    });
+    if (!items.length) return null;
+    return /*#__PURE__*/React.createElement('div', { style: css('margin-bottom:16px;display:flex;flex-direction:column;gap:8px;') }, items.map(it => /*#__PURE__*/React.createElement('button', {
+      key: 'cd' + it.card.id,
+      onClick: () => goToTabRoot('gastos'),
+      style: css('display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;background:' + (it.days < 0 ? '#fff4f4' : '#fff8ec') + ';border:none;border-radius:14px;padding:12px 14px;cursor:pointer;')
+    }, /*#__PURE__*/React.createElement('span', { style: css('min-width:0;') },
+      /*#__PURE__*/React.createElement('span', { style: css('display:block;font-size:13px;font-weight:700;color:#1d1d1f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;') }, t('upcomingCardPay').replace('{c}', () => cardLabelOf(it.card.id))),
+      /*#__PURE__*/React.createElement('span', { style: css('display:block;font-size:11.5px;margin-top:1px;color:' + (it.days < 0 ? '#ff3b30' : '#8a6d3b') + ';') }, (it.days < 0 ? t('overdue') : t('dueOn')).replace('{d}', () => cardDateLabel(it.due)))),
+    /*#__PURE__*/React.createElement('b', { style: css('flex:none;font-size:15px;color:#1d1d1f;font-variant-numeric:tabular-nums;') }, fmt(it.amt)))));
+  };
+  const cardsSection = () => {
+    const cards = s.cards || [];
+    const newDraft = () => ({ id: Date.now(), name: '', last4: '', closingDay: '', dueDay: '', payMode: 'full', minPayment: '', fixedAmount: '', balance: '', limit: '', apr: '', firstStatementPending: null, isNew: true });
+    const line = (key, l, r, color) => /*#__PURE__*/React.createElement('div', {
+      key, style: css('display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12.5px;margin-top:6px;color:' + (color || '#6e6e73') + ';')
+    }, /*#__PURE__*/React.createElement('span', { style: css('min-width:0;') }, l), /*#__PURE__*/React.createElement('b', { style: css('flex:none;color:' + (color || '#1d1d1f') + ';font-variant-numeric:tabular-nums;') }, r));
+    const payBox = (card, suggested, label, asFirst) => {
+      const typed = cardPayInput[card.id];
+      const v = typed != null ? typed : (suggested > 0 ? String(Math.round(suggested * 100) / 100) : '');
+      return /*#__PURE__*/React.createElement('div', { key: 'pay', style: css('display:flex;gap:8px;margin-top:10px;') },
+        /*#__PURE__*/React.createElement('div', { style: { position: 'relative', flex: 1, minWidth: 0 } },
+          /*#__PURE__*/React.createElement('span', { style: css('position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:13px;color:#86868b;pointer-events:none;') }, '$'),
+          /*#__PURE__*/React.createElement('input', { type: 'number', inputMode: 'decimal', value: v, placeholder: '0', onChange: e => { const val = e.target.value; setCardPayInput(cur => Object.assign({}, cur, { [card.id]: val })); }, style: css('width:100%;box-sizing:border-box;padding:8px 9px 8px 22px;border:1px solid #e5e5ea;border-radius:9px;font-size:13.5px;font-weight:700;background:#fbfbfd;') })),
+        /*#__PURE__*/React.createElement('button', {
+          onClick: () => { const amt = parseFloat(v) || 0; if (amt <= 0) return; logCardPayment(card.id, amt, asFirst); setCardPayInput(cur => { const n = Object.assign({}, cur); delete n[card.id]; return n; }); },
+          style: css(UI_BTN.inlinePrimary)
+        }, label));
+    };
+    const cardBody = card => {
+      const title = /*#__PURE__*/React.createElement('div', { key: 'title', style: css('display:flex;justify-content:space-between;align-items:center;gap:8px;') },
+        /*#__PURE__*/React.createElement('div', { style: css('font-size:14px;font-weight:700;color:#1d1d1f;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;') }, cardLabelOf(card.id)),
+        /*#__PURE__*/React.createElement('button', { onClick: () => setCardSheet(Object.assign({}, card)), style: css('background:none;border:none;color:#0071e3;font-size:11.5px;font-weight:700;cursor:pointer;padding:0;flex:none;') }, t('edit')));
+      const stmt = cardStatement(card, s.expenseLog, ctx.today);
+      if (!isDebtCard(card)) {
+        const parts = [title, line('cyc', t('thisCycle') + ' · ' + t('closesOn').replace('{d}', () => cardDateLabel(stmt.nextClose)), fmt(stmt.cycleSoFar))];
+        if (card.firstStatementPending) {
+          parts.push(/*#__PURE__*/React.createElement('div', { key: 'first', style: css('background:#f5f8ff;border-radius:10px;padding:10px 11px;margin-top:10px;') },
+            /*#__PURE__*/React.createElement('div', { style: css('font-size:12.5px;font-weight:700;color:#1d1d1f;') }, t('firstPaymentTitle')),
+            /*#__PURE__*/React.createElement('div', { style: css('font-size:11.5px;color:#6e6e73;line-height:1.4;margin-top:2px;') }, t('firstPaymentHint')),
+            payBox(card, 0, t('logPayment'), true)));
+        } else if (stmt.toPay > 0.005) {
+          parts.push(line('topay', t('statementToPay') + ' · ' + (stmt.overdue ? t('overdue') : t('dueOn')).replace('{d}', () => cardDateLabel(stmt.due)), fmt(stmt.toPay), stmt.overdue ? '#ff3b30' : null));
+          parts.push(/*#__PURE__*/React.createElement('button', { key: 'mark', onClick: () => logCardPayment(card.id, stmt.toPay, false), style: css(UI_BTN.inlineSoft + 'margin-top:10px;') }, t('markPaid')));
+        } else if (stmt.statementAmount > 0) {
+          parts.push(line('paid', t('statementPaid'), '✓ ' + fmt(stmt.statementAmount), '#34c759'));
+        }
+        return parts;
+      }
+      const bal = cardDebtBalance(card, s.expenseLog);
+      const interest = cardMonthlyInterest(card, bal);
+      const pay = cardPlannedPayment(card, bal);
+      const months = cardPayoffMonths(bal, card.apr, pay);
+      const payoffText = !(bal > 0) ? '' : months === Infinity ? t('payoffNever') : t('payoffIn').replace('{n}', () => String(months)).replace('{d}', () => { const d = addMonths(ctx.today, months); return MONTH_NAMES[d.getMonth()] + ' ' + d.getFullYear(); });
+      const paidThisStatement = (card.payments || []).some(p => new Date(p.date + 'T00:00:00') > stmt.close);
+      return [
+        title,
+        line('bal', t('balanceApprox'), fmt(bal)),
+        (parseFloat(card.apr) || 0) > 0 && bal > 0 && line('int', t('interestApprox').replace('{x}', () => fmt(interest)), '', '#c77700'),
+        line('plan', t('plannedPayment') + ' · ' + t('dueOn').replace('{d}', () => cardDateLabel(stmt.due)), fmt(pay)),
+        payoffText && /*#__PURE__*/React.createElement('div', { key: 'payoff', style: css('font-size:11.5px;margin-top:6px;color:' + (months === Infinity ? '#ff3b30' : '#86868b') + ';') }, payoffText),
+        bal > 0 && payBox(card, paidThisStatement ? 0 : pay, t('logPayment'), false)
+      ];
+    };
+    return /*#__PURE__*/React.createElement('div', { style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:14px;') },
+      /*#__PURE__*/React.createElement('div', { style: css('font-size:13px;font-weight:600;color:#86868b;text-transform:uppercase;letter-spacing:0.03em;') }, t('cardsTitle')),
+      !cards.length && /*#__PURE__*/React.createElement('div', { style: css('font-size:12px;color:#86868b;line-height:1.4;margin-top:6px;') }, t('cardsHint')),
+      cards.map(card => /*#__PURE__*/React.createElement('div', { key: card.id, style: css('border:1px solid #f0f0f2;border-radius:12px;padding:12px;margin-top:10px;') }, cardBody(card))),
+      /*#__PURE__*/React.createElement('button', { onClick: () => setCardSheet(newDraft()), style: css(UI_BTN.inlineSoft + 'margin-top:10px;') }, t('addCard')));
+  };
   const NONREC_KEY = ' nonrecurring';
   const entriesForCat = key => (key === NONREC_KEY
     ? periodEntries.filter(e => !e.recurring)
-    : periodEntries.filter(e => e.recurring && e.name === key)
+    : periodEntries.filter(e => cardRowByName[key] ? e.cardPaymentFor === cardRowByName[key] : (e.recurring && e.name === key && !e.cardPaymentFor))
   ).slice().sort((a, b) => (b.day || 0) - (a.day || 0));
   const catDetailList = key => {
     if (openExpenseCat !== key) return null;
@@ -4231,7 +4585,7 @@ function App() {
       style: css('font-size:12px;color:#1d1d1f;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;')
     }, /*#__PURE__*/React.createElement("span", {
       style: css('color:#86868b;')
-    }, MONTH_NAMES[s.logMonth], " ", e.day), // A recurring entry's name IS the category you just opened, so repeating it
+    }, MONTH_NAMES[s.logMonth], " ", e.day, e.cardId != null && cardLabelOf(e.cardId) ? ' · ' + cardLabelOf(e.cardId) : ''), // A recurring entry's name IS the category you just opened, so repeating it
     // on every line says nothing. Only a name that adds something is shown —
     // which is what the free-text description on a non-recurring expense does.
     e.name && e.name !== key ? /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
@@ -4377,6 +4731,27 @@ function App() {
     }
     // A certificate that has reached its date: the person needs to enter what they
     // actually received and decide whether to renew it, or the money goes stale here.
+    (s.cards || []).forEach(card => {
+      if (!isDebtCard(card)) return;
+      const bal = cardDebtBalance(card, s.expenseLog);
+      if (!(bal > 0)) return;
+      const cname = cardLabelOf(card.id);
+      const interest = cardMonthlyInterest(card, bal);
+      const pay = cardPlannedPayment(card, bal);
+      const apr = parseFloat(card.apr) || 0;
+      if (apr > 0 && pay <= interest + 0.005) {
+        tips.push({ id: 'card-min-' + card.id, title: t('tipCardMin'), body: t('tipCardMinBody').replace('{c}', () => cname).replace('{p}', () => fmt(pay)).replace('{x}', () => fmt(interest)), actionLabel: t('viewCard'), action: () => goToTabRoot('gastos') });
+      } else if (apr >= 15 && participatingInvs.length > 0) {
+        tips.push({ id: 'card-apr-' + card.id, title: t('tipCardApr'), body: t('tipCardAprBody').replace('{c}', () => cname).replace('{r}', () => String(apr)).replace('{x}', () => fmt(interest)), actionLabel: t('viewCard'), action: () => goToTabRoot('gastos') });
+      }
+    });
+    (s.cards || []).forEach(card => {
+      const lim = parseFloat(card.limit) || 0;
+      if (!(lim > 0)) return;
+      const used = isDebtCard(card) ? cardDebtBalance(card, s.expenseLog) : cardStatement(card, s.expenseLog, ctx.today).cycleSoFar;
+      const u = Math.round(used / lim * 100);
+      if (u > 30) tips.push({ id: 'card-util-' + card.id, title: t('tipCardUtil'), body: t('tipCardUtilBody').replace('{c}', () => cardLabelOf(card.id)).replace('{u}', () => String(u)), actionLabel: t('viewCard'), action: () => goToTabRoot('gastos') });
+    });
     const maturedCerts = s.investments.filter(i => certHasMatured(i, ctx.today));
     maturedCerts.forEach(i => {
       tips.push({
@@ -5251,6 +5626,7 @@ function App() {
     setQuickAddGoalId(null);
     setWithdrawGoalId(null);
     setSharedWithdrawShare(null);
+    setCardSheet(null);
     setShowPaycheckModal(false);
     setShowExpenseModal(false);
     setShareModal(null);
@@ -5369,7 +5745,7 @@ function App() {
       value: logName,
       onChange: function (e) { setLogName(e.target.value); },
       style: css('width:100%;padding:11px 12px;border:1px solid #e5e5ea;border-radius:11px;font-size:13.5px;background:#fbfbfd;margin-bottom:10px;box-sizing:border-box;')
-    }), /*#__PURE__*/React.createElement('div', {
+    }), paidWithChips(), /*#__PURE__*/React.createElement('div', {
       style: { position: 'relative', marginBottom: 16 }
     }, /*#__PURE__*/React.createElement('span', {
       style: css('position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:17px;color:#86868b;pointer-events:none;')
@@ -5567,7 +5943,7 @@ function App() {
       style: css('width:100%;background:#0071e3;color:#fff;border:none;border-radius:13px;padding:14px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:14px;')
     }, es ? '+ Abonar a esta meta' : '+ Add savings'), row.permission === 'edit' && myNetInShared(d) > 0 && /*#__PURE__*/React.createElement("button", {
       onClick: function () { setWithdrawAmount(''); setWithdrawReason(''); setSharedWithdrawShare(row); },
-      style: css('width:100%;background:none;border:none;color:#ff3b30;font-size:12.5px;font-weight:600;cursor:pointer;margin:-8px 0 12px;padding:6px;')
+      style: css(UI_BTN.dangerSoft + 'margin-bottom:14px;')
     }, t('withdrawMine')), /*#__PURE__*/React.createElement("div", {
       style: css(card)
     }, /*#__PURE__*/React.createElement("div", {
@@ -5697,7 +6073,64 @@ function App() {
       fn();
     },
     style: css('flex:1;background:#ff3b30;color:#fff;border:none;padding:11px;border-radius:10px;font-size:13.5px;font-weight:600;cursor:pointer;')
-  }, s.language === 'es' ? 'Sí, continuar' : 'Yes, continue')))), (withdrawGoalId || sharedWithdrawShare) && (function () {
+  }, s.language === 'es' ? 'Sí, continuar' : 'Yes, continue')))), cardSheet && (function () {
+    var es = s.language === 'es';
+    var dft = cardSheet;
+    var set = function (k, v) { setCardSheet(function (cur) { var n = Object.assign({}, cur); n[k] = v; return n; }); };
+    var close = function () { setCardSheet(null); };
+    var debt = dft.payMode === 'minimum' || dft.payMode === 'fixed';
+    var dayOk = function (v) { var n = parseInt(v, 10); return n >= 1 && n <= 31; };
+    var needsFirstAnswer = !!dft.isNew && dft.payMode === 'full' && dft.firstStatementPending == null;
+    var canSave = !!String(dft.name || '').trim() && dayOk(dft.closingDay) && dayOk(dft.dueDay) && (!debt || (dft.balance !== '' && parseFloat(dft.balance) >= 0)) && (dft.payMode !== 'fixed' || parseFloat(dft.fixedAmount) > 0) && !needsFirstAnswer;
+    var field = function (label, key, props) {
+      return React.createElement('label', { style: css('display:block;margin-bottom:10px;') },
+        React.createElement('span', { style: css('display:block;font-size:11px;color:#86868b;font-weight:600;margin-bottom:4px;') }, label),
+        React.createElement('input', Object.assign({ value: dft[key] == null ? '' : dft[key], onChange: function (e) { set(key, e.target.value); }, style: css('width:100%;box-sizing:border-box;padding:10px 11px;border:1px solid #e5e5ea;border-radius:10px;font-size:14px;background:#fbfbfd;') }, props || {})));
+    };
+    var chip = function (active, label, onClick) {
+      return React.createElement('button', { type: 'button', onClick: onClick, style: css('flex:1;' + UI_BTN.segment(active, '11px 6px')) }, label);
+    };
+    var save = function () {
+      if (!canSave) return;
+      var orig = (s.cards || []).find(function (c) { return c.id === dft.id; });
+      var out = Object.assign({}, dft);
+      delete out.isNew;
+      // A (re)entered balance is "as of today"; purchases/payments after it move it.
+      if (debt && (!orig || String(orig.balance) !== String(dft.balance) || !orig.balanceDate)) out.balanceDate = todayStr;
+      if (dft.payMode !== 'full') out.firstStatementPending = false;
+      saveCard(out);
+      close();
+    };
+    var row2 = function (a, b) { return React.createElement('div', { style: css('display:flex;gap:10px;') }, React.createElement('div', { style: css('flex:1;min-width:0;') }, a), React.createElement('div', { style: css('flex:1;min-width:0;') }, b)); };
+    return React.createElement('div', { onClick: close, className: 'pf-overlay-in', style: css('position:fixed;inset:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;padding:0;') },
+      React.createElement('div', { onClick: function (e) { e.stopPropagation(); }, className: 'pf-modal-in', style: Object.assign(css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));max-width:480px;width:100%;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);max-height:88vh;overflow-y:auto;'), { paddingBottom: keyboardInset > 0 ? keyboardInset + 24 : undefined }) },
+        React.createElement('div', { style: css('font-size:18px;font-weight:800;margin-bottom:14px;') }, dft.isNew ? t('newCard') : (dft.name || t('cardsTitle'))),
+        row2(field(t('cardName'), 'name', { type: 'text', maxLength: 24 }), field(t('cardLast4'), 'last4', { type: 'text', inputMode: 'numeric', maxLength: 4 })),
+        row2(field(t('closingDay'), 'closingDay', { type: 'number', inputMode: 'numeric', min: 1, max: 31 }), field(t('dueDay'), 'dueDay', { type: 'number', inputMode: 'numeric', min: 1, max: 31 })),
+        React.createElement('div', { style: css('font-size:11px;color:#86868b;font-weight:600;margin:2px 0 6px;') }, t('howYouPay')),
+        React.createElement('div', { style: css('display:flex;gap:6px;margin-bottom:12px;') },
+          chip(dft.payMode === 'full', t('payFull'), function () { set('payMode', 'full'); }),
+          chip(dft.payMode === 'minimum', t('payMinimum'), function () { set('payMode', 'minimum'); }),
+          chip(dft.payMode === 'fixed', t('payFixed'), function () { set('payMode', 'fixed'); })),
+        dft.isNew && dft.payMode === 'full' && React.createElement('div', { style: css('background:#f5f8ff;border-radius:12px;padding:11px 12px;margin-bottom:12px;') },
+          React.createElement('div', { style: css('font-size:12.5px;font-weight:600;color:#1d1d1f;margin-bottom:8px;line-height:1.35;') }, t('firstStatementQ')),
+          React.createElement('div', { style: css('display:flex;gap:6px;') },
+            chip(dft.firstStatementPending === false, t('firstStatementYes'), function () { set('firstStatementPending', false); }),
+            chip(dft.firstStatementPending === true, t('firstStatementNo'), function () { set('firstStatementPending', true); }))),
+        debt && field(t('balanceLabel'), 'balance', { type: 'number', inputMode: 'decimal', placeholder: '0' }),
+        dft.payMode === 'minimum' && field(t('minPaymentLabel'), 'minPayment', { type: 'number', inputMode: 'decimal', placeholder: String(Math.max(25, Math.round((parseFloat(dft.balance) || 0) * 0.03))) }),
+        dft.payMode === 'minimum' && React.createElement('div', { style: css('font-size:11px;color:#86868b;margin:-6px 0 10px;') }, t('minPaymentSuggest')),
+        dft.payMode === 'fixed' && field(t('fixedAmountLabel'), 'fixedAmount', { type: 'number', inputMode: 'decimal', placeholder: '0' }),
+        row2(field(t('limitLabel'), 'limit', { type: 'number', inputMode: 'decimal' }), field(t('aprLabel'), 'apr', { type: 'number', inputMode: 'decimal' })),
+        React.createElement('div', { style: css('display:flex;gap:10px;margin-top:6px;') },
+          React.createElement('button', { onClick: close, style: css(UI_BTN.sheetCancel) }, es ? 'Cancelar' : 'Cancel'),
+          React.createElement('button', { onClick: save, disabled: !canSave, style: css(UI_BTN.sheetPrimary + uiEnabled(canSave)) }, t('saveCard'))),
+        !dft.isNew && React.createElement('button', {
+          // Close first: the confirm dialog sits below this sheet's layer.
+          onClick: function () { var id = dft.id; close(); askConfirm(es ? '¿Eliminar esta tarjeta? Los gastos que registraste con ella se quedan.' : 'Delete this card? Expenses you logged with it stay.', function () { deleteCard(id); }); },
+          style: css(UI_BTN.dangerSoft + 'margin-top:12px;')
+        }, t('deleteCard'))));
+  })(), (withdrawGoalId || sharedWithdrawShare) && (function () {
     // One sheet, two cases: the owner withdrawing from their own goal (anything in it),
     // or someone the goal is shared with, who can only take back what THEY put in.
     var sharedRow = !withdrawGoalId && sharedWithdrawShare ? (sharesData.find(function (r) { return r.id === sharedWithdrawShare.id; }) || sharedWithdrawShare) : null;
@@ -5730,8 +6163,8 @@ function App() {
       React.createElement('b', null, fmt(avail)));
     var reasonField = React.createElement('input', { type: 'text', placeholder: t('withdrawReasonPh'), value: withdrawReason, maxLength: 60, onChange: function (e) { setWithdrawReason(e.target.value); }, style: css('width:100%;padding:11px 12px;border:1px solid #e5e5ea;border-radius:12px;font-size:14px;background:#fbfbfd;margin-bottom:16px;') });
     var actions = React.createElement('div', { style: { display: 'flex', gap: 10 } },
-      React.createElement('button', { onClick: close, style: css('flex:1;background:#f5f5f7;color:#1d1d1f;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;') }, es ? 'Cancelar' : 'Cancel'),
-      React.createElement('button', { onClick: go, disabled: !canGo, style: css('flex:1;background:' + (canGo ? '#ff3b30' : '#ffc9c6') + ';color:#fff;border:none;border-radius:12px;padding:12px;font-size:14px;font-weight:700;cursor:' + (canGo ? 'pointer' : 'default') + ';') }, t('withdrawConfirm')));
+      React.createElement('button', { onClick: close, style: css(UI_BTN.sheetCancel) }, es ? 'Cancelar' : 'Cancel'),
+      React.createElement('button', { onClick: go, disabled: !canGo, style: css(UI_BTN.sheetDanger + uiEnabled(canGo)) }, t('withdrawConfirm')));
     return React.createElement('div', { onClick: close, className: 'pf-overlay-in', style: css('position:fixed;inset:0;z-index:120;background:rgba(0,0,0,0.45);display:flex;align-items:flex-end;justify-content:center;padding:0;') },
       React.createElement('div', { onClick: function (e) { e.stopPropagation(); }, className: 'pf-modal-in', style: Object.assign(css('background:#fff;border-radius:22px 22px 0 0;padding:22px 20px calc(24px + env(safe-area-inset-bottom));max-width:480px;width:100%;box-sizing:border-box;box-shadow:0 -10px 40px rgba(0,0,0,0.18);'), { paddingBottom: keyboardInset > 0 ? keyboardInset + 24 : undefined, transition: 'padding-bottom 0.18s ease-out' }) },
         head, warn, amountField, availLine, reasonField, actions));
@@ -5925,7 +6358,7 @@ function App() {
       zIndex: 1,
       minHeight: 'calc(100vh - ' + Math.max(homeHeroH - 26, 0) + 'px)'
     }
-  }, !!s.pendingLeftover && pendingLeftoverLive > 0 && /*#__PURE__*/React.createElement("div", {
+  }, cardDueBanner(), !!s.pendingLeftover && pendingLeftoverLive > 0 && /*#__PURE__*/React.createElement("div", {
     style: css('background:linear-gradient(135deg,#0071e3,#34c759);border-radius:18px;padding:18px;color:#fff;margin-bottom:16px;box-shadow:0 12px 30px rgba(0,113,227,0.25);')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;opacity:0.9;')
@@ -7531,7 +7964,7 @@ function App() {
     style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:12px;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;')
   }, t('logSavings')), goalCur(sgSource) > 0 && /*#__PURE__*/React.createElement("button", {
     onClick: () => { setWithdrawAmount(''); setWithdrawReason(''); setWithdrawGoalId(sgSource.id); },
-    style: css('width:100%;background:none;border:none;color:#ff3b30;font-size:12px;font-weight:600;cursor:pointer;margin-top:6px;padding:6px;')
+    style: css('width:100%;background:#fff2ef;color:#ff3b30;border:none;border-radius:10px;padding:10px;font-size:11.5px;font-weight:600;cursor:pointer;margin-top:8px;')
   }, t('withdrawFromGoal'))), (() => {
     const now = new Date();
     const monthEntries = (sgSource.savingsLog || []).filter(entry => {
@@ -8303,7 +8736,7 @@ function App() {
     value: logName,
     onChange: e => setLogName(e.target.value),
     style: css('width:100%;padding:11px 12px;border:1px solid #e5e5ea;border-radius:11px;font-size:13.5px;background:#fbfbfd;margin-bottom:10px;')
-  }), /*#__PURE__*/React.createElement("div", {
+  }), paidWithChips(), /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;gap:8px;')
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -8339,7 +8772,7 @@ function App() {
     style: css('display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:8px 0;border-bottom:1px solid #f0f0f2;')
   }, /*#__PURE__*/React.createElement("span", null, entry.name || 'Expense', /*#__PURE__*/React.createElement("span", {
     style: css('color:#86868b;font-size:11px;')
-  }, " · ", entry.recurring ? 'recurring' : 'non-recurring', " · spent")), /*#__PURE__*/React.createElement("span", {
+  }, " · ", entry.recurring ? 'recurring' : 'non-recurring', " · spent", entry.cardId != null && cardLabelOf(entry.cardId) ? ' · ' + cardLabelOf(entry.cardId) : '')), /*#__PURE__*/React.createElement("span", {
     style: css('display:flex;align-items:center;gap:8px;')
   }, fmt(entry.amount), /*#__PURE__*/React.createElement("button", {
     onClick: () => removeLogEntry(entry.id),
@@ -8357,7 +8790,7 @@ function App() {
   }, "Already spent"), /*#__PURE__*/React.createElement("button", {
     onClick: () => removePlannedExpense(p.id),
     style: css('background:none;border:none;color:#ff3b30;cursor:pointer;font-size:14px;')
-  }, "×")))))), /*#__PURE__*/React.createElement("button", {
+  }, "×")))))), cardsSection(), /*#__PURE__*/React.createElement("button", {
     onClick: function(){ setTab('budgetPlan'); },
     style: css('width:100%;background:#0071e3;color:#fff;border:none;padding:12px;border-radius:12px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:14px;')
   }, s.language==='es'?'Plan de presupuesto':'Budget plan'), true && /*#__PURE__*/React.createElement("div", {
