@@ -139,6 +139,8 @@ function buildPersistPayload(state) {
     hasFixedContracts: state.hasFixedContracts,
     language: state.language,
     pendingLeftover: state.pendingLeftover,
+    overspendCarry: state.overspendCarry,
+    pendingOverspend: state.pendingOverspend,
     spendingBoost: state.spendingBoost,
     notificationsEnabled: state.notificationsEnabled,
     dismissedTips: state.dismissedTips,
@@ -464,6 +466,40 @@ const UI_BTN = {
 function uiEnabled(on) {
   return on ? 'cursor:pointer;' : 'opacity:0.4;cursor:default;';
 }
+// ---------- overspending carry-over ----------
+// Going over the spending budget is neither ignored nor taken out of savings: the excess
+// is carried into the following month(s) as money ALREADY SPENT. "What you can spend"
+// shrinks; the budget itself — and so every goal's share — stays exactly the same.
+// A large excess (more than half the spending budget) is spread over up to 3 months so
+// the next month isn't left with nothing to live on.
+function planOverspendCarry(excess, spendBudget, fromYear, fromMonth, startYm) {
+  const amt = Math.round(excess);
+  if (!(amt > 0)) return [];
+  const half = Math.max(spendBudget || 0, 0) * 0.5;
+  const n = half > 0 ? Math.min(3, Math.max(1, Math.ceil(amt / half))) : 1;
+  const each = Math.floor(amt / n);
+  const fromYm = fromYear * 12 + fromMonth;
+  const parts = [];
+  for (let k = 0; k < n; k++) {
+    // Deterministic id: re-running the month rollover (another device, a reload) can't
+    // schedule the same excess twice.
+    parts.push({ id: 'oc-' + fromYm + '-' + k, from: MONTH_NAMES[fromMonth] + ' ' + fromYear, ym: startYm + k, amount: k === n - 1 ? amt - each * (n - 1) : each });
+  }
+  return parts;
+}
+function carryForMonth(list, year, month) {
+  const ym = year * 12 + month;
+  return (list || []).filter(c => c.ym === ym).reduce((a, c) => a + (c.amount || 0), 0);
+}
+function carryFromLabels(list, year, month) {
+  const ym = year * 12 + month;
+  return Array.from(new Set((list || []).filter(c => c.ym === ym).map(c => c.from))).join(', ');
+}
+// What a month's spending is measured against: categories + allowance + debt-card payments
+// (those payments are logged as expenses, so they must be in the budget they're compared to).
+function spendBudgetOf(s) {
+  return sum(s.expenseCategories || []) + (s.nonRecurringBudget || 0) + cardsMonthlyObligation(s);
+}
 function goalOthersTotal(goal) {
   return ((goal && goal.savingsLog) || []).reduce(function (a, e) {
     var who = e.by || (typeof e.label === 'string' && e.label.indexOf('@') > -1 ? e.label.split('·')[0].trim() : null);
@@ -705,6 +741,8 @@ function defaultState() {
     hasFixedContracts: null,
     language: 'en',
     pendingLeftover: null,
+    overspendCarry: [],
+    pendingOverspend: null,
     spendingBoost: 0,
     notificationsEnabled: false,
     dismissedTips: {},
@@ -1064,6 +1102,12 @@ const STRINGS = {
     withdrawTooMuch: 'That’s more than this goal has',
     withdrawConfirm: 'Withdraw',
     withdrawalLabel: 'Withdrawal',
+    overspentTitle: 'You went over in {m}',
+    overspentBody: 'It comes out of what you can spend {when}. Your goals stay the same.',
+    overspentWhenNext: 'this month',
+    overspentWhenSplit: 'over the next {n} months ({p}/mo)',
+    carryIncluded: 'includes {x} carried over from {m}',
+    carryRowLabel: 'Carried over from {m}',
     cardsTitle: 'Credit cards',
     cardsHint: 'Log card purchases the day you make them. Paying a card you pay in full isn’t a new expense — it was already counted.',
     addCard: '+ Add card',
@@ -1312,6 +1356,12 @@ const STRINGS = {
     withdrawTooMuch: 'Es más de lo que tiene esta meta',
     withdrawConfirm: 'Retirar',
     withdrawalLabel: 'Retiro',
+    overspentTitle: 'Te pasaste en {m}',
+    overspentBody: 'Se descuenta de lo que puedes gastar {when}. Tus metas no cambian.',
+    overspentWhenNext: 'este mes',
+    overspentWhenSplit: 'en los próximos {n} meses ({p}/mes)',
+    carryIncluded: 'incluye {x} del exceso de {m}',
+    carryRowLabel: 'Exceso de {m}',
     cardsTitle: 'Tarjetas de crédito',
     cardsHint: 'Registra las compras con tarjeta el día que las haces. Pagar una tarjeta que pagas completa no es un gasto nuevo: ya se contó.',
     addCard: '+ Agregar tarjeta',
@@ -2690,16 +2740,27 @@ function App() {
               prevYear -= 1;
             }
             const cats = loaded.expenseCategories || [];
-            const budgetForPrevMonth = cats.reduce((a, c) => a + (c.amount || 0), 0) + (loaded.nonRecurringBudget || 0);
+            const budgetForPrevMonth = cats.length || loaded.nonRecurringBudget ? spendBudgetOf(loaded) : 0;
             const spentPrevMonth = (loaded.expenseLog || []).filter(e => {
               const d = new Date(entryDateStr(e) + 'T00:00:00');
               return d.getFullYear() === prevYear && d.getMonth() === prevMonth;
             }).reduce((a, e) => a + e.amount, 0);
-            const leftover = Math.round(budgetForPrevMonth - spentPrevMonth);
+            // A carried-over excess counts as spent in the month it was carried into, so if
+            // that month ALSO goes over, what's still owed rolls forward instead of vanishing.
+            const leftover = Math.round(budgetForPrevMonth - spentPrevMonth - carryForMonth(loaded.overspendCarry, prevYear, prevMonth));
             loaded.pendingLeftover = leftover > 0 ? {
               amount: leftover,
               label: MONTH_NAMES[prevMonth] + ' ' + prevYear
             } : null;
+            if (leftover < 0 && budgetForPrevMonth > 0) {
+              const have = new Set((loaded.overspendCarry || []).map(c => c.id));
+              const parts = planOverspendCarry(-leftover, budgetForPrevMonth, prevYear, prevMonth, curYear * 12 + curMonth).filter(p => !have.has(p.id));
+              if (parts.length) {
+                const keepFrom = curYear * 12 + curMonth - 12;
+                loaded.overspendCarry = (loaded.overspendCarry || []).filter(c => c.ym >= keepFrom).concat(parts);
+                loaded.pendingOverspend = { label: MONTH_NAMES[prevMonth] + ' ' + prevYear, amount: -leftover, months: parts.length, perMonth: parts[0].amount };
+              }
+            }
             loaded.spendingBoost = 0;
             loaded.lastProcessedMonth = curMonth;
             loaded.lastProcessedYear = curYear;
@@ -3011,7 +3072,7 @@ function App() {
         const d = new Date(entryDateStr(e) + 'T00:00:00');
         return d.getFullYear() === p.year && d.getMonth() === p.month;
       }).reduce((a, e) => a + e.amount, 0);
-      const budget = sum(s.expenseCategories) + (s.nonRecurringBudget || 0);
+      const budget = spendBudgetOf(s) - carryForMonth(s.overspendCarry, p.year, p.month);
       const amount = Math.max(Math.round(budget - spent), 0);
       if (amount <= 0) return {
         pendingLeftover: null
@@ -4281,7 +4342,7 @@ function App() {
       const d = new Date(entryDateStr(e) + 'T00:00:00');
       return d.getFullYear() === p.year && d.getMonth() === p.month;
     }).reduce((a, e) => a + e.amount, 0);
-    const budget = sum(s.expenseCategories) + (s.nonRecurringBudget || 0);
+    const budget = spendBudgetOf(s) - carryForMonth(s.overspendCarry, p.year, p.month);
     return Math.max(Math.round(budget - spent), 0);
   })();
   function buildGoalView(goal, isDetail) {
@@ -4429,7 +4490,8 @@ function App() {
   const periodEntries = s.expenseLog.filter(e => e.year === s.logYear && e.month === s.logMonth);
   const resumenActualRecurringNum = periodEntries.filter(e => e.recurring).reduce((a, e) => a + e.amount, 0);
   const resumenActualNonRecurringNum = periodEntries.filter(e => !e.recurring).reduce((a, e) => a + e.amount, 0);
-  const resumenActualTotalNum = resumenActualRecurringNum + resumenActualNonRecurringNum;
+  const resumenCarry = carryForMonth(s.overspendCarry, s.logYear, s.logMonth);
+  const resumenActualTotalNum = resumenActualRecurringNum + resumenActualNonRecurringNum + resumenCarry;
   const resumenPlannedTotalNum = monthlyTotal;
   const resumenTotalPct = resumenPlannedTotalNum > 0 ? resumenActualTotalNum / resumenPlannedTotalNum * 100 : 0;
   // Debt cards add their planned payment as a fixed line, so the month's total, its bar
@@ -4477,6 +4539,18 @@ function App() {
           style: css(UI_BTN.segment(sel, '9px 12px', '12.5px'))
         }, o.label);
       })));
+  };
+  // Month-start heads-up when last month went over: how much, and that it comes out of
+  // spending — never out of the goals.
+  const overspendNotice = () => {
+    const po = s.pendingOverspend;
+    if (!po || !(po.amount > 0)) return null;
+    const when = po.months > 1 ? t('overspentWhenSplit').replace('{n}', () => String(po.months)).replace('{p}', () => fmt(po.perMonth)) : t('overspentWhenNext');
+    return /*#__PURE__*/React.createElement('div', { style: css('background:#fff4f4;border-radius:18px;padding:16px;margin-bottom:16px;') },
+      /*#__PURE__*/React.createElement('div', { style: css('font-size:13px;font-weight:600;color:#c62828;') }, t('overspentTitle').replace('{m}', () => po.label)),
+      /*#__PURE__*/React.createElement('div', { style: css('font-size:26px;font-weight:800;color:#1d1d1f;margin:2px 0 6px;') }, fmt(po.amount)),
+      /*#__PURE__*/React.createElement('div', { style: css('font-size:12.5px;color:#6e6e73;line-height:1.4;') }, t('overspentBody').replace('{when}', () => when)),
+      /*#__PURE__*/React.createElement('button', { onClick: () => patch({ pendingOverspend: null }), style: css(UI_BTN.inlineSoft + 'margin-top:12px;') }, t('gotIt')));
   };
   const cardDateLabel = d => MONTH_NAMES[d.getMonth()] + ' ' + d.getDate();
   // Home reminder: a card payment due within two weeks (or already late), so the money is
@@ -4631,14 +4705,19 @@ function App() {
   const now = new Date();
   const nowMonthPrefix = now.getFullYear() + '-' + pad2(now.getMonth() + 1);
   const homeMonthEntries = s.expenseLog.filter(e => entryDateStr(e).slice(0, 7) === nowMonthPrefix);
-  const homeMonthSpent = homeMonthEntries.reduce((a, e) => a + e.amount, 0);
+  // Excess carried in from a month that went over: already spent, on day 1.
+  const carryThisMonth = carryForMonth(s.overspendCarry, now.getFullYear(), now.getMonth());
+  const homeMonthSpent = homeMonthEntries.reduce((a, e) => a + e.amount, 0) + carryThisMonth;
   // Paid more than once a month? Then the useful number is what's left until the
   // next paycheck, measured against what THIS paycheck has to cover.
   const payPeriod = currentPayPeriod(s, ctx.today);
+  // Per paycheck, the month's carry is spread like any monthly amount (one paycheck's share).
+  const payPeriodMonthRef = payPeriod ? new Date(payPeriod.end.getFullYear(), payPeriod.end.getMonth(), payPeriod.end.getDate() - 1) : null;
+  const carryPeriodShare = payPeriod ? carryForMonth(s.overspendCarry, payPeriodMonthRef.getFullYear(), payPeriodMonthRef.getMonth()) * 12 / payPeriodsPerYear(s) : 0;
   const payPeriodSpent = payPeriod ? s.expenseLog.filter(e => {
     const d = new Date(entryDateStr(e) + 'T00:00:00');
     return d >= payPeriod.start && d < payPeriod.end;
-  }).reduce((a, e) => a + e.amount, 0) : 0;
+  }).reduce((a, e) => a + e.amount, 0) + carryPeriodShare : 0;
   const payPeriodBudget = payPeriod ? periodBudgetOf(s, payPeriod) : 0;
   const payPeriodDateLabel = payPeriod ? MONTH_NAMES[payPeriod.nextPayday.getMonth()] + ' ' + payPeriod.nextPayday.getDate() : '';
   const homeSpentTotal = payPeriod ? payPeriodSpent : homeMonthSpent;
@@ -6329,7 +6408,9 @@ function App() {
     }
   }, Math.round(Math.min(homeSpentPct, 999)), "%")), /*#__PURE__*/React.createElement("div", {
     style: css('font-size:11.5px;opacity:0.85;margin-top:6px;')
-  }, payPeriod ? t('ofPeriodBudget').replace('{x}', () => fmt(homeBudget)).replace('{d}', () => payPeriodDateLabel) : t('ofMonthBudget').replace('{x}', () => fmt(homeBudget))), /*#__PURE__*/React.createElement("div", {
+  }, payPeriod ? t('ofPeriodBudget').replace('{x}', () => fmt(homeBudget)).replace('{d}', () => payPeriodDateLabel) : t('ofMonthBudget').replace('{x}', () => fmt(homeBudget))), (payPeriod ? carryPeriodShare : carryThisMonth) > 0 && /*#__PURE__*/React.createElement("div", {
+    style: css('font-size:11.5px;opacity:0.85;margin-top:2px;')
+  }, t('carryIncluded').replace('{x}', () => fmt(payPeriod ? carryPeriodShare : carryThisMonth)).replace('{m}', () => carryFromLabels(s.overspendCarry, (payPeriodMonthRef || now).getFullYear(), (payPeriodMonthRef || now).getMonth()))), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 14,
       fontWeight: 600,
@@ -6358,7 +6439,7 @@ function App() {
       zIndex: 1,
       minHeight: 'calc(100vh - ' + Math.max(homeHeroH - 26, 0) + 'px)'
     }
-  }, cardDueBanner(), !!s.pendingLeftover && pendingLeftoverLive > 0 && /*#__PURE__*/React.createElement("div", {
+  }, overspendNotice(), cardDueBanner(), !!s.pendingLeftover && pendingLeftoverLive > 0 && /*#__PURE__*/React.createElement("div", {
     style: css('background:linear-gradient(135deg,#0071e3,#34c759);border-radius:18px;padding:18px;color:#fff;margin-bottom:16px;box-shadow:0 12px 30px rgba(0,113,227,0.25);')
   }, /*#__PURE__*/React.createElement("div", {
     style: css('font-size:13px;font-weight:600;opacity:0.9;')
@@ -8951,7 +9032,13 @@ function App() {
         background: pctGradient(nrPct),
         width: Math.min(nrPct, 100).toFixed(1) + '%'
       }
-    })), catDetailList(NONREC_KEY));
+    })), catDetailList(NONREC_KEY), resumenCarry > 0 && /*#__PURE__*/React.createElement("div", {
+      style: css('display:flex;justify-content:space-between;align-items:center;font-size:12.5px;margin-top:12px;padding-top:10px;border-top:1px solid #f0f0f2;')
+    }, /*#__PURE__*/React.createElement("span", {
+      style: css('display:flex;align-items:center;gap:6px;')
+    }, /*#__PURE__*/React.createElement("span", {
+      style: { width: 7, height: 7, borderRadius: '50%', background: '#ff3b30', flex: 'none' }
+    }), t('carryRowLabel').replace('{m}', () => carryFromLabels(s.overspendCarry, s.logYear, s.logMonth))), /*#__PURE__*/React.createElement("span", null, fmt(resumenCarry))));
   })()))), s.tab === 'guide' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: css('display:flex;align-items:center;gap:10px;margin-bottom:6px;')
   }, /*#__PURE__*/React.createElement("button", {
