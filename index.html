@@ -70,7 +70,7 @@
 </head>
 <body>
 <div id="root"></div>
-<script src="./app.js?v=58"></script>
+<script src="./app.js?v=59"></script>
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
@@ -90,6 +90,45 @@
       });
     });
   }
+
+  // An app left open (or in the background) kept running its old code forever, since the
+  // version check above only runs on a cold start. Ask the server — past every cache —
+  // which version is current, and reload when it's newer. Only at a safe moment: never
+  // while something is being typed or a sheet is open (it just tries again later).
+  (function () {
+    var tag = document.querySelector('script[src*="app.js"]');
+    var runningV = ((tag && tag.getAttribute('src')) || '').match(/[?&]v=(\d+)/);
+    runningV = runningV && runningV[1];
+    if (!runningV) return;
+    if (/[?&]u=\d+/.test(location.search)) {
+      // Tidy the address after a version reload.
+      history.replaceState(null, '', location.pathname + location.hash);
+    }
+    var checking = false;
+    function busy() {
+      var a = document.activeElement;
+      return !!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) || !!document.querySelector('.pf-modal-in');
+    }
+    function check() {
+      if (checking || document.visibilityState !== 'visible') return;
+      checking = true;
+      fetch('./index.html?check=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.text() : ''; })
+        .then(function (html) {
+          var latest = (html.match(/app\.js\?v=(\d+)/) || [])[1];
+          if (latest && latest !== runningV && !busy()) {
+            // A unique address skips every cache on the way back in.
+            location.replace(location.pathname + '?u=' + latest + location.hash);
+          }
+        })
+        .catch(function () {})
+        .then(function () { checking = false; });
+    }
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') check(); });
+    window.addEventListener('focus', check);
+    setInterval(check, 3 * 60 * 1000);
+    setTimeout(check, 3000);
+  })();
 </script>
 </body>
 </html>

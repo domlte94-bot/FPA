@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pf-cache-v58';
+const CACHE_NAME = 'pf-cache-v59';
 
 // Files that change when you update the app — always try the network first,
 // so you get the latest version automatically. Cache is only a fallback for offline use.
@@ -45,8 +45,10 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
+// Match on the path, so versioned URLs like app.js?v=59 count as app files too.
 function isAppFile(url) {
-  return url.endsWith('/') || url.endsWith('/index.html') || url.endsWith('/app.js') || url.endsWith('/manifest.json');
+  const p = new URL(url).pathname;
+  return p.endsWith('/') || p.endsWith('/index.html') || p.endsWith('/app.js') || p.endsWith('/manifest.json');
 }
 
 self.addEventListener('fetch', (event) => {
@@ -54,9 +56,11 @@ self.addEventListener('fetch', (event) => {
   const url = event.request.url;
 
   if (isAppFile(url)) {
-    // Network-first: always try to get the newest version. Fall back to cache only if offline.
+    // Network-first, and past the browser's HTTP cache too (GitHub Pages lets browsers keep
+    // files for 10 minutes, which kept serving the old app after an update).
+    // Fall back to the offline cache only when there's no network.
     event.respondWith(
-      fetch(event.request)
+      fetch(url, { cache: 'no-store', credentials: 'same-origin' })
         .then((response) => {
           if (response && response.ok) {
             const copy = response.clone();
