@@ -522,6 +522,29 @@ function carryFromLabels(list, year, month) {
 function spendBudgetOf(s) {
   return sum(s.expenseCategories || []) + (s.nonRecurringBudget || 0) + cardsMonthlyObligation(s);
 }
+// When a goal gets reached. Each contributor's monthly commitment only counts for what they
+// still haven't put in THIS month; anything anyone put in beyond it has already lowered
+// `remaining`. So an extra deposit — by anyone — pulls the date closer right away, and a
+// withdrawal pushes it back. (Dividing remaining by the monthly pace from today ignored
+// this month's deposits, so paying in extra barely moved the date.)
+function goalEta(remaining, contributors, today) {
+  const t0 = new Date(today.getFullYear(), today.getMonth(), 1);
+  if (!(remaining > 0.005)) return { months: 0, date: t0 };
+  const perMonth = contributors.reduce((a, c) => a + Math.max(c.monthly || 0, 0), 0);
+  const pendingNow = contributors.reduce((a, c) => a + Math.max((c.monthly || 0) - (c.loggedThisMonth || 0), 0), 0);
+  if (remaining <= pendingNow + 0.005) return { months: 0, date: t0 };
+  if (!(perMonth > 0)) return { months: Infinity, date: null };
+  const months = Math.ceil((remaining - pendingNow) / perMonth - 1e-9);
+  return { months, date: addMonths(today, months) };
+}
+// My monthly share for a goal — the same number the goal screen shows. Module level so
+// the sync effect can publish it for the people I share with (they need it to see the
+// real pace, not just their own contribution).
+function goalMonthlyShare(st, c, goal) {
+  if (goal.target > 0 && goalCurrentTotal(goal, st.investments) >= goal.target) return 0;
+  const percent = goal.mode === 'manual' ? goal.percent || 0 : c.autoPercentEach;
+  return c.boostedAvailable * (percent / 100) + (c.assignedByGoal[goal.id] || 0);
+}
 function goalOthersTotal(goal) {
   return ((goal && goal.savingsLog) || []).reduce(function (a, e) {
     var who = e.by || (typeof e.label === 'string' && e.label.indexOf('@') > -1 ? e.label.split('·')[0].trim() : null);
@@ -1116,6 +1139,7 @@ const STRINGS = {
     assetUnsure: 'Not sure',
     assetUnsureDesc: 'no heads-up either way',
     pctOfMonthly: '% of monthly savings',
+    etaThisMonth: 'this month',
     withdrawFromGoal: 'Withdraw from this goal',
     withdrawTitle: 'Withdraw from goal',
     withdrawAvailable: 'Available in this goal',
@@ -1375,6 +1399,7 @@ const STRINGS = {
     assetUnsure: 'No estoy seguro',
     assetUnsureDesc: 'sin aviso en ningún sentido',
     pctOfMonthly: '% de tu ahorro mensual',
+    etaThisMonth: 'este mes',
     withdrawFromGoal: 'Retirar de esta meta',
     withdrawTitle: 'Retirar de la meta',
     withdrawAvailable: 'Disponible en esta meta',
@@ -2138,7 +2163,7 @@ function App() {
   // Push my item's data to its share rows. For goals we MERGE the savings log with
   // whatever is already in the row (union by id) so a write never drops the other
   // person's contributions; the total is derived as base + sum(all entries).
-  const pushShareUpdate = (type, itemId, snapshot) => {
+  const pushShareUpdate = (type, itemId, snapshot, ownerMonthly) => {
     if (!sbClient || !authUser) return;
     // Keep the display name current — if I change my profile name, everyone I've
     // shared with sees the new one. This runs for investments too: a view-only
@@ -2164,7 +2189,7 @@ function App() {
           var log = theirs.concat(snapshot.savingsLog || []);
           var base = (snapshot.current || 0) - (snapshot.savingsLog || []).reduce(function (a, e) { return a + (e.amount || 0); }, 0);
           var current = base + log.reduce(function (a, e) { return a + (e.amount || 0); }, 0);
-          return Object.assign({}, snapshot, { savingsLog: log, baseCurrent: base, current: current, plans: rowData.plans || {}, names: names });
+          return Object.assign({}, snapshot, { savingsLog: log, baseCurrent: base, current: current, plans: rowData.plans || {}, names: names, ownerMonthly: ownerMonthly || 0 });
         }, 'sync', { owner_name: nm });
       });
     });
@@ -2353,12 +2378,13 @@ function App() {
         const sameData = Object.keys(item).every(k => JSON.stringify(rd[k]) === JSON.stringify(item[k]));
         if (sameData && !nameChanged) return;
       }
+      const ownerMonthly = r.item_type === 'goal' ? Math.round(goalMonthlyShare(state, computeCtx(state), item)) : 0;
       const sig = JSON.stringify(r.item_type === 'goal'
-        ? { log: (item.savingsLog || []).map(e => e && [e.id, e.amount]), n: item.name, t: item.target, i: item.icon, c: item.color, o: myDisplayName() }
+        ? { log: (item.savingsLog || []).map(e => e && [e.id, e.amount]), n: item.name, t: item.target, i: item.icon, c: item.color, o: myDisplayName(), m: ownerMonthly }
         : { item: item, o: myDisplayName() });
       if (pushedSigRef.current[r.id] === sig) return;
       pushedSigRef.current[r.id] = sig;
-      pushShareUpdate(r.item_type, r.item_id, item);
+      pushShareUpdate(r.item_type, r.item_id, item, ownerMonthly);
     });
   }, [state, sharesData, authUser]);
   const signInWithEmail = () => {
@@ -4393,9 +4419,16 @@ function App() {
     // not be inflated by someone else's money.
     const partnersMonthly = goalDone ? 0 : (sharesByItem['goal:' + goal.id] || []).reduce((a, r) => a + recipientPlanOf(r), 0);
     const towardGoal = monthlyBoosted + partnersMonthly;
-    const monthsToGoal = towardGoal > 0 ? Math.ceil(remaining / towardGoal) : Infinity;
+    // What each person already put in this month, so their commitment only counts for the rest.
+    const ymNow = ctx.today.getFullYear() * 12 + ctx.today.getMonth();
+    const thisMonth = (goal.savingsLog || []).filter(e => { const p = parseMonthYearLabel(e.label); return p.month >= 0 && p.year * 12 + p.month === ymNow; });
+    const loggedBy = em => thisMonth.filter(e => { const w = entryAuthor(e); return em ? w === em : (!w || w === myEmail); }).reduce((a, e) => a + (e.amount || 0), 0);
+    const eta = goalDone ? { months: 0, date: null } : goalEta(remaining, [{ monthly: monthlyBoosted, loggedThisMonth: loggedBy(null) }].concat(
+      (sharesByItem['goal:' + goal.id] || []).map(r => ({ monthly: recipientPlanOf(r), loggedThisMonth: loggedBy(String(r.recipient_email || '').toLowerCase()) }))
+    ), ctx.today);
+    const monthsToGoal = eta.months;
     let monthsShown = monthsToGoal;
-    let estDate = isFinite(monthsToGoal) ? addMonths(ctx.today, monthsToGoal) : null;
+    let estDate = eta.date;
     // Money sitting in a certificate is saved but not reachable yet. Showing a date
     // before it unlocks would promise something the person can't actually do, so the
     // honest date is the later of the two.
@@ -4425,7 +4458,7 @@ function App() {
       monthlyLabel: fmt(monthlyBoosted),
       percentLabel: Math.round(percent) + '%',
       estDateLabel,
-      monthsLabel: isFinite(monthsShown) ? monthsShown + ' ' + (monthsShown === 1 ? t('monthWord') : t('monthsWord')) : t('noTimeline')
+      monthsLabel: !isFinite(monthsShown) ? t('noTimeline') : monthsShown === 0 ? t('etaThisMonth') : monthsShown + ' ' + (monthsShown === 1 ? t('monthWord') : t('monthsWord'))
     };
     if (!isDetail) return view;
     let customMsg = '',
@@ -6018,9 +6051,17 @@ function App() {
       ? s.sharedPlans[row.id]
       : (rowPlan != null ? String(rowPlan) : '');
     var planAmt = parseFloat(savedPlan) || 0;
-    var monthsToGoal = planAmt > 0 && remaining > 0 ? Math.ceil(remaining / planAmt) : null;
-    var dateLabel = '';
-    if (monthsToGoal != null) { var dd = new Date(); dd.setMonth(dd.getMonth() + monthsToGoal); dateLabel = MONTH_NAMES[dd.getMonth()] + ' ' + dd.getFullYear(); }
+    // Same pace model as the owner's screen: the owner's monthly share (published on the
+    // row) plus every person's agreed amount, each minus what they already put in this month.
+    var nowD = new Date(), ymNowS = nowD.getFullYear() * 12 + nowD.getMonth();
+    var thisMonthS = (d.savingsLog || []).filter(function (e) { var p = parseMonthYearLabel(e.label); return p.month >= 0 && p.year * 12 + p.month === ymNowS; });
+    var loggedByS = function (em) { return thisMonthS.filter(function (e) { var w = entryAuthor(e); return em ? w === em : !w; }).reduce(function (a, e) { return a + (e.amount || 0); }, 0); };
+    var plansS = Object.assign({}, d.plans || {});
+    plansS[myEmail] = planAmt;
+    var contribsS = [{ monthly: parseFloat(d.ownerMonthly) || 0, loggedThisMonth: loggedByS(null) }].concat(Object.keys(plansS).map(function (em) { return { monthly: parseFloat(plansS[em]) || 0, loggedThisMonth: loggedByS(em) }; }));
+    var etaS = goalEta(remaining, contribsS, nowD);
+    var monthsToGoal = planAmt > 0 && remaining > 0 && isFinite(etaS.months) ? etaS.months : null;
+    var dateLabel = monthsToGoal != null && etaS.date ? MONTH_NAMES[etaS.date.getMonth()] + ' ' + etaS.date.getFullYear() : '';
     var log = d.savingsLog || [];
     // Break the current total down by who put it in: owner (base + un-tagged entries)
     // vs each other contributor (entries tagged with `by`).
@@ -6111,7 +6152,7 @@ function App() {
       style: css('width:100%;padding:12px 12px 12px 26px;border:1px solid #d2d2d7;border-radius:12px;font-size:16px;font-weight:700;background:#fbfbfd;box-sizing:border-box;')
     })), monthsToGoal != null ? /*#__PURE__*/React.createElement("div", {
       style: css('font-size:13px;color:#1d1d1f;')
-    }, (es ? 'A ese ritmo lo alcanzas en ' : 'At that pace you reach it in ') + monthsToGoal + (es ? (monthsToGoal === 1 ? ' mes' : ' meses') : (monthsToGoal === 1 ? ' month' : ' months')) + ' · ' + dateLabel) : /*#__PURE__*/React.createElement("div", {
+    }, (monthsToGoal === 0 ? (es ? 'A este ritmo la alcanzan este mes' : 'At this pace it’s reached this month') : (es ? 'A este ritmo la alcanzan en ' : 'At this pace it’s reached in ') + monthsToGoal + (es ? (monthsToGoal === 1 ? ' mes' : ' meses') : (monthsToGoal === 1 ? ' month' : ' months'))) + ' · ' + dateLabel) : /*#__PURE__*/React.createElement("div", {
       style: css('font-size:12.5px;color:#86868b;')
     }, es ? 'Escribe un monto para ver cuándo lo lograrías.' : 'Enter an amount to see when you would reach it.')), /*#__PURE__*/React.createElement("div", {
       style: css(card)
