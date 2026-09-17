@@ -371,7 +371,7 @@ function buildSharedWithdrawal(itemData, email, name, abs, reason, now) {
     reason: (reason || '').trim() || undefined,
     ym: now.getFullYear() * 12 + now.getMonth()
   };
-  const log = [entry].concat(prevLog).slice(0, 80);
+  const log = [entry].concat(prevLog); // never trimmed: dropping old entries changes the total
   data.savingsLog = log;
   data.baseCurrent = base;
   data.current = base + log.reduce((a, e) => a + (e.amount || 0), 0);
@@ -412,14 +412,36 @@ function cardStatement(card, expenseLog, today) {
   }).reduce((a, e) => a + (e.amount || 0), 0);
   const key = cardYmd(close);
   const statementAmount = charges(prevClose, close);
-  const paid = (card.payments || []).filter(p => p.statementKey === key).reduce((a, p) => a + (p.amount || 0), 0);
-  const toPay = Math.max(statementAmount - paid, 0);
-  return { close, prevClose, nextClose, due, key, statementAmount, paid, toPay, cycleSoFar: charges(close, t), overdue: toPay > 0.005 && t > due };
+  // A payment can be made any day. It settles the oldest debt first — everything charged
+  // up to the last closing date, including older statements left unpaid — and whatever
+  // is left counts toward the cycle that's still open (paying early).
+  // A first-statement payment covered purchases never logged here, so it's left out.
+  const paidAll = (card.payments || []).filter(p => !p.firstStatement).reduce((a, p) => a + (p.amount || 0), 0);
+  const closedCharges = charges(new Date(0), close);
+  const toPay = Math.max(closedCharges - paidAll, 0);
+  const cycleSoFar = charges(close, t);
+  const prepaid = Math.min(Math.max(paidAll - closedCharges, 0), cycleSoFar);
+  const cycleOwed = cycleSoFar - prepaid;
+  return { close, prevClose, nextClose, due, key, statementAmount, paid: paidAll, toPay, cycleSoFar, prepaid, cycleOwed, owedTotal: toPay + cycleOwed, overdue: toPay > 0.005 && t > due };
 }
 // Carried balance on a debt card: the statement balance entered (as of its date) plus
 // purchases since, minus payments since. Interest isn't compounded in — every bank
 // computes it differently — so it's shown as an estimate and the person re-syncs the
 // balance from their statement when it matters.
+// How one payment is booked, so no purchase is ever counted twice:
+//  - debt card: the whole payment is budgeted spending (it pays down a carried balance).
+//  - first statement of a card whose purchases were never logged: all of it is spending.
+//  - pay-in-full card: it settles what's logged on the card (not spending — those purchases
+//    were already counted). Anything beyond that paid for purchases never logged here,
+//    so only that excess becomes spending.
+function splitCardPayment(card, stmt, amount, asFirstStatement) {
+  const amt = Math.round((parseFloat(amount) || 0) * 100) / 100;
+  if (isDebtCard(card)) return { applied: amt, extra: 0, expense: amt };
+  if (asFirstStatement) return { applied: amt, extra: 0, expense: amt };
+  const applied = Math.min(amt, Math.max(stmt.owedTotal || 0, 0));
+  const extra = Math.round((amt - applied) * 100) / 100;
+  return { applied, extra, expense: extra };
+}
 function cardDebtBalance(card, expenseLog) {
   const since = card.balanceDate ? new Date(card.balanceDate + 'T00:00:00') : new Date(0);
   const charged = (expenseLog || []).filter(e => e.cardId != null && String(e.cardId) === String(card.id) && new Date((e.date || '') + 'T00:00:00') > since).reduce((a, e) => a + (e.amount || 0), 0);
@@ -1157,6 +1179,11 @@ const STRINGS = {
     tipCardUtil: 'You’re using a lot of your credit',
     tipCardUtilBody: '{c} is at {u}% of its limit. Staying under 30% helps your credit history.',
     viewCard: 'View card',
+    prepaidLabel: 'Already paid toward this cycle',
+    extraAsExpenseHint: '{x} is more than what’s logged on this card. That part will count as an expense, since it paid for purchases you didn’t log.',
+    paymentsHistory: 'Payments',
+    firstStatementTag: 'first payment',
+    undoPaymentQ: 'Delete this payment of {x}?',
     withdrawMine: 'Withdraw from my contributions',
     withdrawMineAvailable: 'Your contributions',
     withdrawMineTooMuch: 'You can only take back what you put in',
@@ -1411,6 +1438,11 @@ const STRINGS = {
     tipCardUtil: 'Estás usando mucho de tu crédito',
     tipCardUtilBody: '{c} está al {u} % de su límite. Mantenerte debajo del 30 % ayuda a tu historial crediticio.',
     viewCard: 'Ver tarjeta',
+    prepaidLabel: 'Ya pagado de este corte',
+    extraAsExpenseHint: '{x} es más de lo registrado con esta tarjeta. Esa parte contará como gasto, porque pagó compras que no registraste.',
+    paymentsHistory: 'Pagos',
+    firstStatementTag: 'primer pago',
+    undoPaymentQ: '¿Eliminar este pago de {x}?',
     withdrawMine: 'Retirar de mis aportes',
     withdrawMineAvailable: 'Tus aportes',
     withdrawMineTooMuch: 'Solo puedes retirar lo que tú aportaste',
@@ -2109,24 +2141,19 @@ function App() {
   const pushShareUpdate = (type, itemId, snapshot) => {
     if (!sbClient || !authUser) return;
     // Keep the display name current — if I change my profile name, everyone I've
-    // shared with sees the new one instead of whatever it was when I shared. This
-    // runs for investments too, not just goals: a view-only recipient can't write
-    // anything, so the owner's push is the ONLY way my name ever reaches them.
+    // shared with sees the new one. This runs for investments too: a view-only
+    // recipient can't write anything, so the owner's push is the only way it arrives.
     var nm = myDisplayName();
-    sbClient.from('shares').select('*').eq('owner_id', authUser.id).eq('item_type', type).eq('item_id', String(itemId)).then(({ data: rows, error }) => {
+    sbClient.from('shares').select('id').eq('owner_id', authUser.id).eq('item_type', type).eq('item_id', String(itemId)).then(({ data: rows, error }) => {
       if (noteShareError('sync read', error)) return;
       (rows || []).forEach(function (row) {
-        var rowData = row.item_data || {};
-        // `plans` is written by the recipients — carry it through so my push doesn't
-        // wipe it. Stamp my own name into `names` as well, so a lookup by email
-        // resolves me on every screen instead of falling back to my email prefix.
-        var names = Object.assign({}, rowData.names || {});
-        if (myEmail && nm) names[myEmail] = nm;
-        var merged;
-        if (type === 'goal') {
-          // My own entries are exactly what my goal holds right now, so deleting one
-          // here deletes it for both of us. Entries written by the OTHER person are
-          // always carried over untouched — never drop someone else's contribution.
+        writeShareRow(row.id, function (rowData) {
+          // `plans`/`names` are written by the recipients — carry them through.
+          var names = Object.assign({}, rowData.names || {});
+          if (myEmail && nm) names[myEmail] = nm;
+          if (type !== 'goal') return Object.assign({}, snapshot, { plans: rowData.plans || {}, names: names });
+          // My own entries are exactly what my goal holds now (so deleting one here deletes
+          // it for both of us). Entries written by the OTHER person are always carried over.
           var mineNow = {};
           (snapshot.savingsLog || []).forEach(function (e) { if (e && e.id != null) mineNow[e.id] = true; });
           var theirs = (rowData.savingsLog || []).filter(function (e) {
@@ -2137,63 +2164,40 @@ function App() {
           var log = theirs.concat(snapshot.savingsLog || []);
           var base = (snapshot.current || 0) - (snapshot.savingsLog || []).reduce(function (a, e) { return a + (e.amount || 0); }, 0);
           var current = base + log.reduce(function (a, e) { return a + (e.amount || 0); }, 0);
-          merged = Object.assign({}, snapshot, { savingsLog: log, baseCurrent: base, current: current, plans: rowData.plans || {}, names: names });
-        } else {
-          merged = Object.assign({}, snapshot, { plans: rowData.plans || {}, names: names });
-        }
-        sbClient.from('shares').update({ item_data: merged, owner_name: nm, updated_at: new Date().toISOString(), updated_by: authUser.id }).eq('id', row.id)
-          .then(function (res) { if (!noteShareError('sync', res.error)) fetchShares(); });
+          return Object.assign({}, snapshot, { savingsLog: log, baseCurrent: base, current: current, plans: rowData.plans || {}, names: names });
+        }, 'sync', { owner_name: nm });
       });
     });
   };
   // A recipient (editor) deposits into a shared goal: write straight to the share row.
   const depositToSharedGoal = (share, amount) => {
     if (!sbClient || !authUser || amount <= 0) return;
-    // Read the freshest row first so we add on top of the OTHER person's latest
-    // value instead of a stale local copy (prevents lost updates / mismatched totals).
-    sbClient.from('shares').select('*').eq('id', share.id).maybeSingle().then(({ data: fresh }) => {
-      const data = Object.assign({}, fresh && fresh.item_data ? fresh.item_data : (share.item_data || {}));
+    const now = new Date();
+    // Built once, so a retry re-adds the SAME entry (same id) — never a duplicate.
+    const entry = { id: Date.now() + Math.floor(Math.random() * 1000), label: (myDisplayName() || 'me') + ' · ' + MONTH_NAMES[now.getMonth()] + ' ' + now.getFullYear(), amount: amount, by: myEmail, ym: now.getFullYear() * 12 + now.getMonth() };
+    writeShareRow(share.id, data => {
       const prevLog = data.savingsLog || [];
+      if (prevLog.some(e => e && e.id === entry.id)) return null; // already saved
       // base = the part of current not represented by any log entry (kept stable).
       const base = typeof data.baseCurrent === 'number' ? data.baseCurrent : ((data.current || 0) - prevLog.reduce((a, e) => a + (e.amount || 0), 0));
-      const myName = (s.profileName || '').trim() || (authUser.user_metadata && authUser.user_metadata.full_name ? String(authUser.user_metadata.full_name).split(' ')[0] : '') || (myEmail ? myEmail.split('@')[0] : 'me');
-      const now = new Date();
-      const entry = { id: Date.now() + Math.floor(Math.random() * 1000), label: myName + ' · ' + MONTH_NAMES[now.getMonth()] + ' ' + now.getFullYear(), amount: amount, by: myEmail, ym: now.getFullYear() * 12 + now.getMonth() };
-      const log = [entry].concat(prevLog).slice(0, 80);
+      const log = [entry].concat(prevLog); // never trimmed: dropping old entries changes the total
       data.savingsLog = log;
       data.baseCurrent = base;
       data.current = base + log.reduce((a, e) => a + (e.amount || 0), 0);
-      sbClient.from('shares')
-        .update({ item_data: data, updated_at: new Date().toISOString(), updated_by: authUser.id })
-        .eq('id', share.id).select('id').then(res => {
-          if (noteShareError('deposit', res.error)) return;
-          if (!res.data || res.data.length === 0) { noteShareError('deposit', { message: 'No permission to save on this shared item.' }); return; }
-          setShareSyncError('');
-          fetchShares();
-        });
-    });
+      return data;
+    }, 'deposit');
   };
   const myNetInShared = itemData => sharedMineNet(itemData, myEmail);
   const withdrawFromSharedGoal = (share, abs, reason) => {
     if (!sbClient || !authUser || !(abs > 0)) return;
-    sbClient.from('shares').select('*').eq('id', share.id).maybeSingle().then(({ data: fresh, error: readErr }) => {
-      if (noteShareError('withdraw', readErr)) return;
-      const built = buildSharedWithdrawal(fresh && fresh.item_data ? fresh.item_data : (share.item_data || {}), myEmail, myDisplayName() || 'me', abs, reason, new Date());
-      if (built.error === 'over') {
-        noteShareError('withdraw', { message: t('withdrawMineTooMuch') + ': ' + fmt(Math.max(built.mine, 0)) });
-        fetchShares();
-        return;
-      }
-      if (built.error) return;
-      sbClient.from('shares')
-        .update({ item_data: built.data, updated_at: new Date().toISOString(), updated_by: authUser.id })
-        .eq('id', share.id).select('id').then(res => {
-          if (noteShareError('withdraw', res.error)) return;
-          if (!res.data || res.data.length === 0) { noteShareError('withdraw', { message: 'No permission to save on this shared item.' }); return; }
-          setShareSyncError('');
-          fetchShares();
-        });
-    });
+    const now = new Date();
+    writeShareRow(share.id, data => {
+      // Checked against the FRESH row on every attempt, so a stale screen can't overdraw.
+      const b = buildSharedWithdrawal(data, myEmail, myDisplayName() || 'me', abs, reason, now);
+      if (b.error === 'over') { noteShareError('withdraw', { message: t('withdrawMineTooMuch') + ': ' + fmt(Math.max(b.mine, 0)) }); fetchShares(); return null; }
+      if (b.error) return null;
+      return b.data;
+    }, 'withdraw');
   };
   // Publish my agreed monthly contribution onto the share row so the OWNER can see
   // what each person is putting in (and use it for their streak ring).
@@ -2240,26 +2244,36 @@ function App() {
   // Every write to a share row goes through here: re-read the row first, change only
   // my own fields, then save. Writing from a locally-cached copy is what let one
   // person's save wipe the other's (their plan/name silently reverting to "not set").
-  const updateShareRow = (shareId, mutate) => {
+  // Every write to a shared row goes through here. It re-reads the row, applies the change
+  // to that FRESH copy, and saves only if nobody saved in between (compare-and-swap on
+  // updated_at); if someone did, it re-reads and tries again. Before this, two writes
+  // landing close together silently dropped one of them — which is how a partner's
+  // deposit could be accepted by the server and then vanish a moment later.
+  const writeShareRow = (shareId, build, where, rowExtra, attempt) => {
     if (!sbClient || !authUser || !shareId) return;
+    const n = attempt || 0;
     sbClient.from('shares').select('*').eq('id', shareId).maybeSingle().then(({ data: fresh, error: readErr }) => {
-      if (noteShareError('read row', readErr) || !fresh) return;
-      const next = mutate(Object.assign({}, fresh.item_data || {}));
+      if (noteShareError(where, readErr) || !fresh) return;
+      const next = build(Object.assign({}, fresh.item_data || {}), fresh);
       if (!next) return; // nothing to change
-      sbClient.from('shares')
-        .update({ item_data: next, updated_at: new Date().toISOString(), updated_by: authUser.id })
-        .eq('id', shareId).select('id').then(function (res) {
-          if (noteShareError('save', res.error)) return;
-          // An UPDATE blocked by RLS succeeds with zero rows touched — catch that too.
-          if (!res.data || res.data.length === 0) {
-            noteShareError('save', { message: 'No permission to save on this shared item.' });
-            return;
-          }
-          setShareSyncError('');
-          fetchShares();
-        });
+      let q = sbClient.from('shares')
+        .update(Object.assign({ item_data: next, updated_at: new Date().toISOString(), updated_by: authUser.id }, rowExtra || {}))
+        .eq('id', shareId);
+      q = fresh.updated_at ? q.eq('updated_at', fresh.updated_at) : q.is('updated_at', null);
+      q.select('id').then(res => {
+        if (noteShareError(where, res.error)) return;
+        if (!res.data || res.data.length === 0) {
+          // Zero rows: someone saved first (retry on their version) — or no permission.
+          if (n < 5) { setTimeout(() => writeShareRow(shareId, build, where, rowExtra, n + 1), 120 + Math.random() * 300); return; }
+          noteShareError(where, { message: 'Could not save: the goal kept changing or you don’t have permission. Try again.' });
+          return;
+        }
+        setShareSyncError('');
+        fetchShares();
+      });
     });
   };
+  const updateShareRow = (shareId, mutate) => writeShareRow(shareId, d => mutate(d), 'save');
   const pushSharedPlan = (share, amount) => {
     if (!share) return;
     updateShareRow(share.id, function (d) {
@@ -2284,6 +2298,8 @@ function App() {
       // View-only rows (shared investments) reject any write by design — don't try.
       if (r.permission !== 'edit') return;
       if (((r.item_data && r.item_data.names) || {})[myEmail] === nm) return;
+      if (namesSentRef.current[r.id] === nm) return; // sent once already from this device
+      namesSentRef.current[r.id] = nm;
       updateShareRow(r.id, function (d) {
         if (((d.names || {})[myEmail]) === nm) return null;
         d.names = Object.assign({}, d.names || {}, { [myEmail]: nm });
@@ -2291,6 +2307,12 @@ function App() {
       });
     });
   }, [sharesData, authUser, state && state.profileName]);
+  // What each shared row was last sent FROM THIS DEVICE. A given version goes out once.
+  // Without this, two of my own devices holding slightly different copies (or different
+  // profile names) kept "correcting" the row for each other — hundreds of writes a minute
+  // that also wiped whatever the other person had just saved.
+  const pushedSigRef = useRef({});
+  const namesSentRef = useRef({});
   // Keep the shared copy of my items current. This compares against what is ACTUALLY
   // in the share row (not a session flag), so if the row is ever missing one of my
   // entries it gets re-pushed on the next sync instead of staying out of date forever.
@@ -2331,6 +2353,11 @@ function App() {
         const sameData = Object.keys(item).every(k => JSON.stringify(rd[k]) === JSON.stringify(item[k]));
         if (sameData && !nameChanged) return;
       }
+      const sig = JSON.stringify(r.item_type === 'goal'
+        ? { log: (item.savingsLog || []).map(e => e && [e.id, e.amount]), n: item.name, t: item.target, i: item.icon, c: item.color, o: myDisplayName() }
+        : { item: item, o: myDisplayName() });
+      if (pushedSigRef.current[r.id] === sig) return;
+      pushedSigRef.current[r.id] = sig;
       pushShareUpdate(r.item_type, r.item_id, item);
     });
   }, [state, sharesData, authUser]);
@@ -3208,7 +3235,11 @@ function App() {
     expenseLog: s.expenseLog.filter(e => e.id !== id),
     // A logged card payment is two linked records (the expense and the card's payment);
     // deleting one must delete both, or the card's balance/statement drifts.
-    cards: (s.cards || []).map(c => (c.payments || []).some(p => p.id === id) ? { ...c, payments: c.payments.filter(p => p.id !== id) } : c)
+    cards: (s.cards || []).map(c => {
+      const gone = (c.payments || []).find(p => p.id === id);
+      if (!gone) return c;
+      return { ...c, firstStatementPending: gone.firstStatement ? true : c.firstStatementPending, payments: c.payments.filter(p => p.id !== id) };
+    })
   }));
   const saveCard = draft => patch(st => {
     const clean = { ...draft, closingDay: Math.max(1, Math.min(31, parseInt(draft.closingDay, 10) || 1)), dueDay: Math.max(1, Math.min(31, parseInt(draft.dueDay, 10) || 1)), last4: String(draft.last4 || '').replace(/\D/g, '').slice(-4) };
@@ -3228,16 +3259,19 @@ function App() {
       if (!card) return {};
       const id = Date.now();
       const stmt = cardStatement(card, st.expenseLog, d);
+      const split = splitCardPayment(card, stmt, amt, asFirstStatement);
       const out = {
         cards: st.cards.map(c => c.id !== cardId ? c : {
           ...c,
           firstStatementPending: asFirstStatement ? false : c.firstStatementPending,
-          payments: [{ id, date: todayStr, amount: amt, statementKey: stmt.key }].concat(c.payments || []).slice(0, 36)
+          // Never trimmed: payments settle the oldest charges first, so dropping old ones
+          // would make debts that were already paid show up as owed again.
+          payments: [{ id, date: todayStr, amount: split.applied, extra: split.extra || undefined, statementKey: stmt.key, firstStatement: asFirstStatement || undefined }].concat(c.payments || [])
         })
       };
-      if (isDebtCard(card) || asFirstStatement) {
+      if (split.expense > 0) {
         out.expenseLog = st.expenseLog.concat([{
-          id, date: todayStr, year: d.getFullYear(), month: d.getMonth(), day: d.getDate(), amount: amt,
+          id, date: todayStr, year: d.getFullYear(), month: d.getMonth(), day: d.getDate(), amount: split.expense,
           name: t('cardPaymentName').replace('{c}', () => card.name || 'Card'),
           recurring: isDebtCard(card),
           cardPaymentFor: card.id
@@ -4586,17 +4620,38 @@ function App() {
     const line = (key, l, r, color) => /*#__PURE__*/React.createElement('div', {
       key, style: css('display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12.5px;margin-top:6px;color:' + (color || '#6e6e73') + ';')
     }, /*#__PURE__*/React.createElement('span', { style: css('min-width:0;') }, l), /*#__PURE__*/React.createElement('b', { style: css('flex:none;color:' + (color || '#1d1d1f') + ';font-variant-numeric:tabular-nums;') }, r));
-    const payBox = (card, suggested, label, asFirst) => {
+    const payBox = (card, suggested, label, asFirst, owedCap) => {
       const typed = cardPayInput[card.id];
       const v = typed != null ? typed : (suggested > 0 ? String(Math.round(suggested * 100) / 100) : '');
-      return /*#__PURE__*/React.createElement('div', { key: 'pay', style: css('display:flex;gap:8px;margin-top:10px;') },
+      // On a pay-in-full card, paying more than what's logged means paying for purchases
+      // that were never logged here — say so before that part becomes an expense.
+      const extra = owedCap != null && (parseFloat(v) || 0) > owedCap + 0.005 ? (parseFloat(v) || 0) - owedCap : 0;
+      return /*#__PURE__*/React.createElement('div', { key: 'pay' }, /*#__PURE__*/React.createElement('div', { style: css('display:flex;gap:8px;margin-top:10px;') },
         /*#__PURE__*/React.createElement('div', { style: { position: 'relative', flex: 1, minWidth: 0 } },
           /*#__PURE__*/React.createElement('span', { style: css('position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:13px;color:#86868b;pointer-events:none;') }, '$'),
           /*#__PURE__*/React.createElement('input', { type: 'number', inputMode: 'decimal', value: v, placeholder: '0', onChange: e => { const val = e.target.value; setCardPayInput(cur => Object.assign({}, cur, { [card.id]: val })); }, style: css('width:100%;box-sizing:border-box;padding:8px 9px 8px 22px;border:1px solid #e5e5ea;border-radius:9px;font-size:13.5px;font-weight:700;background:#fbfbfd;') })),
         /*#__PURE__*/React.createElement('button', {
           onClick: () => { const amt = parseFloat(v) || 0; if (amt <= 0) return; logCardPayment(card.id, amt, asFirst); setCardPayInput(cur => { const n = Object.assign({}, cur); delete n[card.id]; return n; }); },
           style: css(UI_BTN.inlinePrimary)
-        }, label));
+        }, label)), extra > 0 && /*#__PURE__*/React.createElement('div', { style: css('font-size:11px;color:#8a6d3b;line-height:1.4;margin-top:6px;') }, t('extraAsExpenseHint').replace('{x}', () => fmt(extra))));
+    };
+    // Every payment, newest first, with a way to undo one logged by mistake.
+    const paymentHistory = card => {
+      const list = (card.payments || []).slice(0, 6);
+      if (!list.length) return null;
+      return /*#__PURE__*/React.createElement('div', { key: 'hist', style: css('margin-top:12px;padding-top:8px;border-top:1px solid #f5f5f7;') },
+        /*#__PURE__*/React.createElement('div', { style: css('font-size:11px;color:#86868b;font-weight:600;margin-bottom:2px;') }, t('paymentsHistory')),
+        list.map(p => {
+          const total = (p.amount || 0) + (p.extra || 0);
+          return /*#__PURE__*/React.createElement('div', { key: p.id, style: css('display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12px;padding:3px 0;') },
+            /*#__PURE__*/React.createElement('span', { style: css('color:#6e6e73;min-width:0;') }, cardDateLabel(new Date(p.date + 'T00:00:00')) + (p.firstStatement ? ' · ' + t('firstStatementTag') : '')),
+            /*#__PURE__*/React.createElement('span', { style: css('display:flex;align-items:center;gap:8px;flex:none;') },
+              /*#__PURE__*/React.createElement('b', { style: css('color:#1d1d1f;font-variant-numeric:tabular-nums;') }, fmt(total)),
+              /*#__PURE__*/React.createElement('button', {
+                onClick: () => askConfirm(t('undoPaymentQ').replace('{x}', () => fmt(total)), () => removeLogEntry(p.id)),
+                style: css('background:none;border:none;color:#ff3b30;cursor:pointer;font-size:14px;line-height:1;padding:0 2px;')
+              }, '×')));
+        }));
     };
     const cardBody = card => {
       const title = /*#__PURE__*/React.createElement('div', { key: 'title', style: css('display:flex;justify-content:space-between;align-items:center;gap:8px;') },
@@ -4604,18 +4659,24 @@ function App() {
         /*#__PURE__*/React.createElement('button', { onClick: () => setCardSheet(Object.assign({}, card)), style: css('background:none;border:none;color:#0071e3;font-size:11.5px;font-weight:700;cursor:pointer;padding:0;flex:none;') }, t('edit')));
       const stmt = cardStatement(card, s.expenseLog, ctx.today);
       if (!isDebtCard(card)) {
-        const parts = [title, line('cyc', t('thisCycle') + ' · ' + t('closesOn').replace('{d}', () => cardDateLabel(stmt.nextClose)), fmt(stmt.cycleSoFar))];
+        const parts = [title];
+        if (stmt.toPay > 0.005) {
+          parts.push(line('topay', t('statementToPay') + ' · ' + (stmt.overdue ? t('overdue') : t('dueOn')).replace('{d}', () => cardDateLabel(stmt.due)), fmt(stmt.toPay), stmt.overdue ? '#ff3b30' : null));
+        } else if (stmt.statementAmount > 0) {
+          parts.push(line('paid', t('statementPaid'), '✓ ' + fmt(stmt.statementAmount), '#34c759'));
+        }
+        parts.push(line('cyc', t('thisCycle') + ' · ' + t('closesOn').replace('{d}', () => cardDateLabel(stmt.nextClose)), fmt(stmt.cycleSoFar)));
+        if (stmt.prepaid > 0.005) parts.push(line('pre', t('prepaidLabel'), fmt(stmt.prepaid), '#34c759'));
         if (card.firstStatementPending) {
           parts.push(/*#__PURE__*/React.createElement('div', { key: 'first', style: css('background:#f5f8ff;border-radius:10px;padding:10px 11px;margin-top:10px;') },
             /*#__PURE__*/React.createElement('div', { style: css('font-size:12.5px;font-weight:700;color:#1d1d1f;') }, t('firstPaymentTitle')),
             /*#__PURE__*/React.createElement('div', { style: css('font-size:11.5px;color:#6e6e73;line-height:1.4;margin-top:2px;') }, t('firstPaymentHint')),
             payBox(card, 0, t('logPayment'), true)));
-        } else if (stmt.toPay > 0.005) {
-          parts.push(line('topay', t('statementToPay') + ' · ' + (stmt.overdue ? t('overdue') : t('dueOn')).replace('{d}', () => cardDateLabel(stmt.due)), fmt(stmt.toPay), stmt.overdue ? '#ff3b30' : null));
-          parts.push(/*#__PURE__*/React.createElement('button', { key: 'mark', onClick: () => logCardPayment(card.id, stmt.toPay, false), style: css(UI_BTN.inlineSoft + 'margin-top:10px;') }, t('markPaid')));
-        } else if (stmt.statementAmount > 0) {
-          parts.push(line('paid', t('statementPaid'), '✓ ' + fmt(stmt.statementAmount), '#34c759'));
+        } else {
+          // Always available: pay any day, any amount. Prefilled with what's due, if anything.
+          parts.push(payBox(card, stmt.toPay > 0.005 ? stmt.toPay : 0, t('logPayment'), false, stmt.owedTotal));
         }
+        parts.push(paymentHistory(card));
         return parts;
       }
       const bal = cardDebtBalance(card, s.expenseLog);
@@ -4630,7 +4691,8 @@ function App() {
         (parseFloat(card.apr) || 0) > 0 && bal > 0 && line('int', t('interestApprox').replace('{x}', () => fmt(interest)), '', '#c77700'),
         line('plan', t('plannedPayment') + ' · ' + t('dueOn').replace('{d}', () => cardDateLabel(stmt.due)), fmt(pay)),
         payoffText && /*#__PURE__*/React.createElement('div', { key: 'payoff', style: css('font-size:11.5px;margin-top:6px;color:' + (months === Infinity ? '#ff3b30' : '#86868b') + ';') }, payoffText),
-        bal > 0 && payBox(card, paidThisStatement ? 0 : pay, t('logPayment'), false)
+        bal > 0 && payBox(card, paidThisStatement ? 0 : pay, t('logPayment'), false),
+        paymentHistory(card)
       ];
     };
     return /*#__PURE__*/React.createElement('div', { style: css('background:#fff;border-radius:16px;padding:16px;margin-bottom:14px;') },
@@ -6076,6 +6138,7 @@ function App() {
       for (var ym = startYM; ym <= endYM; ym++) cells.push(ym);
       return /*#__PURE__*/React.createElement("div", {
         ref: sharedStripRef,
+        className: 'pf-strip',
         style: css('display:flex;gap:12px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch;')
       }, cells.map(function (ym) {
         var yy = Math.floor(ym / 12), mm = ym % 12;
@@ -8188,7 +8251,10 @@ function App() {
     // are to the left (scroll back), upcoming months to the right.
     const curYM = curY * 12 + curM;
     const createYM = cYear * 12 + cMonth;
-    const startYM = Math.min(createYM, curYM);
+    // Swiping back only reaches months that actually have savings logged — not a row of
+    // empty past months just because the goal was created earlier.
+    const loggedYMs = (sgSource.savingsLog || []).map(e => { const p = parseMonthYearLabel(e.label); return p.month >= 0 && !isNaN(p.year) ? p.year * 12 + p.month : null; }).filter(v => v != null);
+    const startYM = loggedYMs.length ? Math.min(Math.min.apply(null, loggedYMs), curYM) : curYM;
     const endYM = curYM + 23;
     const monthsList = [];
     for (let ym = startYM; ym <= endYM; ym++) {
@@ -8198,11 +8264,12 @@ function App() {
         month: mm,
         isFuture: ym > curYM,
         beforeCreation: ym < createYM,
-        inactive: ym < createYM
+        inactive: ym < createYM && loggedYMs.indexOf(ym) < 0
       });
     }
     return /*#__PURE__*/React.createElement("div", {
       ref: monthStripRef,
+      className: 'pf-strip',
       style: css('display:flex;gap:12px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch;scroll-snap-type:x mandatory;')
     }, monthsList.map((mo, idx) => {
       const monthEntriesAll = (sgSource.savingsLog || []).filter(e => {
